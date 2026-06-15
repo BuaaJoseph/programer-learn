@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-const STORAGE_KEY = 'llm-handbook:progress'
+const STORAGE_KEY = 'lp:progress'
 
 function load() {
   try {
@@ -13,7 +13,11 @@ function load() {
   }
 }
 
-// 记录已完成章节 slug 的集合，并持久化到 localStorage。
+// 进度按 `courseSlug/chapterSlug` 复合键存储，避免不同课程的章节 slug 撞车。
+function key(courseSlug, slug) {
+  return `${courseSlug}/${slug}`
+}
+
 export function useProgress() {
   const [done, setDone] = useState(() => new Set(load()))
 
@@ -25,16 +29,28 @@ export function useProgress() {
     }
   }, [done])
 
-  const isDone = useCallback((slug) => done.has(slug), [done])
+  const isDone = useCallback((courseSlug, slug) => done.has(key(courseSlug, slug)), [done])
 
-  const toggle = useCallback((slug) => {
+  const toggle = useCallback((courseSlug, slug) => {
     setDone((prev) => {
       const next = new Set(prev)
-      if (next.has(slug)) next.delete(slug)
-      else next.add(slug)
+      const k = key(courseSlug, slug)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
       return next
     })
   }, [])
 
-  return { done, isDone, toggle, count: done.size }
+  // 某门课已完成章节数
+  const countFor = useCallback(
+    (courseSlug) => {
+      let n = 0
+      const prefix = `${courseSlug}/`
+      for (const k of done) if (k.startsWith(prefix)) n++
+      return n
+    },
+    [done],
+  )
+
+  return { done, isDone, toggle, countFor, total: done.size }
 }
