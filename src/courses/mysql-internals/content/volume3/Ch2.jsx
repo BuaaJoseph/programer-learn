@@ -1,3 +1,166 @@
-export default function Ch() {
-  return (<><p>本章内容生成中…</p></>)
+import Lead from '@/components/cards/Lead.jsx'
+import KeyIdea from '@/components/cards/KeyIdea.jsx'
+import Example from '@/components/cards/Example.jsx'
+import Practice from '@/components/cards/Practice.jsx'
+import Callout from '@/components/cards/Callout.jsx'
+import CodeBlock from '@/components/cards/CodeBlock.jsx'
+import Summary from '@/components/cards/Summary.jsx'
+import IsolationLevels from '@/courses/mysql-internals/illustrations/IsolationLevels.jsx'
+
+const setLevelSql = `-- 查看当前隔离级别（MySQL 8.0）
+SELECT @@transaction_isolation;   -- InnoDB 默认输出 REPEATABLE-READ
+
+-- 设置当前会话的隔离级别（只影响这条连接，之后开启的事务生效）
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+-- 可选值：
+--   READ UNCOMMITTED  读未提交
+--   READ COMMITTED    读已提交
+--   REPEATABLE READ   可重复读（MySQL/InnoDB 默认）
+--   SERIALIZABLE      串行化`
+
+const repeatableReadSql = `-- 复现「不可重复读」：在 READ COMMITTED 下两次读到不同结果
+-- 准备：CREATE TABLE account(id INT PRIMARY KEY, balance INT);
+--       INSERT INTO account VALUES (1, 100);
+
+-- ↓↓↓ 会话 A ↓↓↓
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+START TRANSACTION;
+SELECT balance FROM account WHERE id = 1;   -- 第一次读：100
+
+-- ↓↓↓ 会话 B（此时切到另一个连接执行并提交）↓↓↓
+START TRANSACTION;
+UPDATE account SET balance = 200 WHERE id = 1;
+COMMIT;
+
+-- ↓↓↓ 回到会话 A，同一事务内再读一次 ↓↓↓
+SELECT balance FROM account WHERE id = 1;   -- 第二次读：200，前后不一致！
+COMMIT;
+
+-- 把会话 A 的隔离级别换成 REPEATABLE READ 再跑一遍，
+-- 两次读都会是 100：这就是「可重复读」。`
+
+export default function Ch2() {
+  return (
+    <>
+      <Lead>
+        <p>
+          单个事务好理解，难的是「很多事务同时跑」。两个事务交错执行时，读到的数据可能会出现各种诡异结果：
+          读到了别人还没提交的脏数据、同一行前后读到不同值、同一个查询前后行数变了。
+          数据库用<em>隔离级别</em>（isolation level）来定义「允许多大程度的并发干扰」。这一章讲清三种并发异常和四种隔离级别。
+        </p>
+      </Lead>
+
+      <h2>三种并发异常</h2>
+      <p>
+        并发干扰的程度从重到轻，对应三种经典异常。理解它们是理解隔离级别的前提。
+      </p>
+
+      <h3>脏读（dirty read）</h3>
+      <p>
+        一个事务读到了<strong>另一个事务还没提交</strong>的修改。比如事务 B 把余额改成 200 但还没提交，事务 A 就读到了 200；
+        随后 B 回滚，那个 200 从未真实存在过，A 却据此做了决策。脏读读到的是「可能凭空消失的数据」，是最危险的一种。
+      </p>
+
+      <h3>不可重复读（non-repeatable read）</h3>
+      <p>
+        同一个事务内，<strong>两次读同一行</strong>，结果却不一样——因为中间有别的事务<strong>修改并提交</strong>了这行。
+        和脏读的区别在于：这次读到的是别人<strong>已提交</strong>的真实数据，问题出在「同一事务内的读应不应该前后一致」。
+        它针对的是对已有行的 UPDATE。
+      </p>
+
+      <h3>幻读（phantom read）</h3>
+      <p>
+        同一个事务内，<strong>两次执行同一个范围查询</strong>，第二次却多出（或少了）几行——因为别的事务在这个范围里
+        <strong>插入或删除</strong>并提交了记录，凭空冒出来的行像「幻影」。它和不可重复读的关键区别是：
+        不可重复读针对已有行的修改，幻读针对<strong>新增/删除的行</strong>（INSERT/DELETE 导致结果集行数变化）。
+      </p>
+
+      <Example title="一句话区分三者">
+        <p>用「会话 A 在一个事务里读，会话 B 在旁边捣乱”来记忆：</p>
+        <ul>
+          <li><strong>脏读</strong>：B 改了但<strong>没提交</strong>，A 就读到了 → 读到可能被撤销的数据。</li>
+          <li><strong>不可重复读</strong>：B 改了某一行并<strong>提交</strong>，A 同一行前后读到不同值 → 针对 UPDATE。</li>
+          <li><strong>幻读</strong>：B <strong>插入/删除</strong>并提交，A 同一个范围查询前后行数变了 → 针对 INSERT/DELETE。</li>
+        </ul>
+      </Example>
+
+      <h2>四种隔离级别</h2>
+      <p>
+        隔离级别就是在「并发性能」和「数据正确」之间选一个平衡点：级别越高，能挡住的异常越多，但并发能力越低。
+        四个级别从低到高分别能防住哪些异常，用一张矩阵看最清楚。
+      </p>
+
+      <IsolationLevels />
+
+      <h3>逐级说明</h3>
+      <ul>
+        <li>
+          <strong>读未提交（READ UNCOMMITTED，RU）</strong>：几乎不隔离，能读到别人未提交的修改，三种异常全都可能发生。
+          实际几乎没人用。
+        </li>
+        <li>
+          <strong>读已提交（READ COMMITTED，RC）</strong>：只能读到已提交的数据，挡住了脏读；但同一事务内每条语句都看最新快照，
+          所以仍会有不可重复读和幻读。Oracle、PostgreSQL 默认用它。
+        </li>
+        <li>
+          <strong>可重复读（REPEATABLE READ，RR）</strong>：同一事务内多次读结果保持一致，挡住脏读和不可重复读。
+          这是 <strong>MySQL/InnoDB 的默认级别</strong>。
+        </li>
+        <li>
+          <strong>串行化（SERIALIZABLE）</strong>：最高级别，事务串行执行（InnoDB 通过给读也加锁实现），三种异常全部杜绝，
+          但并发能力最差，一般只在强一致场景临时用。
+        </li>
+      </ul>
+
+      <KeyIdea title="MySQL 默认 RR，且很大程度上避免了幻读">
+        <p>
+          这是个高频考点也是高频误区：<strong>MySQL/InnoDB 默认是可重复读（RR），而 Oracle 和 PostgreSQL 默认是读已提交（RC）</strong>。
+          按 SQL 标准 RR 是允许幻读的，但 InnoDB 的 RR 用 <em>MVCC</em>（快照读，保证一致性视图）
+          加上 <em>Next-Key Lock</em>（当前读时锁住记录及其间隙，挡住区间内的插入）双管齐下，
+          在很大程度上把幻读也避免了。这两个机制分别在第 3、4 章细讲。
+        </p>
+      </KeyIdea>
+
+      <Callout variant="warn" title="换库 / 主从混用时的坑">
+        <p>
+          因为默认级别不同，把代码从 MySQL 迁到 PostgreSQL（或反过来），同样的事务逻辑可能表现不一致——
+          原本依赖「RR 下两次读相同」的代码到了 RC 下就会读到变化的值。另外 MySQL 早期把 RR 作为 binlog 复制的安全前提，
+          所以不要随手把全局隔离级别改低。<strong>明确知道自己在哪个级别上、它能防住哪些异常</strong>，比盲目调级别重要得多。
+        </p>
+      </Callout>
+
+      <h2>这对排查并发问题意味着什么</h2>
+      <p>
+        当线上出现「读到的数据和预期对不上」「同一事务里前后读不一致」「统计行数忽多忽少」这类问题时，
+        第一反应应该是确认<strong>当前隔离级别</strong>，再对照矩阵判断这是不是该级别允许的正常现象。
+        很多所谓的「数据错乱」其实是隔离级别选择与业务期望不匹配，而不是 bug。需要强一致读时，
+        正确做法往往不是粗暴拉高隔离级别，而是用第 3 章的 <code>SELECT ... FOR UPDATE</code> 等当前读手段精准加锁。
+      </p>
+
+      <Practice title="两个会话复现不可重复读">
+        <p>
+          开两个 MySQL 客户端连接，会话 A 设为读已提交并开启事务读一次，会话 B 修改并提交，会话 A 再读一次，
+          观察前后值的变化；然后把会话 A 换成可重复读重跑，对比差异。
+        </p>
+        <CodeBlock lang="sql" title="set_isolation.sql" code={setLevelSql} />
+        <CodeBlock lang="sql" title="repeatable_read_demo.sql" code={repeatableReadSql} />
+        <p>
+          做完这个实验，你会对「隔离级别到底改变了什么」有最直观的体感：它决定的就是「我这个事务内的读，
+          会不会被外面已提交的修改影响」。
+        </p>
+      </Practice>
+
+      <Summary
+        points={[
+          '三种并发异常：脏读（读到未提交数据）、不可重复读（同一行两次读不同，针对 UPDATE）、幻读（范围查询行数变化，针对 INSERT/DELETE）。',
+          '四种隔离级别从低到高：读未提交 RU、读已提交 RC、可重复读 RR、串行化 Serializable，级别越高挡的异常越多、并发越差。',
+          'RU 三种异常全有；RC 防脏读；RR 防脏读和不可重复读；Serializable 全防。',
+          'MySQL/InnoDB 默认 RR，而 Oracle、PostgreSQL 默认 RC，跨库迁移时要特别注意行为差异。',
+          'InnoDB 的 RR 靠 MVCC（快照读）+ Next-Key Lock（当前读锁间隙）在很大程度上避免了幻读。',
+          '排查并发数据问题先确认隔离级别，再对照矩阵判断是否为该级别的正常现象，需要强一致读用 FOR UPDATE 精准加锁。',
+        ]}
+      />
+    </>
+  )
 }
