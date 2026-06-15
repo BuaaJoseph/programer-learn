@@ -3,6 +3,7 @@ import { useState } from 'react'
 import PlatformLayout from '../PlatformLayout.jsx'
 import { getCourse } from '../../catalog/courses.js'
 import { categoryPath } from '../../catalog/categories.js'
+import CourseCover from '../components/CourseCover.jsx'
 import { useProgressContext } from '../../context/AppContext.jsx'
 import NotFound from './NotFound.jsx'
 
@@ -32,8 +33,8 @@ export default function CourseLanding() {
     <PlatformLayout>
       <div className="container">
         <section className="course-hero">
-          <div className="course-hero-cover" style={{ '--c': meta.accent }}>
-            {meta.cover}
+          <div className="course-hero-cover">
+            <CourseCover course={course} />
           </div>
           <div className="course-hero-body">
             <div className="breadcrumb">

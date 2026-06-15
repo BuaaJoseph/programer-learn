@@ -3,7 +3,7 @@
 import llmHandbook from '../courses/llm-handbook/index.js'
 import mysqlInternals from '../courses/mysql-internals/index.js'
 
-export const COURSES = [mysqlInternals, llmHandbook]
+export const COURSES = [llmHandbook, mysqlInternals]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null
