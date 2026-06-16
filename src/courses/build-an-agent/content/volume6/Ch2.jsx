@@ -154,6 +154,29 @@ export default function Ch2() {
         只要能实现这四样，就能直接插进 forge 跑起来。
       </p>
 
+      <h2>为什么是「薄」抽象，而不是大而全</h2>
+      <p>
+        这层接口刻意做得很薄，这是个值得展开的设计决策。设计抽象层时永远存在一组张力：<strong>抽象越厚，能暴露的统一能力越多，但能容纳的实现就越少</strong>。如果我们贪心地把「thinking 块」「prompt 缓存」「图片输入」「结构化输出」全塞进接口，那任何一个不支持这些特性的模型就再也无法实现这个接口了——抽象反而成了枷锁。
+      </p>
+      <p>
+        薄抽象走的是相反的路：只收敛<strong>所有 LLM 都必然具备</strong>的最小公共能力——发一轮请求、估算 token、报上自己的型号和窗口。这条最小公共子集几乎对任何对话模型都成立，所以接口的「可实现性」最大。各家独有的高级特性怎么办？答案是<strong>留在各自的 Provider 实现内部</strong>，作为内部优化（比如 ClaudeProvider 内部该用 prompt 缓存就用，但这事不进接口）。
+      </p>
+
+      <table>
+        <thead>
+          <tr><th></th><th>薄抽象（forge 的选择）</th><th>厚抽象</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>接口表面积</td><td>4 样：model / window / complete / countTokens</td><td>几十个特性方法</td></tr>
+          <tr><td>新增 Provider 成本</td><td>低（填四样即可）</td><td>高（很多方法要硬塞或抛 not-supported）</td></tr>
+          <tr><td>能统一暴露的能力</td><td>最小公共子集</td><td>多，但脆弱</td></tr>
+          <tr><td>厂商差异藏在哪</td><td>各自实现内部</td><td>容易漏进接口，污染内核</td></tr>
+        </tbody>
+      </table>
+
+      <Callout variant="tip">
+        这有个经典对照：操作系统的设备驱动接口。系统不会为每种打印机的花式功能定义专门的 API——它只定义「写一段字节」这种最小契约，把彩印、双面、装订这些差异关在各家驱动里。<code>Provider</code> 之于 LLM，正如驱动接口之于硬件：<strong>用最薄的契约换最广的兼容</strong>。</Callout>
+
       <h2>默认实现：ClaudeProvider</h2>
       <p>
         <code>ClaudeProvider</code> 是这个接口的默认实现，它在卷 0、卷 2、卷 4 里被一步步建成。它的职责说白了就是「翻译」：
