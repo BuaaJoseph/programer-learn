@@ -234,6 +234,31 @@ export default function Ch3() {
         </p>
       </Example>
 
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：把递归查询和迭代查询说反。</strong>客户端 → 本地 DNS 是<em>递归</em>（帮我查到底）；
+            本地 DNS → 根/顶级/权威是<em>迭代</em>（一级级追问，每步只给线索）。
+          </li>
+          <li>
+            <strong>追问：CORS 的 Allow-Origin 能写 * 吗？</strong>不带 Cookie 时可以；
+            一旦 <code>Allow-Credentials: true</code>（要带 Cookie），就<em>必须</em>写明确的源，不能用通配符。
+          </li>
+          <li>
+            <strong>追问：预检请求 OPTIONS 一定有吗？</strong>只有「非简单请求」才有（自定义头、PUT/DELETE、
+            特定 Content-Type）；简单的 GET、表单 POST 不触发预检。
+          </li>
+          <li>
+            <strong>追问：JWT 怎么主动失效？</strong>它本身无状态、签发即生效到过期，难以主动作废；
+            常见折中是维护一个服务端黑名单或缩短有效期 + refresh token，这其实又把一部分状态拉回了服务端。
+          </li>
+          <li>
+            <strong>误区：以为跨域时请求没发出去。</strong>请求大多发到了服务器、也被处理了，
+            是浏览器因响应缺 CORS 头把结果拦在交给 JS 之前——后端日志里能看到这条请求。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「登录态怎么保持」，答主线：Cookie 存浏览器、Session 存服务端，
@@ -253,6 +278,11 @@ export default function Ch3() {
           对比响应里有没有 <code>Access-Control-Allow-Origin</code>，再换一个不被允许的 Origin，
           体会服务端是怎么决定「放不放行」的。
         </p>
+        <p>
+          再用 <code>dig</code> 把 DNS 解析看透：<code>+trace</code> 看递归路径，观察 TTL 递减，追一条 CNAME 链，
+          建立「域名→IP 不是一步到位」的直觉：
+        </p>
+        <CodeBlock lang="bash" title="用 dig 看递归、TTL 与 CNAME 链" code={digTraceCode} />
       </Practice>
 
       <Summary
@@ -262,6 +292,8 @@ export default function Ch3() {
           'HTTP 无状态，靠 Cookie（存浏览器）+ Session（存服务端）保持会话，Cookie 携带 sessionId 让服务端识别身份。',
           'Token/JWT 把用户信息装进自带签名的令牌、服务端只验签不存会话，天然适合分布式与前后端分离。',
           '同源 = 协议 + 域名 + 端口三者全同；跨域是浏览器拦响应，请求其实已到服务器。',
+          'DNS 默认 UDP 53，响应超 512 字节或区域传送切 TCP；记录类型 A/AAAA/CNAME/MX/NS/TXT，CDN 靠返回不同 IP 做就近调度。',
+          'XSS 是在你浏览器里跑恶意脚本（HttpOnly 防偷 Cookie），CSRF 是冒用你身份发请求（SameSite/Token 防跨站带 Cookie），各管一摊。',
           '解决跨域首选 CORS（服务端声明 Allow-Origin，非简单请求先发 OPTIONS 预检），另有 JSONP 和网关代理。',
         ]}
       />

@@ -366,6 +366,93 @@ export default function Ch8_4() {
         </p>
       </Callout>
 
+      <h2>数据在层与层之间怎么流</h2>
+      <p>
+        把模块拼起来只是骨架，真正决定系统好不好维护的，是<strong>层与层之间传的是什么</strong>。
+        这里复用第 7 卷的核心纪律：每一层只认上一层产出的<strong>结构化契约</strong>，
+        互相不去碰对方的内部实现。下面把一条退款请求在三层之间流动的数据形状写出来：
+      </p>
+      <CodeBlock lang="python" title="data_contract.py" code={dataflowCode} />
+      <p>
+        注意最后那条注释：<code>confidence</code>、<code>handled_by</code>、<code>escalated</code>
+        这些内部字段只进 trace 和日志，<strong>绝不透传给前端</strong>。这正是第 7 卷「单一出口」
+        和第 1 章「PII 脱敏」在终点的合流——所有对外的东西都在服务层这一个口子收口、脱敏、再吐出去。
+      </p>
+
+      <h2>高风险动作要用测试钉死</h2>
+      <p>
+        整个系统里最不能出错的就是退款这种<strong>会动真钱</strong>的动作。第 6 卷讲过护栏要在代码层硬校验，
+        但「写了护栏」和「护栏真的有效」之间还差一层——<strong>测试</strong>。LLM 的行为会随 prompt、
+        模型版本漂移，唯一不漂移的是你为护栏写的单元测试。下面三条用例分别钉死护栏的三条关键分支：
+        合规放行、超额升级、越界拒绝。
+      </p>
+      <CodeBlock lang="python" title="tests/test_refund_guard.py" code={testCode} />
+      <Callout variant="warn" title="为什么护栏测试比 Agent 测试更重要">
+        <p>
+          Agent 的「回答得好不好」是模糊的、随机的，很难写确定性断言；但护栏的「该不该放款」
+          是<strong>非黑即白</strong>的，必须、也能够用确定性测试覆盖。这是一条很实用的优先级：
+          <strong>测试资源优先砸在确定性强、出错代价高的环节上</strong>——护栏、金额校验、权限边界，
+          而不是去纠结模型某句话的措辞。
+        </p>
+      </Callout>
+
+      <h2>上线前的最后一张检查表</h2>
+      <p>
+        系统搭完、测试过了，临门一脚前再对照这张表过一遍——它把前三章的运维要点和本章的安全要点
+        浓缩成了可勾选的清单：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>检查项</th>
+            <th>出处</th>
+            <th>没做会怎样</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>每次 LLM/工具调用都在 span 里</td>
+            <td>第 1 章</td>
+            <td>出问题查不到是哪一步</td>
+          </tr>
+          <tr>
+            <td>trace 写入前已做 PII 脱敏</td>
+            <td>第 1 章</td>
+            <td>日志泄露即合规事故</td>
+          </tr>
+          <tr>
+            <td>分诊 / 判别走小模型</td>
+            <td>第 2 章</td>
+            <td>账单成倍虚高</td>
+          </tr>
+          <tr>
+            <td>短期历史有裁剪上限</td>
+            <td>第 2 章</td>
+            <td>上下文雪球，成本失控</td>
+          </tr>
+          <tr>
+            <td>密钥走环境变量、启动即校验</td>
+            <td>第 3 章</td>
+            <td>泄露 / 运行时才崩</td>
+          </tr>
+          <tr>
+            <td>外部调用有超时 + 重试 + 熔断</td>
+            <td>第 3 章</td>
+            <td>依赖一抖整站被拖垮</td>
+          </tr>
+          <tr>
+            <td>退款护栏有单元测试覆盖</td>
+            <td>第 6 章</td>
+            <td>漂移一发生就放错钱</td>
+          </tr>
+          <tr>
+            <td>能 5 分钟灰度回滚</td>
+            <td>第 3 章</td>
+            <td>坏版本全量炸用户</td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2>八卷如何映射到这个项目</h2>
       <p>这台机器就是八卷知识的总装。逐一对照，你会看到每一卷都没有白学：</p>
       <ul>

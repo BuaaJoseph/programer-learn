@@ -38,6 +38,36 @@ while (1) {
 }
 // 痛点：fd 数量有上限（FD_SETSIZE，通常 1024）；每次 O(n) 拷贝+遍历`
 
+const etCode = `// ET（边缘触发）必须把数据一次读干净，否则剩下的数据不会再通知
+// 所以 ET 下 fd 必须设为非阻塞，循环 read 直到 EAGAIN
+ev.events = EPOLLIN | EPOLLET;             // 打开边缘触发
+// ...
+while (1) {
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n > 0) {
+        handle(buf, n);                    // 继续读，别停
+    } else if (n == -1 && errno == EAGAIN) {
+        break;                             // 读空了，本次到此为止
+    } else if (n == 0) {
+        close(fd); break;                  // 对端关闭
+    }
+}`
+
+const reactorCode = `// Reactor：epoll 之上的事件分发框架，Netty/Redis 的骨架
+// 主循环 = 事件循环（event loop）
+while (running) {
+    int n = epoll_wait(ep, events, MAX, timeout);   // 等事件
+    for (int i = 0; i < n; i++) {
+        if (events[i].data.fd == listen_fd)
+            accept_handler();              // 新连接到来
+        else if (events[i].events & EPOLLIN)
+            read_handler(events[i].data.fd);   // 可读，分发给对应回调
+        else if (events[i].events & EPOLLOUT)
+            write_handler(events[i].data.fd);  // 可写
+    }
+}
+// 单 Reactor 单线程：Redis 早期；主从多 Reactor：Netty 默认`
+
 export default function Ch4() {
   return (
     <>
@@ -86,6 +116,19 @@ export default function Ch4() {
 
       <IoModels />
 
+      <table>
+        <thead>
+          <tr><th>模型</th><th>等待阶段</th><th>拷贝阶段</th><th>同步/异步</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>BIO 阻塞</td><td>线程挂起</td><td>线程做</td><td>同步阻塞</td></tr>
+          <tr><td>NIO 非阻塞</td><td>轮询不挂起</td><td>线程做</td><td>同步非阻塞</td></tr>
+          <tr><td>多路复用</td><td>内核盯，select/epoll 阻塞</td><td>线程做</td><td>同步</td></tr>
+          <tr><td>信号驱动</td><td>内核发信号通知</td><td>线程做</td><td>同步</td></tr>
+          <tr><td>AIO 异步</td><td>内核做</td><td>内核做</td><td>异步</td></tr>
+        </tbody>
+      </table>
+
       <h2>同步/异步、阻塞/非阻塞，到底怎么分</h2>
       <p>
         这是最容易绕晕、也最爱考的点。判据就盯住上面那两个阶段：
@@ -103,6 +146,14 @@ export default function Ch4() {
         按这个判据：前四种（BIO、NIO、多路复用、信号驱动）的拷贝阶段都要线程自己来，所以<strong>都属于同步</strong>；
         只有 AIO 是真异步。很多人误以为「多路复用是异步」，其实它只是把「等」这一步交给内核统一盯着，拷贝还得自己来。
       </p>
+      <Callout variant="info" title="别把 I/O 阻塞与线程阻塞混为一谈">
+        <p>
+          还有个高频误区：把「同步阻塞」和「同步」「阻塞」当成可以随便组合的两个独立旋钮。其实判据要严格对应阶段——
+          <strong>阻塞看等待、同步看拷贝</strong>，所以「同步非阻塞」是合法的（NIO 轮询），但「异步阻塞」几乎不存在
+          （既然拷贝都交给内核了，线程没理由再为等待挂起）。Java NIO 的名字也有迷惑性：它底层是多路复用（epoll），
+          属于同步非阻塞，并不是真正的异步 IO，这点常被问到。
+        </p>
+      </Callout>
 
       <h2>select / poll / epoll 的区别</h2>
       <p>
@@ -122,10 +173,29 @@ export default function Ch4() {
           <code>epoll_wait</code> 直接返回就绪列表，<strong>不必遍历全部 fd</strong>，效率几乎不随连接数增长而下降。
         </li>
       </ul>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>select</th><th>poll</th><th>epoll</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>fd 上限</td><td>1024</td><td>无硬上限</td><td>无硬上限</td></tr>
+          <tr><td>fd 集合传递</td><td>每次全拷贝</td><td>每次全拷贝</td><td>注册一次，常驻内核</td></tr>
+          <tr><td>找就绪 fd</td><td>O(n) 遍历</td><td>O(n) 遍历</td><td>回调，O(就绪数)</td></tr>
+          <tr><td>触发模式</td><td>仅 LT</td><td>仅 LT</td><td>LT / ET</td></tr>
+        </tbody>
+      </table>
       <p>
         epoll 还有两种触发模式：<em>LT</em>（水平触发，只要还有数据没读完就一直通知，默认、好用不易丢事件）和
         <em>ET</em>（边缘触发，状态变化时只通知一次，必须一次把数据读干净，效率更高但编程更难）。
       </p>
+      <CodeBlock lang="c" title="epoll_et.c" code={etCode} />
+      <Callout variant="warn" title="epoll 不是万能，小连接数反而 select 更划算">
+        <p>
+          一个常见误区是「epoll 永远比 select 好」。其实连接数很少时（几十个），epoll 的红黑树维护和系统调用次数反而是负担，
+          select 一把梭更简单更快。epoll 的优势在<strong>连接多、活跃比例低</strong>的场景才显现——这也是「没有银弹，看场景」
+          这条工程通则的又一例。另外 ET 模式必须配非阻塞 fd 并循环读到 <code>EAGAIN</code>，否则会漏数据，这是 ET 编程第一坑。
+        </p>
+      </Callout>
 
       <Example title="一个线程处理万级连接">
         <p>
@@ -138,6 +208,16 @@ export default function Ch4() {
           换成 select，就得每轮把 5 万个 fd 拷进内核再遍历一遍——这就是 epoll 能用一个线程扛万级连接的根本原因。
         </p>
       </Example>
+
+      <h2>Reactor：epoll 之上的事件模型</h2>
+      <p>
+        裸用 epoll 还不够工程化，真实框架（Netty、Redis、Nginx）都把它包成 <strong>Reactor 模式</strong>：一个
+        <em>事件循环</em>（event loop）不停 <code>epoll_wait</code>，拿到就绪事件后按类型<strong>分发</strong>给对应的处理回调
+        （新连接 → accept、可读 → read、可写 → write）。Redis 早期是<strong>单 Reactor 单线程</strong>（一个循环干所有事，
+        靠纯内存 + epoll 跑出高 QPS）；Netty 默认<strong>主从多 Reactor 多线程</strong>（主 Reactor 只管 accept，
+        从 Reactor 们分摊已建立连接的读写），充分利用多核。理解 Reactor，就把「epoll 这个系统调用」和「高并发框架架构」打通了。
+      </p>
+      <CodeBlock lang="c" title="reactor_loop.c" code={reactorCode} />
 
       <Callout variant="warn" title="为什么 Redis / Nginx / Netty 都选 epoll">
         <p>
@@ -159,7 +239,8 @@ export default function Ch4() {
       <p>
         被问 I/O 模型，先抛出<strong>两阶段（等待就绪、拷贝数据）</strong>这把尺，再用它量五种模型，顺势讲清同步/异步、阻塞/非阻塞的判据。
         接着重点对比 <strong>select/poll/epoll</strong>：fd 上限、每次是否重复拷贝全集合、遍历还是回调、epoll 的 LT/ET。
-        最后落到「Redis/Nginx/Netty 为什么用 epoll、它怎么解 C10K」，知识点就完整闭环了。
+        最后落到「Redis/Nginx/Netty 为什么用 epoll、怎么用 Reactor 解 C10K」，知识点就完整闭环了。
+        高频追问：Java NIO 是不是异步（不是，是同步非阻塞的多路复用）、ET 为什么要非阻塞 + 读到 EAGAIN。
       </p>
 
       <Practice title="说清 epoll 的三步用法">
@@ -182,9 +263,10 @@ export default function Ch4() {
         points={[
           '一次 I/O 分两阶段：等数据就绪、把数据从内核拷到用户空间；五种模型的差别全在这两步怎么处理。',
           '五种模型：阻塞 BIO、非阻塞 NIO（轮询）、I/O 多路复用、信号驱动、异步 AIO。',
-          '阻塞/非阻塞看「等待」要不要挂起线程；同步/异步看「拷贝」是不是内核替你完成——只有 AIO 是真异步。',
+          '阻塞/非阻塞看「等待」要不要挂起线程；同步/异步看「拷贝」是不是内核替你完成——只有 AIO 是真异步，Java NIO 其实是同步非阻塞。',
           'select 有 fd 上限且每次拷贝全集合并线性遍历；poll 去掉上限但仍遍历；epoll 注册一次、回调通知、只返回就绪 fd。',
-          'epoll 有 LT（水平触发，默认安全）和 ET（边缘触发，效率高但要一次读干净）两种模式。',
+          'epoll 有 LT（水平触发，默认安全）和 ET（边缘触发，效率高但要非阻塞且一次读到 EAGAIN）两种模式；连接少时 select 反而更划算。',
+          '真实框架把 epoll 封成 Reactor 事件循环：单 Reactor（Redis）或主从多 Reactor（Netty）按事件分发回调。',
           'Redis、Nginx、Netty 都用 epoll 在少量线程上服务海量连接，这正是 C10K 高并发问题的标准解法。',
         ]}
       />
