@@ -40,6 +40,25 @@ def get_data(key):
         circuit_breaker.record_failure()  # 失败计数，触发熔断
         return DEGRADED_DEFAULT           # 降级兜底，绝不把异常抛给用户`
 
+const multiLevelCode = `# 多级缓存：本地缓存(Caffeine/进程内) → Redis → DB，层层拦截
+def get_data(key):
+    # L1 本地缓存：进程内、纳秒级、不走网络，Redis 抖动时还能顶一阵
+    val = local_cache.get(key)
+    if val is not None:
+        return val
+
+    # L2 Redis：跨进程共享的分布式缓存
+    val = redis.get(key)
+    if val is not None:
+        local_cache.put(key, val, ttl=10)   # 本地缓存设更短 TTL，减小不一致窗口
+        return val
+
+    # L3 DB：最后回源，并逐层回填
+    data = db.query(key)
+    set_with_jitter(key, data)              # 回填 Redis(带抖动)
+    local_cache.put(key, data, ttl=10)      # 回填本地
+    return data`
+
 export default function Ch3() {
   return (
     <>
@@ -91,21 +110,23 @@ export default function Ch3() {
       <p>
         最直接、性价比最高的一招：给过期时间<strong>加上一个随机值</strong>，比如基础 1 小时再加 0 到 10 分钟的随机量。
         这样原本会对齐到同一秒的几万个 key，被<strong>打散</strong>到一段时间窗口里陆续过期，数据库的重建压力被摊平，
-        不会再出现「同一秒集体失效」。
+        不会再出现「同一秒集体失效」。注意抖动幅度要和业务匹配：太小打散不够，太大会让部分数据过早失效降低命中率。
       </p>
 
       <h3>二、多级缓存</h3>
       <p>
         在 Redis 之外，再加一层<strong>本地缓存</strong>（如进程内的 Caffeine、Guava Cache）。请求先查本地缓存，
         未命中再查 Redis，最后才到数据库。即便 Redis 出问题或某批 key 失效，本地缓存还能挡掉一部分流量，
-        形成多道防线，降低数据库的瞬时冲击。
+        形成多道防线，降低数据库的瞬时冲击。代价是本地缓存与 Redis 之间会有<strong>短暂不一致</strong>，
+        所以本地缓存的 TTL 通常设得很短，并可借助消息广播做失效通知。
       </p>
+      <CodeBlock lang="python" title="multi_level_cache.py" code={multiLevelCode} />
 
       <h3>三、Redis 高可用集群</h3>
       <p>
         针对「Redis 整体宕机」这类成因，根本对策是<strong>不让缓存层成为单点</strong>：用<em>哨兵</em>（Sentinel）
         做主从自动故障转移，或用 <em>Cluster</em> 集群分片 + 副本。即使个别节点挂掉，整体缓存服务依然可用，
-        流量不会因为缓存消失而无差别砸向数据库。
+        流量不会因为缓存消失而无差别砸向数据库。这部分原理在卷四会专门展开。
       </p>
 
       <h3>四、熔断、限流、降级兜底</h3>
@@ -113,7 +134,7 @@ export default function Ch3() {
         前面几招都是「尽量别让流量打到数据库」，这一招是「万一真打过来了，也要保住数据库不被打死」。
         <strong>限流</strong>给数据库设一道流量闸门，超出阈值的请求直接拒绝；<strong>熔断</strong>在检测到数据库已不健康时，
         快速失败、不再继续发请求；<strong>降级</strong>则在上述情况下返回兜底默认值或友好提示页，而不是把异常抛给用户。
-        这是系统的最后一道安全网。
+        这是系统的最后一道安全网，常用 Sentinel(阿里)、Resilience4j、Hystrix 等组件落地。
       </p>
 
       <KeyIdea title="四道防线各管一段">
@@ -124,6 +145,25 @@ export default function Ch3() {
           越靠前的防线性价比越高，越靠后的越是保命用的最后手段。
         </p>
       </KeyIdea>
+
+      <table>
+        <thead>
+          <tr><th>成因</th><th>对症手段</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>大量 key 集中过期</td><td>过期加随机抖动、多级缓存、错峰预热</td></tr>
+          <tr><td>Redis 整体宕机</td><td>哨兵/Cluster 高可用、多级缓存兜底</td></tr>
+          <tr><td>流量已打到 DB</td><td>限流、熔断、降级返回兜底</td></tr>
+        </tbody>
+      </table>
+
+      <Callout variant="info" title="一个常被忽略的细节：穿透/击穿/雪崩会叠加">
+        <p>
+          三大问题不是互斥的。大促时常常<strong>同时发生</strong>：热点 key 击穿、大批 key 雪崩、加上有人趁机刷不存在的 key 穿透。
+          所以生产里这些防护手段（空值/布隆 + 锁/逻辑过期 + 抖动/多级/高可用 + 熔断限流降级）通常是<strong>全套上</strong>的，
+          而不是三选一。能在面试里点出「它们会叠加、要组合防护」，比单独答每一道题更显工程经验。
+        </p>
+      </Callout>
 
       <h2>面试怎么答</h2>
       <p>
@@ -152,9 +192,9 @@ export default function Ch3() {
           '缓存雪崩：大批 key 在同一时刻集中过期，或 Redis 整体宕机，流量瞬间全压到数据库。',
           '与击穿的区别：雪崩是大面积失守（面），击穿是单个热点 key 被打穿（点）。',
           '防护一是过期时间加随机抖动：打散过期时刻，避免同一批 key 同一秒集体失效。',
-          '防护二是多级缓存：本地缓存 + Redis 多道防线，降低数据库的瞬时冲击。',
+          '防护二是多级缓存：本地缓存 + Redis 多道防线，降低数据库的瞬时冲击(注意本地缓存短 TTL 控不一致)。',
           '防护三是 Redis 高可用集群（哨兵/Cluster）：避免缓存层整体宕机这一单点风险。',
-          '防护四是熔断、限流、降级兜底：流量真打到数据库时保住数据库，是最后一道安全网。',
+          '防护四是熔断、限流、降级兜底：流量真打到数据库时保住数据库；实战中穿透/击穿/雪崩防护常全套叠加使用。',
         ]}
       />
     </>

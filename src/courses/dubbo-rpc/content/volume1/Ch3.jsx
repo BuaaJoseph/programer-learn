@@ -18,6 +18,34 @@ dubbo:
 # @DubboService(serialization = "kryo")
 # public class UserServiceImpl implements UserService { ... }`
 
+const protoIdlCode = `// Protobuf 需要先写 IDL（.proto），再用编译器生成各语言代码
+syntax = "proto3";
+option java_package = "com.example.user";
+
+message User {
+  int64 id = 1;       // 注意：用「字段编号」1/2/3 代替字段名，这是它省体积的关键
+  string name = 2;
+  int32 age = 3;
+}
+
+message GetByIdRequest { int64 id = 1; }
+
+service UserService {
+  rpc GetById (GetByIdRequest) returns (User);
+}
+// 字段编号一旦上线就不能改、不能复用——这是协议向后兼容的铁律`
+
+const dubboHeaderCode = `// Dubbo 协议帧：固定 16 字节头 + 变长 body，二进制解析极快
+//
+//  0      1      2        3          4 ... 11         12 ... 15
+// +------+------+--------+----------+-----------------+----------+
+// | 0xda | 0xbb | 标志位  | 状态     |   8 字节 requestId |  body长度 |
+// +------+------+--------+----------+-----------------+----------+
+//   魔数（识别是不是Dubbo包）  序列化类型藏在标志位低5位
+//
+// 收包时：先读 16 字节头 -> 拿到 body 长度 -> 精确读 body 字节 -> 反序列化
+// 「先读定长头、再按长度读 body」就是 TCP 粘包/拆包问题的标准解法`
+
 export default function Ch3() {
   return (
     <>
@@ -70,6 +98,22 @@ export default function Ch3() {
       </Example>
 
       <SerializationCompare />
+
+      <h3>Protobuf 为什么这么省：字段编号的秘密</h3>
+      <p>
+        Protobuf 体积小的核心原因，是它<strong>不传字段名</strong>。JSON 里每个字段都要把 <code>"name"</code>
+        这个字符串本身也传过去，而 Protobuf 在 IDL 里给每个字段分配一个数字编号，字节流里只出现编号 + 值，
+        字段名只存在于编译期生成的代码里。这就引出一条铁律：<strong>字段编号一旦上线就不能改、不能复用</strong>，
+        否则新旧两端会把字节解析到完全不同的字段上：
+      </p>
+      <CodeBlock lang="protobuf" title="Protobuf IDL 与字段编号" code={protoIdlCode} />
+      <Callout variant="tip" title="向后兼容怎么做">
+        <p>
+          加字段用新编号、永不删除老编号（要废弃就标 <code>reserved</code>）、不改已有字段类型——
+          遵守这三条，新老版本的服务就能在升级期间共存。Dubbo 用 Hessian2 时兼容性更宽松（带字段名），
+          但「消费端多一个提供端没有的字段、或反之」这类问题，Hessian2 一般能容忍，少传的字段取默认值。
+        </p>
+      </Callout>
 
       <h2>协议层：Dubbo 协议 vs HTTP</h2>
       <p>
