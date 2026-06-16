@@ -52,8 +52,11 @@ export function createProvider(cfg: ProviderConfig = {}): Provider {
   switch (name) {
     case 'claude':
       return new ClaudeProvider({ model: cfg.model, contextWindow: cfg.contextWindow })
+    case 'bailian':
+      // 百炼（阿里云 DashScope）：OpenAI 兼容接口，默认 Qwen 模型。
+      return new BailianProvider({ model: cfg.model, contextWindow: cfg.contextWindow })
     default:
-      throw new Error(\`未知 provider「\${name}」。目前内置：claude。新增 provider 只需实现 Provider 接口并在 createProvider 注册。\`)
+      throw new Error(\`未知 provider「\${name}」。目前内置：claude、bailian。新增 provider 只需实现 Provider 接口并在 createProvider 注册。\`)
   }
 }
 
@@ -124,14 +127,18 @@ export default function Ch2() {
         这正是上一章 <code>loadConfig</code> 跑完之后该调用它的地方：配置负责「想要什么」，工厂负责「把它造出来」。
       </p>
 
-      <Example title="新增一个 Provider 要改哪里">
-        <p>假设你现在想接入 OpenAI，或者一个本地跑的开源模型。需要动的地方一共两处：</p>
+      <Example title="新增一个 Provider 要改哪里（以接入阿里云百炼为例）">
+        <p>
+          这不是假设——forge 已经按这个套路接入了<strong>阿里云百炼（DashScope，Qwen 系列）</strong>。
+          百炼提供 OpenAI 兼容接口，所以新 Provider 内部用 OpenAI SDK、把 forge 的消息/工具翻译成 OpenAI 格式即可。需要动的地方一共两处：
+        </p>
         <ol>
-          <li>新建一个 class（比如 <code>OpenAIProvider</code>），实现 <code>Provider</code> 接口——也就是把 <code>model</code> / <code>contextWindow</code> / <code>complete</code> / <code>countTokens</code> 这四样填上，把该厂商的方言全收在这个文件里。</li>
-          <li>在 <code>createProvider</code> 的 <code>switch</code> 里加一个 <code>case</code>，把名字映射到新 class。</li>
+          <li>新建一个 class <code>BailianProvider</code>（在 <code>src/provider/bailian.ts</code>），实现 <code>Provider</code> 接口——把 <code>model</code> / <code>contextWindow</code> / <code>complete</code> / <code>countTokens</code> 这四样填上，把「OpenAI 兼容协议」这套方言全收在这个文件里。</li>
+          <li>在 <code>createProvider</code> 的 <code>switch</code> 里加一个 <code>case 'bailian'</code>，把名字映射到新 class（就是上面代码里那一行）。</li>
         </ol>
         <p>
-          就这样。主循环、工具、CLI、权限系统、上下文压缩——一行都不用动。它们只认 <code>Provider</code> 接口，根本感知不到背后多了个厂商。
+          就这样。之后只要在配置里写 <code>{'"provider": "bailian", "model": "qwen-max"'}</code>，forge 就换用 Qwen 跑了。
+          主循环、工具、CLI、权限系统、上下文压缩——一行都不用动。它们只认 <code>Provider</code> 接口，根本感知不到背后从 Claude 换成了 Qwen。
           这就是当初忍着不写「直接 new 一个客户端」、坚持先抽象的回报。
         </p>
       </Example>

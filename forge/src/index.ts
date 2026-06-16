@@ -25,9 +25,9 @@ async function main(): Promise<void> {
 
   const config = loadConfig(process.cwd())
 
-  // API key 可来自配置文件(apiKey) 或环境变量(ANTHROPIC_API_KEY)，二者有其一即可。
-  if (!config.apiKey && !process.env.ANTHROPIC_API_KEY) {
-    console.error('未找到 API 密钥。请在 ~/.forge/config.json 配置 apiKey，或设置环境变量 ANTHROPIC_API_KEY。')
+  // API key 可来自配置文件(apiKey) 或环境变量；不同 provider 的默认环境变量不同。
+  if (!config.apiKey && !process.env.ANTHROPIC_API_KEY && !process.env.DASHSCOPE_API_KEY) {
+    console.error('未找到 API 密钥。请在 ~/.forge/config.json 配置 apiKey，或设置环境变量 ANTHROPIC_API_KEY（百炼用 DASHSCOPE_API_KEY）。')
     process.exit(1)
   }
 

@@ -78,12 +78,31 @@ forge 读取两级配置，**项目级覆盖全局级**：
 
 | 字段 | 说明 | 默认 |
 | --- | --- | --- |
-| `apiKey` | API 密钥 | 读环境变量 `ANTHROPIC_API_KEY` |
-| `baseURL` | API 基址。接入代理 / 中转 / 兼容端点时填；留空走官方 | 官方默认 |
-| `model` | 模型标识 | `claude-opus-4-8` |
+| `provider` | 模型平台：`claude` 或 `bailian`（阿里云百炼） | `claude` |
+| `apiKey` | API 密钥 | 读环境变量（见下） |
+| `baseURL` | API 基址。接入代理 / 中转 / 兼容端点时填；留空走该 provider 默认 | provider 默认 |
+| `model` | 模型标识 | claude: `claude-opus-4-8`；bailian: `qwen-max` |
 | `maxTokens` | 单轮最大输出 token | `8192` |
-| `contextWindow` | 上下文窗口大小（token） | `1000000` |
+| `contextWindow` | 上下文窗口大小（token） | claude: `1000000`；bailian: `32768` |
 | `mcpServers` | 要接入的 MCP server | 无 |
+
+### 用百炼（阿里云 DashScope，Qwen 系列）
+
+forge 支持多个模型平台。要用阿里云百炼的 Qwen 模型，把 `provider` 设为 `bailian` 即可——它走百炼的 OpenAI 兼容接口：
+
+```json
+{
+  "provider": "bailian",
+  "apiKey": "sk-百炼的-API-KEY",
+  "model": "qwen-max"
+}
+```
+
+- 密钥也可用环境变量 `DASHSCOPE_API_KEY`。
+- `baseURL` 默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`，一般无需填写。
+- `model` 可填 `qwen-max` / `qwen-plus` / `qwen-turbo` 等百炼支持的模型；长上下文模型记得相应调大 `contextWindow`。
+
+> 想再接别的平台？只要它有 OpenAI 兼容接口，照着 `src/provider/bailian.ts` 实现一个 Provider、在 `createProvider` 注册一行即可——主循环、工具、CLI 都不用动。
 
 > 💡 仓库根目录有一份 `config.example.json`，把它复制到 `~/.forge/config.json` 改一下即可。
 >
@@ -95,6 +114,9 @@ forge 读取两级配置，**项目级覆盖全局级**：
 export ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
 # 可选：自定义端点
 export ANTHROPIC_BASE_URL=https://your-proxy.example.com
+
+# 用百炼时
+export DASHSCOPE_API_KEY=sk-xxxxxxxx
 ```
 
 > 配置文件里的 `apiKey` / `baseURL` 优先级高于环境变量。

@@ -33,7 +33,8 @@
   "author": "BuaaJoseph",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.70.0"
+    "@anthropic-ai/sdk": "^0.70.0",
+    "openai": "^6.42.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
