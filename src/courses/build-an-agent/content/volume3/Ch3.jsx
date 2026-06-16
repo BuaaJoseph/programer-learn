@@ -71,6 +71,60 @@ const sampleJsonl = `{"ts":"2026-06-16T09:12:03.118Z","type":"llm_round","model"
 {"ts":"2026-06-16T09:12:07.951Z","type":"confirm","tool":"edit","reason":"写入工作区文件需确认","approved":true}
 {"ts":"2026-06-16T09:12:08.063Z","type":"tool_call","tool":"edit","input":{"path":"src/server.ts","old":"port = 3000","new":"port = 8080"},"isError":false}`
 
+const structuredVsTextSrc = `// 两种记日志的方式，事后能不能查，天差地别。
+
+// ✗ 非结构化（拼成一句人话）：好读，但机器没法筛、没法统计。
+console.log(\`[\${new Date().toISOString()}] 执行了 edit src/server.ts，用户已确认\`)
+//  事后想问「哪些 edit 被拒了」？只能正则去抠这行字符串，脆且不准。
+
+// ✓ 结构化（字段化的对象）：好查、可聚合、可机读。
+audit.log({ type: 'tool_call', tool: 'edit', input: { path: 'src/server.ts' }, isError: false })
+//  事后 jq 一句就能筛 type=tool_call 且 isError=true 的全部记录。
+
+// 原则：日志是写给「未来的查询」看的，不是写给「此刻的眼睛」看的。
+// 先结构化存字段，要给人看时再渲染成人话——反过来就回不去了。`
+
+const replaySrc = `import { readFileSync } from 'node:fs'
+
+// 回放：把一次会话的审计日志逐行读出来，重建「发生过什么」的时间线。
+// 注意——回放的是「决策与事件」，不是「重新执行」。审计不是录像带，是飞行记录。
+export function replay(file: string): void {
+  const lines = readFileSync(file, 'utf8').split('\\n').filter(Boolean)
+  for (const line of lines) {
+    const e = JSON.parse(line)
+    switch (e.type) {
+      case 'llm_round':
+        console.log(\`\${e.ts}  🧠 模型决定（\${e.model}，\${e.usage?.outputTokens ?? 0} tok）\`)
+        break
+      case 'permission':
+        console.log(\`\${e.ts}  🔒 裁定 \${e.tool} → \${e.decision}：\${e.reason}\`)
+        break
+      case 'confirm':
+        console.log(\`\${e.ts}  🙋 用户\${e.approved ? '同意' : '拒绝'}了 \${e.tool}\`)
+        break
+      case 'tool_call':
+        console.log(\`\${e.ts}  ⚙ 执行 \${e.tool}\${e.isError ? '（失败）' : ''}\`)
+        break
+    }
+  }
+}`
+
+const traceSrc = `// 把审计事件升级成「分布式追踪」里的 span，就能接进 OpenTelemetry 之类的可观测体系。
+// 关键是给每条记录补两个字段：traceId（整次会话）和 spanId（单步操作）+ 父子关系。
+interface TracedEntry extends AuditEntry {
+  traceId: string      // 一次会话 = 一条 trace
+  spanId: string       // 一步操作 = 一个 span
+  parentSpanId?: string // 谁触发了我（llm_round → permission → tool_call 形成树）
+  durationMs?: number  // 这步耗时，用来画火焰图、找瓶颈
+}
+
+// 有了 trace/span，一次会话就能在 Jaeger / Tempo 里画成一棵调用树：
+//   llm_round (1.2s)
+//   └─ permission edit (0.3ms)
+//      └─ confirm edit (4.5s ← 用户在这儿想了半天)
+//         └─ tool_call edit (12ms)
+// 一眼看出时间花在哪、哪步出错、模型绕了几个来回。`
+
 export default function Ch3() {
   return (
     <article>
