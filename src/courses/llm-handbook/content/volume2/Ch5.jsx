@@ -62,6 +62,20 @@ export default function Ch5() {
         </p>
       </Lead>
 
+      <h2>先记住一句话：每个旋钮都对应概率视角里的一个动作</h2>
+      <p>
+        这些参数最容易被当成「玄学数字」来背。但只要套上第 1 卷的概率视角，它们立刻变得可解释：模型每步在词表上给出一个分布，
+        而这一排参数，无非是在<strong>「分布生成 → 分布整形 → 从分布里采样 → 何时停」</strong>这条流水线的不同环节上拧一下。
+      </p>
+      <ul>
+        <li><strong>整形分布</strong>：temperature（拉尖/抹平）、frequency/presence_penalty（压低出现过的词）、logit_bias（手动加减某些词）。</li>
+        <li><strong>限定采样范围</strong>：top_p（只在高概率核心里采）。</li>
+        <li><strong>控制停止与数量</strong>：max_tokens、stop（何时停）、n（采几条）。</li>
+      </ul>
+      <p>
+        下面逐个拆，但请始终带着这条主线读——你会发现没有一个参数是孤立的魔法，它们各自对应着一个你能讲清楚因果的动作。
+      </p>
+
       <h2>API 参数逐个讲</h2>
       <p>把它们和第 1 卷的概率视角对上，每个参数就不再是玄学：</p>
       <ul>
@@ -96,6 +110,17 @@ export default function Ch5() {
         </li>
       </ul>
 
+      <h3>两类旋钮：作用在 logits 上 vs 作用在采样上</h3>
+      <p>
+        把这一排参数分成两类，立刻就清楚了。一类<strong>改变分布本身</strong>（在 softmax 前后动 logits）：temperature、
+        frequency_penalty、presence_penalty、logit_bias——它们改的是「每个词有多大概率」。另一类<strong>限定从哪采、采到何时停</strong>：
+        top_p（从哪些候选里采）、max_tokens 和 stop（采到什么时候停）、n（采几条）。
+      </p>
+      <p>
+        这个分类的实用价值在于：当输出不对劲时，先判断问题属于「分布形状不对」（该调第一类）还是「采样范围/停止时机不对」（该调第二类）。
+        比如「老蹦废词」是分布问题（用 logit_bias 压），「答到一半被切」是停止问题（调 max_tokens），别拿错工具治错病。
+      </p>
+
       <h3>prompt 层面的约束</h3>
       <p>
         参数管的是「分布与采样」，但很多约束在 prompt 里说更直接：要求字数、句数、格式、语气。
@@ -124,6 +149,38 @@ export default function Ch5() {
         </p>
       </Example>
 
+      <Example title="logit_bias 为什么按 token id、而不是按词">
+        <p>
+          <code>logit_bias</code> 的键是 <strong>token id</strong>，不是「词」——这直接源于第 1 卷：模型在词表的 token 上输出 logits，
+          偏置自然也加在 token 上。这带来两个实际后果：
+        </p>
+        <ul>
+          <li>
+            <strong>一个词可能是多个 token</strong>：「抱歉」可能被切成两个 token，你得把它们的 id 都查出来分别加偏置
+            （看本章 Practice 里 <code>enc.encode('抱歉')</code> 返回的是一个 id 列表，就是这个原因）。
+          </li>
+          <li>
+            <strong>带空格的 token 是另一个 id</strong>：<code>{' yes'}</code>（带前导空格）和 <code>{'yes'}</code> 是不同 token，
+            想禁一个词，常常要把它的几种变体 id 都覆盖到，否则会从「漏网的那个变体」蹦出来。
+          </li>
+        </ul>
+        <p>
+          所以 logit_bias 是「最精细但也最琐碎」的一把刀：威力大（能从机制上禁/促），但要先和分词器打交道。
+          能用 stop、structured outputs 这类更高层手段解决的，就别动用它。
+        </p>
+      </Example>
+
+      <h3>temperature 和 top_p：别同时乱调</h3>
+      <p>
+        两者都在控随机性，但作用点不同：temperature 改整个分布的尖平（在 softmax 前缩放 logits），top_p 在改完的分布上做截断
+        （只保留累积概率前 p 的核心候选）。它们是<strong>配合</strong>关系，不是替代——但正因为都管随机性，<strong>新手最好一次只主调一个</strong>。
+      </p>
+      <p>
+        实战里两种稳妥玩法：要么固定 top_p=1.0、只调 temperature；要么固定 temperature=1.0、只调 top_p。两个一起从默认值乱拧，
+        你会分不清输出的变化到底是谁造成的，调试时一团乱麻。生产中常见的安全组合是「temperature 0.7 + top_p 0.9」，但那是调好后的结果，
+        不是你该一开始就同时动两个旋钮的理由。
+      </p>
+
       <KeyIdea title="这些旋钮都在动同一件东西">
         <p>
           temperature、top_p、frequency/presence_penalty、logit_bias，看着各不相同，其实都在做同一件事：
@@ -131,6 +188,27 @@ export default function Ch5() {
           理解了第 1 卷的「分布」视角，这一排参数就从一堆魔法数字，变成了一组你能讲清楚因果的杠杆。
         </p>
       </KeyIdea>
+
+      <h3>一张「症状 → 旋钮」速查表</h3>
+      <p>遇到输出问题，对着这张表找药方，比凭感觉乱拧高效得多：</p>
+      <table>
+        <thead>
+          <tr><th>症状</th><th>首选旋钮</th><th>原理</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>啰嗦、说不完</td><td>max_tokens 收紧 + stop 收尾 + prompt 给简洁示范</td><td>限长 + 内容性收尾</td></tr>
+          <tr><td>复读、鬼打墙</td><td>frequency_penalty 调高</td><td>按出现次数压低重复词</td></tr>
+          <tr><td>翻来覆去不换话题</td><td>presence_penalty 调高</td><td>出现过就压，促新词</td></tr>
+          <tr><td>跑题、太发散</td><td>temperature 或 top_p 调低</td><td>分布变尖，少采低概率词</td></tr>
+          <tr><td>输出太死板、没创意</td><td>temperature 调高</td><td>分布抹平，给低概率词机会</td></tr>
+          <tr><td>不守格式</td><td>structured outputs（第 4 章）</td><td>从机制上锁格式</td></tr>
+          <tr><td>老蹦某个废词/口头禅</td><td>logit_bias 把它压到 -100</td><td>直接禁用该 token</td></tr>
+          <tr><td>结果不可复现，难调试</td><td>temperature=0 + 固定 seed</td><td>去随机</td></tr>
+        </tbody>
+      </table>
+      <p>
+        切记<strong>一次只动一个</strong>：先固定一个 temperature=0 的可复现 baseline，再单独拧一个旋钮观察，才看得清是谁带来的变化。
+      </p>
 
       <Callout variant="warn" title="负面指令陷阱：「不要提到 X」反而提示了 X">
         <p>
@@ -145,6 +223,26 @@ export default function Ch5() {
           </li>
         </ul>
       </Callout>
+
+      <h2>stop 与 max_tokens：两种「停下来」</h2>
+      <p>
+        这两个参数都管「何时停止生成」，但性质完全不同，值得分清：
+      </p>
+      <ul>
+        <li>
+          <strong>stop 是「内容性停止」</strong>：命中某个字符串就停，是<strong>语义上的收尾</strong>。比如让它生成单条记录、遇到
+          <code>\n\n</code> 或 <code>###</code> 就停，输出是「完整的一段」。停得干净、可预期。
+        </li>
+        <li>
+          <strong>max_tokens 是「硬性截断」</strong>：到了上限不管说没说完都<strong>当场剁断</strong>。它是成本和失控的<strong>兜底闸门</strong>，
+          不是收尾手段。被它截断的输出往往是「半句话」「半截 JSON」，下游要么解析失败、要么拿到残缺内容。
+        </li>
+      </ul>
+      <p>
+        正确姿势：用 stop 做<strong>正常收尾</strong>，用 max_tokens 做<strong>防失控的安全上限</strong>，并把上限设得比预期输出长一截，
+        留足余量。很多「输出莫名其妙被切断」的事故，根源就是 max_tokens 设得太抠。检查响应里的 <code>finish_reason</code>——
+        是 <code>stop</code>（正常）还是 <code>length</code>（被 max_tokens 截了），能帮你一眼定位。
+      </p>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
