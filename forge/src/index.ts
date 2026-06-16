@@ -4,10 +4,12 @@ import { ALL_TOOLS } from './tools/index.js'
 import { makeTodoTool } from './tools/todo.js'
 import { makeTaskTool } from './tools/task.js'
 import { TodoStore } from './todo.js'
-import { ClaudeProvider } from './provider/claude.js'
+import { createProvider } from './provider/index.js'
 import { buildSystemPrompt } from './context.js'
 import { startRepl } from './repl.js'
 import { FileAuditLog } from './audit.js'
+import { loadConfig } from './config.js'
+import { loadMcpTools } from './mcp.js'
 import type { Tool } from './tools/types.js'
 
 const DIM = '\x1b[2m'
@@ -21,10 +23,14 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const provider = new ClaudeProvider()
+  const config = loadConfig(process.cwd())
+  const provider = createProvider({ provider: config.provider, model: config.model, contextWindow: config.contextWindow })
   const sessionId = new Date().toISOString().replace(/[:.]/g, '-')
   const audit = new FileAuditLog(process.cwd(), sessionId)
   const todos = new TodoStore()
+
+  // 接入配置里声明的 MCP server，把它们的工具一并注册进来。
+  const mcpTools = config.mcpServers ? await loadMcpTools(config.mcpServers) : []
 
   // 子代理：用主代理的核心工具 + 独立上下文跑子任务，共用主代理的确认通道。
   // 注意子代理的工具里不含 task 本身，避免无限递归派生。
@@ -42,8 +48,8 @@ async function main(): Promise<void> {
     return sub.runTurn(prompt)
   })
 
-  // 主代理的完整工具表 = 核心工具 + 任务清单 + 子代理。
-  const tools: Tool[] = [...ALL_TOOLS, makeTodoTool(todos), taskTool]
+  // 主代理的完整工具表 = 核心工具 + 任务清单 + 子代理 + MCP 工具。
+  const tools: Tool[] = [...ALL_TOOLS, makeTodoTool(todos), taskTool, ...mcpTools]
 
   agent = new Agent({
     provider,
@@ -51,6 +57,7 @@ async function main(): Promise<void> {
     system: buildSystemPrompt(process.cwd()),
     cwd: process.cwd(),
     audit,
+    maxTokens: config.maxTokens,
     // 事件渲染器：把 Agent 的内部事件画到终端。
     onEvent: (e) => {
       switch (e.type) {

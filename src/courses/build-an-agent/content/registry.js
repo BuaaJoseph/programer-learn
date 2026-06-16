@@ -23,6 +23,9 @@ export const CONTENT = {
   'ba5-c1': lazy(() => import('./volume5/Ch1.jsx')),
   'ba5-c2': lazy(() => import('./volume5/Ch2.jsx')),
   'ba5-c3': lazy(() => import('./volume5/Ch3.jsx')),
+  'ba6-c1': lazy(() => import('./volume6/Ch1.jsx')),
+  'ba6-c2': lazy(() => import('./volume6/Ch2.jsx')),
+  'ba6-c3': lazy(() => import('./volume6/Ch3.jsx')),
 }
 export function hasContent(slug) {
   return Object.prototype.hasOwnProperty.call(CONTENT, slug)

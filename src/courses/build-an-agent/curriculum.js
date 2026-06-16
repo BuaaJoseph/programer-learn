@@ -84,9 +84,9 @@ export const VOLUMES = [
     subtitle: 'Extensibility',
     theme: '一个能长久用的工具必须可配置、可换模型、可接外部能力。这一卷做配置系统、Provider 抽象层、接入 MCP。',
     chapters: [
-      { slug: 'ba6-c1', title: '配置系统：项目级与全局级', topic: '配置', hook: '~/.forge 与项目 .forge 两级配置：模型、权限、API key、自定义 prompt 都能配，按优先级合并。', minutes: 120, hasContent: false },
-      { slug: 'ba6-c2', title: 'Provider 抽象：把模型换成可插拔的', topic: 'Provider 抽象', hook: '把「调用 LLM」收敛到一个薄接口后，默认 Claude，但能轻松切换或新增 Provider，不动主循环。', minutes: 150, hasContent: false },
-      { slug: 'ba6-c3', title: 'MCP：接入外部工具生态', topic: 'MCP', hook: '实现一个 MCP 客户端，把外部 MCP server 暴露的工具动态注册进 forge 的工具表——能力即插即用。', minutes: 150, hasContent: false },
+      { slug: 'ba6-c1', title: '配置系统：项目级与全局级', topic: '配置', hook: '~/.forge 与项目 .forge 两级配置：模型、权限、API key、自定义 prompt 都能配，按优先级合并。', minutes: 120, hasContent: true },
+      { slug: 'ba6-c2', title: 'Provider 抽象：把模型换成可插拔的', topic: 'Provider 抽象', hook: '把「调用 LLM」收敛到一个薄接口后，默认 Claude，但能轻松切换或新增 Provider，不动主循环。', minutes: 150, hasContent: true },
+      { slug: 'ba6-c3', title: 'MCP：接入外部工具生态', topic: 'MCP', hook: '实现一个 MCP 客户端，把外部 MCP server 暴露的工具动态注册进 forge 的工具表——能力即插即用。', minutes: 150, hasContent: true },
     ],
   },
   {
