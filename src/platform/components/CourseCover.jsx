@@ -69,6 +69,8 @@ export default function CourseCover({ course }) {
         <OsProcScene />
       ) : coverScene === 'patterns' ? (
         <PatternsScene />
+      ) : coverScene === 'agentloop' ? (
+        <AgentLoopScene />
       ) : (
         <AttentionScene />
       )}
@@ -483,6 +485,38 @@ function PatternsScene() {
         )
       })}
       <text x="40" y="186" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">SOLID · 创建/结构/行为型</text>
+    </g>
+  )
+}
+
+function AgentLoopScene() {
+  // 三阶段环形主循环：收集→行动→验证
+  const nodes = [
+    { x: 110, y: 60, t: '收集' },
+    { x: 250, y: 60, t: '行动' },
+    { x: 180, y: 130, t: '验证' },
+  ]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.1" fill="none" strokeWidth="2">
+        <circle cx="360" cy="40" r="50" />
+        <circle cx="360" cy="40" r="80" />
+      </g>
+      <g stroke="#ffffff" strokeOpacity="0.45" strokeWidth="2" fill="none">
+        <path d="M150 66 L210 66" markerEnd="url(#al-cov)" />
+        <path d="M248 80 L196 122" markerEnd="url(#al-cov)" />
+        <path d="M150 124 L124 84" markerEnd="url(#al-cov)" />
+      </g>
+      <defs>
+        <marker id="al-cov" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#ffffff" fillOpacity="0.6" /></marker>
+      </defs>
+      {nodes.map((n, i) => (
+        <g key={i}>
+          <circle cx={n.x} cy={n.y} r="30" fill="#ffffff" fillOpacity={i === 0 ? 0.26 : 0.16} stroke="#ffffff" strokeOpacity="0.55" strokeWidth="1.4" />
+          <text x={n.x} y={n.y + 5} textAnchor="middle" fontFamily="var(--display)" fontSize="14" fontWeight="700" fill="#ffffff">{n.t}</text>
+        </g>
+      ))}
+      <text x="40" y="178" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">model + harness · agentic loop</text>
     </g>
   )
 }

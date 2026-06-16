@@ -4,6 +4,7 @@ import llmHandbook from '../courses/llm-handbook/index.js'
 import mysqlInternals from '../courses/mysql-internals/index.js'
 import redisInternals from '../courses/redis-internals/index.js'
 import claudeSkills from '../courses/claude-skills/index.js'
+import agentInternals from '../courses/agent-internals/index.js'
 import rabbitmq from '../courses/rabbitmq/index.js'
 import dubboRpc from '../courses/dubbo-rpc/index.js'
 import kafka from '../courses/kafka/index.js'
@@ -19,6 +20,7 @@ import designPatterns from '../courses/design-patterns/index.js'
 
 export const COURSES = [
   llmHandbook,
+  agentInternals,
   claudeSkills,
   jvm,
   javaConcurrency,
