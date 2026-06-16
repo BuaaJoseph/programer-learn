@@ -7,7 +7,7 @@ export const meta = {
   subCategoryId: 'agent',
   level: '进阶',
   cover: '🧩',
-  coverScene: 'layers',
+  coverScene: 'skilldoc',
   accent: '#7a4fc0',
   pricing: 'free',
   description:

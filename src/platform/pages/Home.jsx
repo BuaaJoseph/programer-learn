@@ -1,8 +1,15 @@
+import { Link } from 'react-router-dom'
 import PlatformLayout from '../PlatformLayout.jsx'
 import CourseCard from '../components/CourseCard.jsx'
-import { COURSES } from '../../catalog/courses.js'
+import { CATEGORIES } from '../../catalog/categories.js'
+import { coursesByCategory } from '../../catalog/courses.js'
 
 export default function Home() {
+  // 只展示「有课程」的一级分类，每个分类一组。
+  const groups = CATEGORIES.map((cat) => ({ cat, courses: coursesByCategory(cat.id) })).filter(
+    (g) => g.courses.length > 0,
+  )
+
   return (
     <PlatformLayout>
       <div className="container">
@@ -17,15 +24,25 @@ export default function Home() {
           </p>
         </section>
 
-        <section>
-          <h2 className="section-title">全部课程</h2>
-          <p className="section-desc">目前已上线的课程，更多方向陆续补齐。</p>
-          <div className="course-grid">
-            {COURSES.map((course) => (
-              <CourseCard key={course.meta.slug} course={course} />
-            ))}
-          </div>
-        </section>
+        {groups.map(({ cat, courses }) => (
+          <section className="cat-group" key={cat.id}>
+            <div className="cat-group-head">
+              <h2 className="section-title">
+                <span className="cat-group-icon">{cat.icon}</span>
+                {cat.title}
+                <span className="cat-group-sub">{cat.subtitle}</span>
+              </h2>
+              <Link className="cat-group-more" to={`/c/${cat.id}`}>
+                查看全部 →
+              </Link>
+            </div>
+            <div className="course-grid">
+              {courses.map((course) => (
+                <CourseCard key={course.meta.slug} course={course} />
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </PlatformLayout>
   )

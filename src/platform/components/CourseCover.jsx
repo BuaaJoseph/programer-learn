@@ -43,6 +43,8 @@ export default function CourseCover({ course }) {
         <KvGridScene />
       ) : coverScene === 'layers' ? (
         <LayersScene />
+      ) : coverScene === 'skilldoc' ? (
+        <SkillDocScene />
       ) : (
         <AttentionScene />
       )}
@@ -163,6 +165,38 @@ function LayersScene() {
         </g>
       ))}
       <text x="50" y="170" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">progressive disclosure</text>
+    </g>
+  )
+}
+
+function SkillDocScene() {
+  // 一份 SKILL.md 文档卡 + 拼图块，点题「写 Skill」
+  return (
+    <g>
+      {/* 右侧拼图块（半透明） */}
+      <path
+        d="M250 54 h44 a8 8 0 0 1 8 8 v18 a14 14 0 0 1 28 0 v18 a8 8 0 0 1 -8 8 h-18 a14 14 0 0 0 0 28 h18 a8 8 0 0 1 8 8 v18 a8 8 0 0 1 -8 8 h-44 a8 8 0 0 1 -8 -8 v-44 a8 8 0 0 1 8 -8 v0 a14 14 0 0 0 0 -28 v-44 z"
+        fill="#ffffff" fillOpacity="0.12" stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.5"
+        transform="translate(40 0)"
+      />
+
+      {/* 文档卡 */}
+      <rect x="32" y="34" width="210" height="132" rx="10" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.2" />
+      <text x="46" y="54" fontFamily="var(--mono)" fontSize="12" fontWeight="700" fill="#ffffff">SKILL.md</text>
+      <line x1="46" y1="62" x2="228" y2="62" stroke="#ffffff" strokeOpacity="0.25" />
+
+      <text x="46" y="80" fontFamily="var(--mono)" fontSize="10" fill="#ffffff" fillOpacity="0.7">---</text>
+      <text x="46" y="95" fontFamily="var(--mono)" fontSize="10.5" fill="#ffffff">name: skill</text>
+      <text x="46" y="110" fontFamily="var(--mono)" fontSize="10.5" fill="#ffffff">description:</text>
+      <rect x="118" y="102" width="110" height="8" rx="4" fill="#ffffff" fillOpacity="0.45" />
+      <text x="46" y="125" fontFamily="var(--mono)" fontSize="10" fill="#ffffff" fillOpacity="0.7">---</text>
+
+      {/* 正文行 */}
+      {[138, 150].map((y, i) => (
+        <rect key={i} x="46" y={y} width={i === 0 ? 170 : 130} height="7" rx="3.5" fill="#ffffff" fillOpacity="0.3" />
+      ))}
+
+      <text x="32" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">write your SKILL.md</text>
     </g>
   )
 }

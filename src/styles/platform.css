@@ -193,6 +193,44 @@
   color: var(--accent-strong);
 }
 
+/* ============ 首页按分类分组 ============ */
+.cat-group {
+  margin-bottom: 44px;
+}
+.cat-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.cat-group-head .section-title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.cat-group-icon {
+  font-size: 1.3rem;
+}
+.cat-group-sub {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+.cat-group-more {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cat-group-more:hover {
+  color: var(--accent-strong);
+}
+
 /* ============ 课程卡片网格 ============ */
 .course-grid {
   display: grid;

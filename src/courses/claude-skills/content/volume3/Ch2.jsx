@@ -21,6 +21,16 @@ name: skill-creator
 description: Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.
 ---`
 
+const xlsxFront = `---
+name: xlsx
+description: Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path, even casually. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved.
+---`
+
+const mcpFront = `---
+name: mcp-builder
+description: Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).
+---`
+
 const descTemplate = `---
 name: <用连字符的小写英文名，如 invoice-parser>
 description: <动词1>, <动词2>, and <动词3> <对象/文件格式>. Use when <具体触发场景1>, <场景2>, or <场景3>. Do NOT use for <易混淆的场景，如 PDF / spreadsheet / general coding>.
@@ -31,8 +41,8 @@ export default function Ch2() {
     <>
       <Lead>
         <p>
-          想写出好 Skill，最快的路是拆解已经被验证过的好 Skill。本章把 Anthropic 三个官方 Skill——
-          <em>pdf</em>、<em>docx</em>、<em>skill-creator</em>——的 frontmatter 原文摆出来逐个分析，
+          想写出好 Skill，最快的路是拆解已经被验证过的好 Skill。本章把 Anthropic 五个官方 Skill——
+          <em>pdf</em>、<em>docx</em>、<em>skill-creator</em>、<em>xlsx</em>、<em>mcp-builder</em>——的 frontmatter 原文摆出来逐个分析，
           看它们的 description 为什么能被准确触发、正文为什么能被照着执行。看完你会发现：好 Skill 有一套共通的范式。
         </p>
       </Lead>
@@ -95,7 +105,37 @@ export default function Ch2() {
         <li><strong>每步都有可衡量产出</strong>——eval 看成功率、benchmark 看方差、description 优化看触发准确率，每个动作都对应一个数字。</li>
       </ul>
 
-      <KeyIdea title="三个范例的共同范式">
+      <h2>范例四：xlsx——把触发判断锚定在「交付物类型」</h2>
+      <CodeBlock lang="yaml" title="xlsx · SKILL.md frontmatter" code={xlsxFront} />
+      <p>
+        xlsx 把 description 当「触发说明书」写到了极致。它不仅详尽描述何时<strong>触发</strong>
+        （任何以表格文件为主要输入或输出的任务，甚至用户只是随口提到文件名或路径），
+        还反复强调一个判定锚点：<strong>最终交付物是不是一个 spreadsheet 文件</strong>。
+      </p>
+      <ul>
+        <li><strong>用交付物类型消歧</strong>——同样涉及表格数据，若交付物是 Word、HTML 报告、独立脚本、数据库管道或 Google Sheets API，它明确「Do NOT trigger」。把模糊的「和表格有关」收敛成清晰的「交付物是 .xlsx/.csv」。</li>
+        <li><strong>覆盖随口表达</strong>——「the xlsx in my downloads」这种口语化引用也算触发信号，贴合真实用户说话方式。</li>
+      </ul>
+      <Callout variant="tip" title="当多个 Skill 容易抢触发时，用『交付物/主输入』来划界">
+        <p>
+          表格数据可能同时和 docx、数据库、脚本沾边。xlsx 的解法是：不看「话题」，看「主要输入/输出是不是电子表格」。
+          当你的 Skill 和别的 Skill 领域重叠时，找一个这样的硬锚点写进 description，触发冲突会大幅减少。
+        </p>
+      </Callout>
+
+      <h2>范例五：mcp-builder——知识型 Skill 也能写得很好</h2>
+      <CodeBlock lang="yaml" title="mcp-builder · SKILL.md frontmatter" code={mcpFront} />
+      <p>
+        前四个都是「操作某类文件」的 Skill，mcp-builder 则是另一类：<strong>传授方法论的知识型 Skill</strong>。
+        它不替你处理文件，而是指导你<em>构建高质量的 MCP server</em>。
+      </p>
+      <ul>
+        <li><strong>用技术栈当触发线索</strong>——description 点明 Python(FastMCP) 与 Node/TypeScript(MCP SDK)，当用户在这些场景下「写 MCP server」时精准触发。</li>
+        <li><strong>正文是结构化流程</strong>——它把开发拆成研究规划 → 实现 → 评审测试 → 生成 eval 四个阶段，并要求用「10 个真实复杂问题」验证 server，是一套可照着走的工程方法论。</li>
+        <li><strong>启示</strong>——Skill 不一定要「动手做事」；把团队沉淀的最佳实践写成知识型 Skill，同样能在合适时机自动喂给模型。</li>
+      </ul>
+
+      <KeyIdea title="这些范例的共同范式">
         <p>
           把三个 Skill 叠在一起看，会浮现出同一套写法：description <strong>精炼到 80~100 词</strong>，
           触发条件<strong>具体到动词与场景</strong>、绝不出现 helps、can、various 这类模糊词；
@@ -143,6 +183,8 @@ export default function Ch2() {
           'docx：同时写 Use when 与 Do NOT use 的正负边界，锁定文件格式与动词，避免与其它 Skill 冲突。',
           'docx 正文把不可协商的规则（默认 A4、用段落对象、表宽显式）写成编号命令，并强制 unpack→编辑 XML→pack 工作流。',
           'skill-creator 是 meta skill，覆盖创建→编辑→评测→优化全生命周期，每一步都有可衡量产出。',
+          'xlsx 把触发判断锚定在「交付物是不是电子表格」，用硬锚点消除与相邻 Skill 的触发冲突。',
+          'mcp-builder 是知识型 Skill 范本：不动手做事，而是传授构建 MCP server 的结构化方法论。',
           '共同范式：description 精炼 80~100 词、触发条件具体不含 helps/can 等模糊词、正文围绕可执行步骤、复杂细节拆到 reference。',
           '写完用检查清单逐条自查，是把 Skill 写好最实用的一步。',
         ]}
