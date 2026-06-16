@@ -45,6 +45,10 @@ export default function CourseCover({ course }) {
         <LayersScene />
       ) : coverScene === 'skilldoc' ? (
         <SkillDocScene />
+      ) : coverScene === 'mqflow' ? (
+        <MqFlowScene />
+      ) : coverScene === 'rpccall' ? (
+        <RpcCallScene />
       ) : (
         <AttentionScene />
       )}
@@ -197,6 +201,63 @@ function SkillDocScene() {
       ))}
 
       <text x="32" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">write your SKILL.md</text>
+    </g>
+  )
+}
+
+function MqFlowScene() {
+  // 生产者 → 交换机 → 多个队列 → 消费者，点题消息路由与解耦
+  return (
+    <g>
+      {/* producer */}
+      <rect x="24" y="84" width="64" height="34" rx="8" fill="#ffffff" fillOpacity="0.18" stroke="#ffffff" strokeOpacity="0.5" />
+      <text x="56" y="105" textAnchor="middle" fontFamily="var(--mono)" fontSize="10" fontWeight="700" fill="#ffffff">producer</text>
+      {/* exchange (菱形) */}
+      <g transform="translate(150 101)">
+        <rect x="-22" y="-22" width="44" height="44" rx="6" transform="rotate(45)" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.55" />
+        <text x="0" y="4" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fontWeight="700" fill="#ffffff">X</text>
+      </g>
+      <line x1="88" y1="101" x2="124" y2="101" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.5" />
+      {/* queues */}
+      {[56, 101, 146].map((y, i) => (
+        <g key={i}>
+          <line x1="178" y1="101" x2="244" y2={y + 13} stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.3" />
+          <rect x="244" y={y} width="86" height="26" rx="5" fill="#ffffff" fillOpacity="0.15" stroke="#ffffff" strokeOpacity="0.45" />
+          {[0, 1, 2, 3].map((b) => (
+            <rect key={b} x={252 + b * 16} y={y + 8} width="11" height="10" rx="2" fill="#ffffff" fillOpacity={0.55 - b * 0.1} />
+          ))}
+          <line x1="330" y1={y + 13} x2="356" y2={y + 13} stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.3" />
+          <circle cx="368" cy={y + 13} r="10" fill="#ffffff" fillOpacity="0.18" stroke="#ffffff" strokeOpacity="0.5" />
+        </g>
+      ))}
+      <text x="24" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">producer → exchange → queues</text>
+    </g>
+  )
+}
+
+function RpcCallScene() {
+  // consumer ↔ provider 调用链，中间是序列化/网络
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.08" fill="none" strokeWidth="2">
+        <circle cx="360" cy="36" r="50" />
+        <circle cx="360" cy="36" r="80" />
+      </g>
+      {/* consumer */}
+      <rect x="28" y="74" width="96" height="52" rx="10" fill="#ffffff" fillOpacity="0.2" stroke="#ffffff" strokeOpacity="0.55" />
+      <text x="76" y="96" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">Consumer</text>
+      <text x="76" y="112" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.8">proxy stub</text>
+      {/* provider */}
+      <rect x="276" y="74" width="96" height="52" rx="10" fill="#ffffff" fillOpacity="0.2" stroke="#ffffff" strokeOpacity="0.55" />
+      <text x="324" y="96" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">Provider</text>
+      <text x="324" y="112" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.8">real impl</text>
+      {/* 中间：序列化/网络 */}
+      <line x1="124" y1="90" x2="276" y2="90" stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.6" markerEnd="url(#rc-a)" />
+      <line x1="276" y1="110" x2="124" y2="110" stroke="#ffffff" strokeOpacity="0.35" strokeWidth="1.4" markerEnd="url(#rc-a)" />
+      <text x="200" y="84" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.85">request · 序列化</text>
+      <text x="200" y="124" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.7">response</text>
+      <defs><marker id="rc-a" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#ffffff" fillOpacity="0.7" /></marker></defs>
+      <text x="28" y="170" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">call remote like local</text>
     </g>
   )
 }

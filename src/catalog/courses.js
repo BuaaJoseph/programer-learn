@@ -4,8 +4,10 @@ import llmHandbook from '../courses/llm-handbook/index.js'
 import mysqlInternals from '../courses/mysql-internals/index.js'
 import redisInternals from '../courses/redis-internals/index.js'
 import claudeSkills from '../courses/claude-skills/index.js'
+import rabbitmq from '../courses/rabbitmq/index.js'
+import dubboRpc from '../courses/dubbo-rpc/index.js'
 
-export const COURSES = [llmHandbook, claudeSkills, mysqlInternals, redisInternals]
+export const COURSES = [llmHandbook, claudeSkills, mysqlInternals, redisInternals, rabbitmq, dubboRpc]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null
