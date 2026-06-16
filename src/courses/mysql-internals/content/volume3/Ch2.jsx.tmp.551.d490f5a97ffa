@@ -106,6 +106,16 @@ export default function Ch2() {
         不可重复读针对已有行的修改，幻读针对<strong>新增/删除的行</strong>（INSERT/DELETE 导致结果集行数变化）。
       </p>
 
+      <h3>第四种异常：丢失更新（lost update）</h3>
+      <p>
+        标准定义的三种异常之外，实战里最常坑人的其实是<em>丢失更新</em>：两个事务都“先读后写”，
+        后提交的那个用自己基于旧值算出的结果，<strong>覆盖</strong>了先提交那个的修改。比如两人同时给余额 100 减钱，
+        A 减 30、B 减 50，各自基于 100 计算，结果不是 20 而是 50 或 70——有一笔扣款凭空消失了。
+        它本质是“读到的旧值算完再写回”这个模式的通病，<strong>提高隔离级别并不能直接根治</strong>，
+        必须靠原子更新（<code>SET balance = balance - 30</code>）或当前读加锁（<code>FOR UPDATE</code>）来解决。
+      </p>
+      <CodeBlock lang="sql" title="lost_update.sql" code={lostUpdateSql} />
+
       <Example title="一句话区分三者">
         <p>用「会话 A 在一个事务里读，会话 B 在旁边捣乱”来记忆：</p>
         <ul>
