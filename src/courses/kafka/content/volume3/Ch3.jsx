@@ -26,6 +26,17 @@ const checklistCode = `选型决策清单（按问题逐条勾选）
    - Java 技术栈、阿里系经验               → RocketMQ
    - 多语言、AMQP 标准、运维要简单         → RabbitMQ`
 
+const kraftCfgCode = `# KRaft 模式：不再依赖 ZooKeeper，元数据由 Kafka 自己用 Raft 管
+# 一台机器可同时担任 broker 和 controller（生产建议分离）
+process.roles=broker,controller
+node.id=1
+controller.quorum.voters=1@host1:9093,2@host2:9093,3@host3:9093
+listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+
+# 首次启动需要先生成集群 ID 并格式化存储目录
+# bin/kafka-storage.sh random-uuid
+# bin/kafka-storage.sh format -t <CLUSTER_ID> -c config/kraft/server.properties`
+
 export default function Ch3() {
   return (
     <>
@@ -42,6 +53,20 @@ export default function Ch3() {
         三者都是消息中间件，但出身和取向差别很大：Kafka 生于大数据日志管道，RabbitMQ 是经典的 AMQP 消息代理，
         RocketMQ 脱胎于阿里电商的交易场景。下面逐个维度看差异。
       </p>
+
+      <table>
+        <thead>
+          <tr><th>维度</th><th>Kafka</th><th>RabbitMQ</th><th>RocketMQ</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>吞吐</td><td>最强（十万~百万/s）</td><td>万级</td><td>较强</td></tr>
+          <tr><td>延迟</td><td>略高（攒批）</td><td>低</td><td>较低</td></tr>
+          <tr><td>模型</td><td>分区日志</td><td>exchange 路由</td><td>topic+queue+tag</td></tr>
+          <tr><td>堆积/回溯</td><td>原生强</td><td>弱</td><td>较强</td></tr>
+          <tr><td>事务消息</td><td>流处理 EOS</td><td>无</td><td>原生招牌</td></tr>
+          <tr><td>生态</td><td>大数据最厚</td><td>AMQP 通用</td><td>阿里系/国内</td></tr>
+        </tbody>
+      </table>
 
       <h3>吞吐与延迟</h3>
       <p>
@@ -85,6 +110,29 @@ export default function Ch3() {
         集群和分区管理有学习曲线，但成熟度高、资料多。RocketMQ 需要部署 NameServer + Broker，运维复杂度居中。
       </p>
 
+      <h2>插一段：KRaft 让 Kafka 甩掉了 ZooKeeper</h2>
+      <p>
+        既然提到运维，这里专门讲一个对选型很关键的演进：<strong>KRaft</strong>（Kafka Raft）。
+        老版本 Kafka 把集群元数据（topic、分区、副本、ISR、controller 选举等）全交给外部的 <strong>ZooKeeper</strong> 管，
+        这意味着你要额外运维一套 ZK 集群，元数据变更要走 ZK，分区规模一大（几十万）controller 从 ZK 加载元数据会很慢、故障恢复也慢。
+      </p>
+      <p>
+        KRaft（KIP-500，2.8 实验、3.3 起生产可用、4.0 起彻底移除 ZK）把元数据搬进 Kafka 自己的一个内部元数据日志，
+        用 <strong>Raft 协议</strong>在一组 controller 节点间共识。好处很直接：<strong>少运维一套 ZK</strong>、
+        元数据本身也是一条日志（变更增量传播，故障恢复秒级）、支持的分区数量级大幅提升。
+        面试被问「ZooKeeper 在 Kafka 里做什么 / 为什么要去掉它」，把上面这条线说清就够了。
+      </p>
+      <CodeBlock lang="properties" title="kraft-server.properties" code={kraftCfgCode} />
+
+      <Callout variant="info" title="Controller 到底管什么">
+        <p>
+          不管 ZK 还是 KRaft，集群里都有一个 <strong>Controller</strong>（控制器）角色，负责<strong>集群级</strong>的协调：
+          监听 broker 上下线、为分区选举新 Leader、把元数据变更下发给各 broker。注意它和前面讲的
+          <strong>分区 Leader</strong>、<strong>Group Coordinator</strong> 是不同层次的角色——Controller 管整个集群的元数据，
+          分区 Leader 管单个分区的读写，Group Coordinator 管单个消费组的成员与位移。面试里别把这三者混为一谈。
+        </p>
+      </Callout>
+
       <Example title="三个场景，三种选择">
         <p>用三个典型需求，把「该选谁」推导出来：</p>
         <ul>
@@ -120,11 +168,22 @@ export default function Ch3() {
         </p>
       </Callout>
 
+      <Callout variant="info" title="延时/死信：Kafka 的短板与变通">
+        <p>
+          再点一个常被追问的差距：<strong>延时消息</strong>和<strong>死信队列（DLQ）</strong>。RabbitMQ 有 TTL + DLX、
+          RocketMQ 有原生延时级别，而 Kafka <strong>原生不支持任意延时</strong>。Kafka 里常见的变通是：建几个固定延时档的
+          topic 配合「转发」、或用外部调度器/Kafka Streams 的定时器实现；死信则是自己建一个 <code>xxx.DLT</code> topic，
+          消费失败到达重试上限后把消息转投进去（Spring Kafka 的 DeadLetterPublishingRecoverer 就是干这个的）。
+          要原生延时/事务，Kafka 不是最佳选择——这正是选型要点出的边界。
+        </p>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         遇到选型题，先<strong>反问场景</strong>：数据量级多大？要不要回溯重放？路由复杂不复杂？要不要事务/定时消息？团队栈是什么？
         然后用六个维度（吞吐延迟、消息模型、堆积回溯、顺序事务、生态、运维）逐一对照，
         最后给出结论并说明取舍。展现「按需推导」的过程，远比报一串数字更打动面试官。
+        若追问运维与新版本，补一句 Kafka 已用 KRaft 取代 ZooKeeper、4.0 起彻底移除，运维更简、可支撑更多分区。
       </p>
 
       <Practice title="做一张按需求选 MQ 的决策清单">
@@ -144,8 +203,9 @@ export default function Ch3() {
           'Kafka 吞吐最强、分区日志模型、天然支持海量堆积与 offset 回溯，是流处理与大数据管道的标准底座。',
           'RabbitMQ 的 exchange 模型路由最灵活、延迟低、部署轻，适合复杂路由与业务解耦。',
           'RocketMQ 原生支持事务消息与定时/延时消息，最贴合电商、金融的交易场景。',
-          '一句话选型：日志大数据流→Kafka，复杂路由业务解耦→RabbitMQ，事务/定时消息→RocketMQ。',
-          '选型先问场景诉求再按维度推导，别脱离场景只比吞吐量。',
+          'KRaft 用 Raft 自管元数据取代 ZooKeeper（4.0 起彻底移除），运维更简、支持更多分区；Controller/分区Leader/GroupCoordinator 三角色别混。',
+          'Kafka 原生缺延时消息和死信队列，需用多档延时 topic 或自建 DLT 变通。',
+          '一句话选型：日志大数据流→Kafka，复杂路由业务解耦→RabbitMQ，事务/定时消息→RocketMQ；先问场景再按维度推导，别只比吞吐量。',
         ]}
       />
     </>
