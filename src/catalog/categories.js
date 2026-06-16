@@ -2,6 +2,16 @@
 // 课程通过 meta 里的 categoryId + subCategoryId 挂到对应二级分类下。
 export const CATEGORIES = [
   {
+    id: 'agent',
+    title: '大模型与 Agent',
+    subtitle: 'LLM & Agents',
+    icon: '🤖',
+    subs: [
+      { id: 'llm', title: '大模型', subtitle: 'LLM' },
+      { id: 'dev', title: 'Agent 开发', subtitle: 'Build Agents' },
+    ],
+  },
+  {
     id: 'server',
     title: '服务端',
     subtitle: 'Backend',
@@ -10,7 +20,6 @@ export const CATEGORIES = [
       { id: 'java', title: 'Java', subtitle: 'Java 后端' },
       { id: 'database', title: '数据库', subtitle: 'Database' },
       { id: 'middleware', title: '中间件', subtitle: 'Middleware' },
-      { id: 'agent', title: 'Agent 开发', subtitle: 'LLM & Agents' },
     ],
   },
   {

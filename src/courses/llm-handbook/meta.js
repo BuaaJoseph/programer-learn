@@ -5,8 +5,8 @@ export const meta = {
   shortTitle: '大模型学习手册',
   subtitle: 'From LLM Internals to Agents',
   // 归属：服务端 / agent 开发
-  categoryId: 'server',
-  subCategoryId: 'agent',
+  categoryId: 'agent',
+  subCategoryId: 'llm',
   level: '进阶',
   cover: '🤖',
   coverScene: 'attention',
