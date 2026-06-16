@@ -5,6 +5,7 @@ import { buildToolRegistry } from './tools/index.js'
 import { defaultPolicy, type PermissionPolicy } from './permissions.js'
 import { noopAudit, type AuditLog } from './audit.js'
 import { renderTranscript, COMPACTION_SYSTEM } from './compaction.js'
+import { CostTracker } from './cost.js'
 
 /** 危险操作确认请求：交给上层（CLI）向用户问一句 y/N。 */
 export interface ConfirmRequest {
@@ -38,6 +39,8 @@ export interface AgentOptions {
   audit?: AuditLog
   /** 上下文占用超过窗口的这个比例时，触发自动压缩。默认 0.8。 */
   compactThreshold?: number
+  /** 每处理完用户的一轮输入后回调（用于持久化会话等）。 */
+  onTurnComplete?: () => void
 }
 
 export type AgentEvent =
@@ -66,6 +69,8 @@ export class Agent {
   private needCompact = false
   /** 计划模式：只读探索、产出计划、不改任何东西。 */
   private planMode = false
+  private cost = new CostTracker()
+  private onTurnComplete?: () => void
   /** 跨多次 runTurn 持续累积的会话历史。 */
   messages: Message[] = []
 
@@ -82,6 +87,17 @@ export class Agent {
     this.confirm = opts.confirm
     this.audit = opts.audit ?? noopAudit
     this.compactThreshold = opts.compactThreshold ?? 0.8
+    this.onTurnComplete = opts.onTurnComplete
+  }
+
+  /** 恢复历史（供 --resume 使用）。 */
+  loadHistory(messages: Message[]): void {
+    this.messages = messages
+  }
+
+  /** 成本/延迟统计摘要（供 /cost 命令使用）。 */
+  costSummary(): string {
+    return this.cost.summary(this.provider.model)
   }
 
   /** 设置危险操作确认回调（供 REPL 注入 y/N 提问）。 */
@@ -131,6 +147,7 @@ export class Agent {
       const tools = this.planMode ? this.toolList.filter((t) => t.readOnly) : this.toolList
       const system = this.planMode ? this.system + PLAN_MODE_SUFFIX : this.system
 
+      const t0 = Date.now()
       const res = await this.provider.complete({
         system,
         messages: this.messages,
@@ -138,6 +155,7 @@ export class Agent {
         maxTokens: this.maxTokens,
         onTextDelta: (delta) => this.onEvent?.({ type: 'assistant_delta', text: delta }),
       })
+      this.cost.add(res.usage, Date.now() - t0)
       this.audit.log({ type: 'llm_round', model: this.provider.model, stopReason: res.stopReason, usage: res.usage })
       this.messages.push({ role: 'assistant', content: res.content })
 
@@ -161,6 +179,7 @@ export class Agent {
       const results = await this.runTools(toolUses)
       this.messages.push({ role: 'user', content: results })
     }
+    this.onTurnComplete?.()
     return finalText
   }
 

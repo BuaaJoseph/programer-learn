@@ -59,6 +59,13 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: 'cost',
+    description: '查看本次会话的 token 用量、估算花费与平均延迟',
+    run(_args, ctx) {
+      ctx.print(ctx.agent.costSummary())
+    },
+  },
+  {
     name: 'tools',
     description: '列出已注册的工具',
     run(_args, ctx) {

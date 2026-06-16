@@ -10,6 +10,7 @@ import { startRepl } from './repl.js'
 import { FileAuditLog } from './audit.js'
 import { loadConfig } from './config.js'
 import { loadMcpTools } from './mcp.js'
+import { SessionStore, loadLatestSession } from './session.js'
 import type { Tool } from './tools/types.js'
 
 const DIM = '\x1b[2m'
@@ -23,10 +24,15 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  const args = process.argv.slice(2)
+  const debug = args.includes('--debug') || args.includes('--verbose')
+  const resume = args.includes('--resume')
+
   const config = loadConfig(process.cwd())
   const provider = createProvider({ provider: config.provider, model: config.model, contextWindow: config.contextWindow })
   const sessionId = new Date().toISOString().replace(/[:.]/g, '-')
   const audit = new FileAuditLog(process.cwd(), sessionId)
+  const session = new SessionStore(process.cwd(), sessionId)
   const todos = new TodoStore()
 
   // 接入配置里声明的 MCP server，把它们的工具一并注册进来。
@@ -58,7 +64,8 @@ async function main(): Promise<void> {
     cwd: process.cwd(),
     audit,
     maxTokens: config.maxTokens,
-    // 事件渲染器：把 Agent 的内部事件画到终端。
+    onTurnComplete: () => session.save(agent.messages),
+    // 事件渲染器：把 Agent 的内部事件画到终端。--debug 时打印更多内部细节。
     onEvent: (e) => {
       switch (e.type) {
         case 'assistant_delta':
@@ -70,6 +77,10 @@ async function main(): Promise<void> {
           break
         case 'tool_end':
           if (e.isError) process.stdout.write(`${RED}  ✗ ${truncate(e.output)}${RESET}\n`)
+          else if (debug) process.stdout.write(`${DIM}  ✓ ${truncate(e.output)}${RESET}\n`)
+          break
+        case 'context_usage':
+          if (debug) process.stdout.write(`${DIM}[ctx ${(e.used / 1000).toFixed(1)}k/${(e.limit / 1000).toFixed(0)}k]${RESET}\n`)
           break
         case 'compacted':
           process.stdout.write(`\n${DIM}（上下文已自动压缩：${e.before} 条 → ${e.after} 条）${RESET}\n`)
@@ -77,6 +88,16 @@ async function main(): Promise<void> {
       }
     },
   })
+
+  if (resume) {
+    const prev = loadLatestSession(process.cwd())
+    if (prev) {
+      agent.loadHistory(prev.messages)
+      console.log(`${DIM}（已恢复会话 ${prev.id}，${prev.messages.length} 条消息）${RESET}`)
+    } else {
+      console.log(`${DIM}（没有可恢复的会话，开新的）${RESET}`)
+    }
+  }
 
   await startRepl(agent)
 }

@@ -96,10 +96,10 @@ export const VOLUMES = [
     subtitle: 'Production Hardening',
     theme: '从「能跑」到「能放心交付」。这一卷做会话持久化与 --resume、成本与延迟统计、可观测性、自动化测试。',
     chapters: [
-      { slug: 'ba7-c1', title: '会话持久化与 --resume', topic: '会话恢复', hook: '把每次会话存盘，支持 forge --resume 接着上次继续——长任务、断点续聊的基础。', minutes: 120, hasContent: false },
-      { slug: 'ba7-c2', title: '成本与延迟：每次往返花了多少', topic: '成本 / 延迟', hook: '统计每轮 token 用量、估算花费、记录耗时，让 forge 对自己的开销心里有数、可优化。', minutes: 120, hasContent: false },
-      { slug: 'ba7-c3', title: '可观测性：结构化日志与调试开关', topic: '可观测性', hook: '加一个 --debug/--verbose 开关，把内部往返、工具输入输出结构化打出来，排错不再靠猜。', minutes: 120, hasContent: false },
-      { slug: 'ba7-c4', title: '测试：给 Agent 写自动化测试', topic: '测试', hook: '工具单测 + 主循环用假 Provider 做集成测试——没有测试的 Agent 不敢重构、不敢发布。', minutes: 150, hasContent: false },
+      { slug: 'ba7-c1', title: '会话持久化与 --resume', topic: '会话恢复', hook: '把每次会话存盘，支持 forge --resume 接着上次继续——长任务、断点续聊的基础。', minutes: 120, hasContent: true },
+      { slug: 'ba7-c2', title: '成本与延迟：每次往返花了多少', topic: '成本 / 延迟', hook: '统计每轮 token 用量、估算花费、记录耗时，让 forge 对自己的开销心里有数、可优化。', minutes: 120, hasContent: true },
+      { slug: 'ba7-c3', title: '可观测性：结构化日志与调试开关', topic: '可观测性', hook: '加一个 --debug/--verbose 开关，把内部往返、工具输入输出结构化打出来，排错不再靠猜。', minutes: 120, hasContent: true },
+      { slug: 'ba7-c4', title: '测试：给 Agent 写自动化测试', topic: '测试', hook: '工具单测 + 主循环用假 Provider 做集成测试——没有测试的 Agent 不敢重构、不敢发布。', minutes: 150, hasContent: true },
     ],
   },
   {
