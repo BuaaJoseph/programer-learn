@@ -83,6 +83,44 @@ public class User implements Cloneable {
     }
 }`
 
+const telescopingCode = `// 反模式：可伸缩构造方法（telescoping constructor）
+// 为了兼顾各种可选项，重载了一大堆构造方法，谁也记不住参数顺序
+public class HttpRequest {
+    public HttpRequest(String url) { ... }
+    public HttpRequest(String url, String method) { ... }
+    public HttpRequest(String url, String method, int timeout) { ... }
+    public HttpRequest(String url, String method, int timeout, String body) { ... }
+    // 调用方：new HttpRequest("u", "POST", 5000, "{}")
+    // 第三个 5000 到底是 timeout 还是 retries？必须翻文档`
+
+const directorCode = `// 完整建造者还有第四个角色：指挥者 Director，封装"固定的装配套路"
+// Builder 负责"怎么造每一步"，Director 负责"按什么顺序造"
+
+public class RequestDirector {
+    // 把常用配置固化成一个套路，调用方一行搞定
+    public HttpRequest buildJsonPost(String url, String body) {
+        return new HttpRequest.Builder(url)
+                .method("POST")
+                .timeout(5000)
+                .body(body)
+                .build();
+    }
+}
+// 实际工程里 Director 常被省略，调用方直接链式调用 Builder 即可`
+
+const serializeDeepCloneCode = `// 深克隆的另一条路：序列化 / 反序列化，一次性深拷贝整棵对象树
+// 要求对象图上所有类都实现 Serializable
+public static <T extends Serializable> T deepClone(T obj) {
+    try {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        new ObjectOutputStream(bos).writeObject(obj);   // 写成字节流
+        ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+        return (T) new ObjectInputStream(bis).readObject();  // 再读回来，全是新对象
+    } catch (Exception e) {
+        throw new RuntimeException("深克隆失败", e);
+    }
+}`
+
 export default function Ch4() {
   return (
     <>
