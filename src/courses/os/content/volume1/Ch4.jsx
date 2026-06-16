@@ -46,6 +46,42 @@ if (try_lock(mutex_2, timeout=100ms)) {
     retry();
 }`
 
+const bankerCode = `# 银行家算法核心：试探性分配后检查系统是否还"安全"
+# 安全 = 存在一个执行序列，能让所有进程都拿到所需资源跑完
+
+def is_safe(available, allocation, need):
+    work = available[:]              # 当前可用资源
+    finish = [False] * len(need)
+    while True:
+        progressed = False
+        for i in range(len(need)):
+            # 找一个还没完成、且剩余需求能被满足的进程
+            if not finish[i] and all(need[i][j] <= work[j]
+                                     for j in range(len(work))):
+                # 假设它跑完，归还它占的资源
+                for j in range(len(work)):
+                    work[j] += allocation[i][j]
+                finish[i] = True
+                progressed = True
+        if not progressed:
+            break
+    return all(finish)               # 全部能跑完 = 安全状态`
+
+const rustCode = `// 编译期防御：Rust 用所有权和类型系统在编译时挡住数据竞争
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+let counter = Arc::new(Mutex::new(0));   // 数据被锁包裹，不锁拿不到
+let mut handles = vec![];
+for _ in 0..10 {
+    let c = Arc::clone(&counter);
+    handles.push(thread::spawn(move || {
+        let mut num = c.lock().unwrap();  // 必须先拿锁才能访问数据
+        *num += 1;                        // 离开作用域自动解锁，忘不了
+    }));
+}
+for h in handles { h.join().unwrap(); }`
+
 export default function Ch4() {
   return (
     <>
@@ -63,6 +99,11 @@ export default function Ch4() {
         A 在等 B 放锁 2，B 在等 A 放锁 1，两边都不肯先放手——于是双双僵在原地，谁也走不下去。
         这种「彼此持有对方所需资源、互相干等」的状态，就是死锁。资源越多、加锁越乱，越容易踩中。
       </p>
+      <p>
+        要把死锁讲到位，先得有<strong>临界区</strong>和<strong>互斥</strong>的概念垫底。多个线程会同时访问的共享数据段叫临界区，
+        为防止并发写出竞态，进临界区前要加锁、出来再解锁，保证同一时刻只有一个线程在里面，这就是互斥。死锁恰恰是
+        「为了互斥而加的锁」彼此纠缠出来的副作用——所以它和加锁机制是一体两面，不可能完全消灭，只能管理。
+      </p>
 
       <h3>死锁的四个必要条件</h3>
       <p>
@@ -74,6 +115,11 @@ export default function Ch4() {
         <li><strong>不可剥夺</strong>（no preemption）：资源只能由持有者主动释放，别人和系统都不能强抢。</li>
         <li><strong>循环等待</strong>（circular wait）：存在一条等待环，A 等 B、B 等 C……最后又绕回 A。</li>
       </ul>
+      <p>
+        这四条不只是要背，更要会用：每一条都对应一种预防手段。破坏「互斥」——把资源做成可共享或无锁结构（如用原子操作、
+        读写锁让多读者并存）；破坏「占有并等待」——要么一次性申请全部资源，要么拿不到就先全放掉；破坏「不可剥夺」——允许抢占，
+        拿不到新资源就被迫吐出已有的；破坏「循环等待」——给资源全局编号，强制按序申请。其中破坏循环等待最实用，下面会反复讲。
+      </p>
 
       <Example title="两线程交叉加锁">
         <p>
@@ -98,6 +144,15 @@ export default function Ch4() {
           <strong>鸵鸟策略</strong>（ostrich algorithm）：假装看不见，因为死锁概率低、预防成本高，不少通用系统就这么干。
         </p>
       </KeyIdea>
+
+      <h3>银行家算法：避免策略的代表</h3>
+      <p>
+        银行家算法常被笔试考到，逻辑是：每次有进程申请资源时，先<strong>试探性地分配</strong>，再检查分配之后系统是否还处于
+        <em>安全状态</em>——所谓安全，就是至少存在一个执行序列，能让所有进程依次拿到它们声明的最大需求、顺利跑完。
+        如果安全就真的分配，不安全就让该进程先等着。它要求进程<strong>预先声明最大资源需求</strong>，这在现实里几乎做不到，
+        所以工程上基本不用，但它把「安全状态」这个思想讲得很清楚。
+      </p>
+      <CodeBlock lang="python" title="banker.py" code={bankerCode} />
 
       <Callout variant="warn" title="死锁、活锁、饥饿别搞混">
         <p>
@@ -128,6 +183,21 @@ export default function Ch4() {
           <strong>能不嵌套就不嵌套</strong>：尽量避免一个线程同时持有多把锁，必须嵌套时严格遵守固定顺序。
         </li>
       </ul>
+      <p>
+        还可以补两句加分项。其一，区分<strong>悲观锁与乐观锁</strong>：悲观锁假设冲突常发生，先加锁再操作（如 <code>mutex</code>）；
+        乐观锁假设冲突罕见，不加锁直接干，提交时用 <em>CAS</em>（Compare-And-Swap）检查有没有被人改过，被改了就重试——
+        乐观锁无锁，自然没有死锁问题，但高冲突场景重试会很多。其二，现代语言把防御提前到<strong>编译期</strong>：
+        Rust 用所有权 + <code>Send/Sync</code> 类型约束，让数据竞争在编译时就报错，锁和数据被强制绑在一起，几乎不可能忘记加锁。
+      </p>
+      <CodeBlock lang="rust" title="rust_mutex.rs" code={rustCode} />
+      <Callout variant="info" title="一个真实案例：数据库死锁">
+        <p>
+          数据库是死锁的重灾区。两个事务各自先更新了一行、再去更新对方锁住的行，就构成循环等待。数据库不会傻等，
+          它内置<strong>死锁检测</strong>：周期性构建等待图找环，一旦发现就挑一个「代价最小」的事务作为牺牲者
+          回滚（报 <code>deadlock detected</code>），让另一个继续。所以应用层要做的不是消灭死锁，而是<strong>捕获回滚错误并重试</strong>，
+          同时让所有事务按相同顺序访问表和行，从源头减少成环——这正是「固定顺序」思想在数据库层的落地。
+        </p>
+      </Callout>
 
       <Practice title="用固定加锁顺序避免死锁">
         <p>
@@ -144,11 +214,13 @@ export default function Ch4() {
       <Summary
         points={[
           '死锁是多个线程互相持有对方所需资源、彼此干等、全部卡死永不前进的状态。',
-          '死锁的四个必要条件须同时成立：互斥、占有并等待、不可剥夺、循环等待，缺一不可。',
+          '死锁的四个必要条件须同时成立：互斥、占有并等待、不可剥夺、循环等待，缺一不可，每条都对应一种预防手段。',
           '处理策略分四类：预防（破坏四条件）、避免（银行家算法保证安全状态）、检测加恢复、以及鸵鸟策略。',
+          '银行家算法的核心是分配前检查系统是否仍处于安全状态，但要预先声明最大需求，工程上少用。',
           '死锁是都停住干等，活锁是都在忙却无进展，饥饿是个别线程被持续插队而别人正常推进。',
           '工程上最实用的防死锁招是按固定顺序加锁，从根上破坏循环等待。',
-          '其余实战手段：加锁带超时回退、减小锁粒度缩短持锁时间、尽量避免嵌套持有多把锁。',
+          '其余实战手段：加锁带超时回退、减小锁粒度、避免嵌套；乐观锁用 CAS 无锁可绕开死锁，Rust 在编译期挡数据竞争。',
+          '数据库内置死锁检测，发现成环就回滚代价最小的事务，应用层要捕获并重试。',
         ]}
       />
     </>

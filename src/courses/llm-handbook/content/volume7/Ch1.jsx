@@ -51,6 +51,24 @@ if __name__ == '__main__':
     t.latency_cost_tolerant = False
     print(should_go_multi_agent(t))   # (True, 4)`
 
+const toolPruneCode = `# 撞墙前，先做这三步「单 Agent 减负」，往往就够了
+
+# 1. 工具收口：把语义相近的工具合并成一个带参数的工具
+#    坏：search_order / search_logistics / search_refund 三个工具
+#    好：query(domain, keyword) 一个工具，domain 限定枚举值
+def query(domain: str, keyword: str):
+    assert domain in {"order", "logistics", "refund"}
+    return BACKENDS[domain].search(keyword)
+
+# 2. 工具描述瘦身：一句话讲清「什么时候用」，而不是堆参数文档
+#    模型选错工具，八成是描述里没写清楚边界
+
+# 3. 上下文裁剪：工具返回的大段 JSON 先摘要再回灌
+#    别把 200 行物流轨迹原样塞回对话，留「最新状态 + 预计到达」即可
+def summarize_tool_result(raw: dict) -> str:
+    return f"状态={raw['status']} 预计={raw['eta']}"
+# 三步做完还是撞墙，再谈拆 Agent`
+
 export default function Ch7_1() {
   return (
     <>
@@ -74,6 +92,25 @@ export default function Ch7_1() {
         模型挑工具就像人在塞满 20 把螺丝刀的抽屉里翻找——不是不会，而是错得更频繁。工具描述还会一起塞进上下文，
         每轮都占着 token。这是最早出现、也最容易被忽视的天花板。
       </p>
+      <p>
+        为什么会这样？模型选工具靠的是把你的工具描述当成「候选集」做语义匹配。候选越多、描述之间越相似，
+        匹配的区分度就越低。最典型的翻车场景是<strong>一组语义高度重叠的工具</strong>：
+        <code>{'search_order'}</code> 和 <code>{'search_refund'}</code> 在用户说「我那笔退款到哪了」时几乎无法区分，
+        模型只能掷骰子。这里有个常被忽略的边界：<strong>工具数量不是绝对阈值，而是「相似工具的密度」</strong>。
+        20 个职责泾渭分明的工具，可能比 8 个互相重叠的工具更好用。
+      </p>
+      <p>
+        所以撞到这面墙时，第一反应不该是「拆 Agent」，而是「能不能把相似工具收口成一个带参数的工具」。
+        下面这段就是减负的常见三招——很多团队做完这一步，墙就退后了一大截：
+      </p>
+      <CodeBlock lang="python" title="single_agent_diet.py" code={toolPruneCode} />
+      <Callout variant="info" title="一个反直觉的数字">
+        <p>
+          经验上，<strong>把工具数从 18 砍到 8、同时把每个工具的描述从三段缩成一句</strong>，
+          带来的工具选对率提升，常常比直接上多 Agent 还大——而且零额外延迟、零额外 token。
+          先榨干单 Agent 的减负空间，是性价比最高的一步。
+        </p>
+      </Callout>
 
       <h3>二、单一角色，顾此失彼</h3>
       <p>
@@ -92,7 +129,48 @@ export default function Ch7_1() {
       <h3>四、难以评估和定位</h3>
       <p>
         当检索、推理、写作全揉在一个黑盒里，最终结果不好时，你几乎无法判断是「检索没找到」还是「写作发挥失常」。
-        没有清晰的接缝，就没有可以单独测量、单独修的环节。
+        没有清晰的接缝，就没有可以单独测量、单独修的环节。这一点对长期维护尤其要命：
+        线上 bad case 你只能整体重跑、整体调 prompt，改 A 处往往悄悄弄坏了 B 处，永远在打地鼠。
+      </p>
+
+      <h2>四面墙，谁先撞到？</h2>
+      <p>
+        这四面墙不是同时浮现的，理解它们的<strong>出现顺序</strong>能帮你判断现在该做什么。下面是典型的演进路径：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>先撞到的墙</th>
+            <th>第一反应该做什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>工具从 5 个加到十几个</td>
+            <td>工具选错</td>
+            <td>合并相似工具、瘦身描述</td>
+          </tr>
+          <tr>
+            <td>开始既要严谨又要有创意</td>
+            <td>角色冲突</td>
+            <td>拆系统提示 / 考虑拆 Agent</td>
+          </tr>
+          <tr>
+            <td>单任务对话变长</td>
+            <td>上下文撑爆</td>
+            <td>中间产物摘要、子任务隔离</td>
+          </tr>
+          <tr>
+            <td>线上出现查不到原因的 bad case</td>
+            <td>难以评估</td>
+            <td>切出有接缝的子环节，分段评估</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        注意：只有当你接连撞上后三面墙、且减负手段已经用尽，多 Agent 才真正划算。
+        只撞到第一面墙就拆 Agent，是最常见的过度设计。
       </p>
 
       <Example title="一个客服 Agent 是怎么一步步撞墙的">
@@ -132,6 +210,24 @@ export default function Ch7_1() {
         </ul>
       </Callout>
 
+      <Example title="同一个需求，两种代价对比">
+        <p>
+          需求：「读一份 30 页 PDF 财报，提取关键数据，写一段中文摘要。」
+        </p>
+        <p>
+          <strong>单 Agent 方案</strong>：1 次系统提示，3~4 轮工具调用（读 PDF、抽数、写作），
+          约 1.2 万 token，3 秒出结果。摘要里偶尔抄错一个数字。
+        </p>
+        <p>
+          <strong>三 Agent 方案</strong>（抽取专家 + 写作专家 + 审校专家）：3 份系统提示，
+          中间结果序列化两次再读入，约 3.5 万 token，9 秒出结果。数字准确率确实更高。
+        </p>
+        <p>
+          多花了近 3 倍 token、3 倍时间，换来「数字更准」。如果这个场景对数字准确度极度敏感（比如对外披露），
+          这笔账划算；如果只是内部速读，单 Agent 的偶尔抄错完全可以接受——<strong>别为用不上的准确度付费</strong>。
+        </p>
+      </Example>
+
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
         把多 Agent 当成一种<strong>有成本的扩展手段</strong>，而不是默认架构。它的价值只在你确实撞墙时才兑现：
@@ -140,6 +236,24 @@ export default function Ch7_1() {
         <strong>能用单 Agent 解决的，就别上多 Agent</strong>。先把单 Agent 的 prompt 和工具裁剪做到位，
         实在裁不动了，再谈拆分。
       </p>
+
+      <Callout variant="warn" title="三个常见误区，逐个拆穿">
+        <ul>
+          <li>
+            <strong>「多 Agent 更智能」</strong>——错。多 Agent 不会让单个模型变聪明，它只是把工作切块。
+            底层还是同一个模型，能力上限没变，变的只是上下文更干净、职责更聚焦。
+          </li>
+          <li>
+            <strong>「拆得越细越好」</strong>——错。每多一个 Agent 就多一道序列化接缝和一份系统提示开销。
+            过度拆分会让协调成本和错误传播面双双爆炸。够用就停。
+          </li>
+          <li>
+            <strong>「角色冲突一定要靠拆 Agent 解」</strong>——不一定。很多角色冲突可以靠
+            <strong>同一个模型分两轮调用、各用一份 prompt</strong> 解决，不必真的搭一套多 Agent 协调系统。
+            这是介于「单 Agent」和「多 Agent 系统」之间的轻量档位。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="给你的任务做一次多 Agent 体检">
         <p>

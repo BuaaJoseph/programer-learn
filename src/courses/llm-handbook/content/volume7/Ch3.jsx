@@ -67,6 +67,32 @@ def compose(docs):
 if __name__ == '__main__':
     print(handoff_demo('什么是 RAG'))`
 
+const blackboardCode = `# 共享黑板：用版本号防止「谁都能改、谁也说不清状态」
+class Blackboard:
+    def __init__(self):
+        self._state = {}
+        self._version = 0
+        self._log = []          # 谁、什么时候、改了什么——黑板必须可审计
+
+    def write(self, agent, key, value):
+        self._state[key] = value
+        self._version += 1
+        self._log.append((self._version, agent, key))
+
+    def read(self, key):
+        return self._state.get(key)
+
+    def snapshot(self):
+        # 下游读的是一个一致快照，避免读到一半被别人改写
+        return dict(self._state), self._version
+
+
+# 用法：检索写入，写作读取，全程留痕
+bb = Blackboard()
+bb.write('retriever', 'docs', [{'title': 'RAG', 'text': '...'}])
+state, ver = bb.snapshot()
+# state['docs'] 即检索成果；ver 让你能判断「我读的是不是最新版」`
+
 export default function Ch7_3() {
   return (
     <>

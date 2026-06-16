@@ -63,6 +63,24 @@ for n in [5, 10, 20, 50, 100]:
 # 累计发送 ~= t * N*(N+1)/2 —— 随轮数 N 平方增长。
 # 100 轮时累计要发约 150 万 tokens，绝大多数是「重复的旧内容」。`
 
+const statefulApiCode = `# 一个常见误解：Assistants / Threads 这类「有状态」API
+# 真的让模型有记忆了吗？并没有——它只是把「重发历史」这件事
+# 从你的代码挪到了服务端，账单照样按每轮发送的 token 算。
+
+# 伪代码示意：服务端维护 thread，但每次 run 仍要把
+# 整个 thread 的历史喂给模型推理。
+thread = client.beta.threads.create()
+
+def ask(text):
+    # 你只发了一句话……
+    client.beta.threads.messages.create(thread.id, role='user', content=text)
+    run = client.beta.threads.runs.create(thread.id, assistant_id=ASSISTANT_ID)
+    # ……但服务端在 run 内部，把 thread 里所有历史消息
+    # 重新拼成 messages 发给模型。无状态的本质没变，
+    # 只是「重发」这步对你透明了。你为之付费的 prompt_tokens
+    # 依然随对话变长而平方级膨胀。
+    return wait_and_get(run)`
+
 export default function Ch5_1() {
   return (
     <>
@@ -86,6 +104,12 @@ export default function Ch5_1() {
         下一轮调用时把<strong>整个列表</strong>原样发过去。模型读到这段长长的历史，自然就能「接得上」。
         这就是几乎所有聊天应用的底层做法——没有魔法，只有重发。
       </p>
+      <p>
+        为什么模型一定要做成无状态的？这是<strong>工程上必然的选择</strong>，不是疏忽。如果模型要为每个用户维护状态，
+        服务端就得给每个会话开一块常驻显存、绑定一台特定 GPU，用户一多就彻底没法横向扩展。无状态意味着任何一台空闲机器都能
+        接手任何一次请求——你这一轮和下一轮的调用，很可能落在<strong>完全不同的物理机器</strong>上。这正是大模型服务能用一个 API
+        撑住上亿用户的前提。代价就转嫁成了：状态（也就是对话历史）必须由调用方在每次请求里自带。
+      </p>
 
       <Example title="同一个问题，带历史和不带历史">
         <p>
@@ -98,6 +122,15 @@ export default function Ch5_1() {
         </p>
       </Example>
 
+      <KeyIdea title="角色字段不是给模型「记忆」，是给它「读法」">
+        <p>
+          很多人以为 <code>messages</code> 里的 <code>system</code> / <code>user</code> / <code>assistant</code> 角色字段，是模型用来「区分谁说的话、并记住」的开关。
+          其实不是。这些角色在底层会被拼接成<strong>一段带特殊分隔符的纯文本</strong>（chat template），模型读到的依然是一整段连续 token。
+          角色的作用是告诉模型「这段是指令、这段是用户、这段是你自己之前的回答」，从而调整补全风格——它并不创造任何跨调用的持久状态。
+          换句话说，把上一轮 assistant 的回答标记成 <code>assistant</code> 角色塞回去，模型才会把它当成「自己说过的话」顺着接，而不是当成新指令。
+        </p>
+      </KeyIdea>
+
       <h2>重发的代价：上下文窗口与 O(N²)</h2>
       <p>
         重发能用，但它有两个硬约束。第一个是<strong>上下文窗口</strong>：模型一次能读的 token 数有上限
@@ -109,6 +142,10 @@ export default function Ch5_1() {
         第 1 轮发 <code>t</code>，第 2 轮要把前一轮也带上、发 <code>2t</code>，第 <code>N</code> 轮发 <code>N·t</code>。
         累计发送的 token 数是 <code>t·(1+2+…+N) = t·N(N+1)/2</code>，随轮数 <strong>近似平方（O(N²)）增长</strong>。
       </p>
+      <p>
+        别只盯着钱。这条平方曲线同时拖垮三件事：<strong>延迟</strong>（prefill 阶段要处理的输入越长，首 token 越慢，长上下文的注意力计算本身也随长度增长）、
+        <strong>成本</strong>（按 prompt token 计费）、以及<strong>正确性</strong>（历史越长，真正关键的那句话被淹没的概率越大）。三者在长对话里同时恶化，这才是问题的全貌。
+      </p>
       <KeyIdea title="贵的不是新内容，是重复的旧内容">
         <p>
           多轮对话里，绝大部分 token 都花在<strong>反复重发同一段历史</strong>上。聊到第 100 轮，最后那一次调用里
@@ -117,6 +154,39 @@ export default function Ch5_1() {
           <strong>既要让模型「记得」，又不能把所有东西都原样塞回去。</strong>
         </p>
       </KeyIdea>
+
+      <h2>几种省钱手段的边界：缓存不是免死金牌</h2>
+      <p>
+        你可能会想：既然历史前缀每轮都重复，厂商不能缓存吗？能——这就是 <strong>prompt caching（前缀缓存）</strong>。
+        如果连续两次请求的开头一大段 token 完全相同，服务端可以复用上一次算好的 KV 状态，省掉重复 prefill，缓存命中的那部分通常打折计费。
+        这确实能缓解一部分成本和延迟。但它有明确边界，不能让你高枕无忧：
+      </p>
+      <table>
+        <thead>
+          <tr><th>手段</th><th>解决什么</th><th>没解决什么</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>前缀缓存</td><td>重复前缀的 prefill 计算与部分计费</td><td>窗口上限；缓存有过期时间；前缀一变即失效</td></tr>
+          <tr><td>调大窗口</td><td>推迟撑爆的时间点</td><td>O(N²) 成本曲线；单价更贵；中段被忽略</td></tr>
+          <tr><td>滑动窗口（丢旧消息）</td><td>控制窗口与成本</td><td>被丢掉的早期信息真的丢了，模型会失忆</td></tr>
+          <tr><td>摘要压缩</td><td>用少量 token 保留早期要点</td><td>摘要会丢细节，且压缩本身要花一次调用</td></tr>
+          <tr><td>RAG / 检索</td><td>海量知识按需取回，不占常驻窗口</td><td>检索质量；召回不准时模型答不出或答错</td></tr>
+        </tbody>
+      </table>
+      <p>
+        缓存的致命弱点是：只要你在历史<strong>中间</strong>插入或修改任何一条消息（比如做了摘要压缩、或者换了 system prompt），
+        后面所有 token 的前缀都变了，缓存<strong>整段失效</strong>，又要从头算起。所以缓存友好的设计是「只在末尾追加、稳定内容放最前」——
+        这也解释了为什么很多系统把 system prompt 和长期事实固定在最前面，把易变的部分放后面。
+      </p>
+
+      <Example title="把摘要插进历史中间，缓存全废">
+        <p>
+          假设你的对话是 <code>{'[system, msg1, msg2, ..., msg50]'}</code>，前缀缓存命中得很好。某轮你决定把 msg1~msg40 压成一条摘要，
+          于是历史变成 <code>{'[system, summary, msg41, ..., msg50]'}</code>。问题来了：<code>summary</code> 这条插在了 system 之后、
+          msg41 之前——从它往后的所有 token 前缀都和缓存里的不一样了，缓存命中率瞬间归零。压缩省下了窗口，却可能让这一轮的实际计算不降反升。
+          这就是为什么压缩要挑时机：在缓存即将过期、或历史确实快撑爆时再做，而不是每轮都做。
+        </p>
+      </Example>
 
       <Callout variant="warn" title="两个常见误区">
         <ul>
@@ -128,8 +198,24 @@ export default function Ch5_1() {
             <strong>「模型自己会挑重点记」</strong>——不会。你不主动裁剪、不主动检索，它就只会把你塞进去的东西
             全部当成等价的上下文去读。决定记什么、忘什么，是<strong>你的工程责任</strong>。
           </li>
+          <li>
+            <strong>「用有状态的 Threads/Assistants API 就不用管历史了」</strong>——服务端帮你存了历史，但它在每次 run 里
+            仍然要把整个 thread 重新喂给模型。无状态的本质没变，账单照样按每轮发送的 token 平方级增长，只是这步对你透明了。
+          </li>
         </ul>
       </Callout>
+
+      <Practice title="拆穿『有状态 API』的假象">
+        <p>
+          很多新手以为切到 Threads/Assistants 这类「有状态」接口，记忆问题就自动解决了。
+          下面这段伪代码点破它：服务端只是替你存了历史、并在每次 run 内部重发，本质仍是无状态推理 + 重发。
+        </p>
+        <CodeBlock lang="python" title="stateful_illusion.py" code={statefulApiCode} />
+        <p>
+          结论：无论 API 长什么样，<strong>token 都是按「每次推理实际读进去多少」算的</strong>。理解这一点，你才不会被「有状态」三个字误导，
+          才会主动去做裁剪、压缩和检索。
+        </p>
+      </Practice>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
@@ -137,6 +223,11 @@ export default function Ch5_1() {
         它会在跑到一半时撞上窗口上限、或者把预算烧穿。所以严肃的 Agent 系统都必须配一套<strong>记忆架构</strong>：
         短期记忆决定「最近这些轮怎么放进上下文」（滑动窗口、摘要压缩），长期记忆决定「久远但重要的事实存哪、怎么按需取回」
         （这正是 RAG 与向量检索的用武之地）。
+      </p>
+      <p>
+        Agent 的上下文压力还比聊天更大：每次工具调用的<strong>返回结果</strong>（一段网页、一份 JSON、一个报错堆栈）也要塞进历史，
+        而这些「观察」往往又长又啰嗦。一个搜了十次网页的 Agent，光是工具输出就能把窗口占满。所以 Agent 记忆设计里有一条专门的功课：
+        <strong>对工具结果做即时压缩</strong>——只留对后续决策有用的那几行，原始大块要么丢弃、要么落到外部存储里按需再取。
       </p>
       <p>
         换句话说，第 1 卷讲的是「模型怎么按概率补全」，这一卷讲的是「在窗口有限、成本敏感的现实里，
@@ -154,16 +245,21 @@ export default function Ch5_1() {
           跑完 <code>token_cost.py</code> 你会看到：100 轮对话累计要发约 150 万 tokens，其中真正「新」的内容只有 3 万。
           剩下的全是重复——这就是接下来几章要砍掉的浪费。
         </p>
+        <p>
+          进阶练习：在 <code>total_tokens</code> 里加一个「滑动窗口」版本——只保留最近 <code>k</code> 轮历史，看看累计发送量从 O(N²) 退化成 O(N·k) 的线性增长。
+          你会立刻直观感受到「裁剪」带来的成本回报，这正是下一章滑动窗口策略的动机。
+        </p>
       </Practice>
 
       <Summary
         points={[
           '模型是 stateless 的：两次调用之间不保存任何东西，「记得」是应用层每轮重发完整历史造出来的假象。',
-          '聊天应用维护一个 messages 列表，把历轮的输入与回答按序塞进去，下一轮整个发回模型。',
-          '重发有两个硬约束：历史堆大会撑爆上下文窗口；累计发送的 token 随轮数近似 O(N²) 平方增长。',
-          '长对话里绝大多数 token 都花在反复重发旧内容上，按 prompt tokens 计费，成本因此失控。',
-          '调大窗口只是推迟问题、并不改变成本曲线；决定记什么、忘什么是工程责任，模型不会自己挑重点。',
-          '能长跑的 Agent 必须配记忆架构：短期记忆管最近几轮，长期记忆按需检索久远事实，这是后续各章的主题。',
+          '无状态是工程必然：这样任何空闲机器都能接任何请求，才能横向扩展撑住海量用户，代价是历史必须调用方自带。',
+          '聊天应用维护一个 messages 列表，把历轮的输入与回答按序塞进去，下一轮整个发回模型；角色字段只影响读法，不创造记忆。',
+          '重发有两个硬约束：历史堆大会撑爆上下文窗口；累计发送的 token 随轮数近似 O(N²) 平方增长，成本、延迟、正确性同时恶化。',
+          '前缀缓存能省重复 prefill，但有窗口、过期和「前缀一变即整段失效」的边界，所以稳定内容放前、只在末尾追加。',
+          '调大窗口只是推迟问题、并不改变成本曲线；有状态 API 只是把重发挪到服务端，账单照旧；决定记什么是工程责任。',
+          '能长跑的 Agent 必须配记忆架构：短期记忆管最近几轮，长期记忆按需检索久远事实，还要对啰嗦的工具结果即时压缩。',
         ]}
       />
     </>

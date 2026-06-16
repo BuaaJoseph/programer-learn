@@ -42,6 +42,48 @@ PUT /articles
   }
 }`
 
+const multiFieldCode = `# 同一字段同时建 text（全文搜）与 keyword（精确/聚合）子字段
+PUT /products
+{
+  "mappings": {
+    "properties": {
+      "name": {
+        "type": "text",
+        "analyzer": "ik_max_word",
+        "fields": {
+          "raw": { "type": "keyword" }   // 用 name.raw 做聚合/排序/精确匹配
+        }
+      }
+    }
+  }
+}
+
+# 全文搜用 name，聚合用 name.raw
+GET /products/_search
+{
+  "size": 0,
+  "aggs": { "by_name": { "terms": { "field": "name.raw" } } }
+}`
+
+const customAnalyzerCode = `# 自定义分析器：HTML 去标签 + ik 切词 + 自定义停用词
+PUT /blog
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "my_cn": {
+          "char_filter": ["html_strip"],
+          "tokenizer": "ik_max_word",
+          "filter": ["lowercase", "my_stop"]
+        }
+      },
+      "filter": {
+        "my_stop": { "type": "stop", "stopwords": ["的", "了", "和"] }
+      }
+    }
+  }
+}`
+
 export default function Ch3() {
   return (
     <>
@@ -73,8 +115,10 @@ export default function Ch3() {
       </ul>
       <p>
         内置的 standard 分析器就是「无 char filter + standard tokenizer + 小写 token filter」的组合。
-        理解了这条流水线，你就知道想定制分词时该改哪一段。
+        理解了这条流水线，你就知道想定制分词时该改哪一段：要去标签改 char filter、要换切词方式改 tokenizer、
+        要加同义词或停用词改 token filter。下面就是一个把三段都用上的自定义分析器。
       </p>
+      <CodeBlock lang="json" title="自定义分析器：三段都用上" code={customAnalyzerCode} />
 
       <h3>建索引分词 与 查询分词 必须一致</h3>
       <p>
@@ -83,6 +127,12 @@ export default function Ch3() {
         <em>search analyzer</em>）。如果两边用了不同的切法，切出来的 term 对不上，
         倒排索引里明明有数据，却<strong>怎么也搜不到</strong>。默认两边用同一个 analyzer，
         正是为了保证一致；只有在明确知道自己要干嘛时，才单独指定 <code>search_analyzer</code>。
+      </p>
+      <p>
+        那为什么还要故意让两边不同？典型理由是<strong>「索引时细切多召回、查询时粗切保准确」</strong>：
+        建索引用 ik_max_word 把「苹果手机」既存「苹果」「手机」也存「苹果手机」，让更多词都能命中；
+        查询用 ik_smart 只切成「苹果手机」一个词，避免把「手机壳」「手机膜」这类无关结果也捞进来。
+        这种「不一致」是受控的、刻意为之的，前提是你清楚两个分析器切出的 term 仍有交集。
       </p>
 
       <Example title="standard 切中文：按字切，灾难现场">
@@ -115,6 +165,11 @@ export default function Ch3() {
         解决办法是配置 ik 的<strong>扩展词典</strong>（自定义 dict 文件），把这些词加进去，
         ik 就会把它们当成一个完整的词来切。停用词同理，可以用扩展停用词典过滤掉。
       </p>
+      <p>
+        进一步，ik 还支持<strong>热更新词典</strong>（remote ext dict）：把词典放在一个 HTTP 地址，
+        ik 定时拉取，新词上线不必重启节点。但要注意一个边界：<strong>改了词典，已经写进倒排索引的老文档不会重切</strong>，
+        只有新写入或 reindex 之后的文档才按新词典切。所以「加了词却搜不到旧数据」往往不是 bug，是没 reindex。
+      </p>
 
       <Callout variant="warn" title="text 与 keyword：分不分词是本质区别">
         <p>
@@ -133,6 +188,16 @@ export default function Ch3() {
         <p>
           常见做法是给同一字段同时建 text 和 keyword 两种（<code>fields</code> 子字段），
           既能全文搜又能精确聚合。选错类型是新手第一大坑：拿 text 去做聚合，或拿 keyword 去做全文搜，都会出问题。
+          下面给出标准的 multi-field 写法。
+        </p>
+        <CodeBlock lang="json" title="multi-field：同字段双类型" code={multiFieldCode} />
+      </Callout>
+
+      <Callout variant="info" title="为什么 text 不能直接聚合">
+        <p>
+          默认 text 字段没有 doc values（聚合依赖的列存结构），强行对它聚合会报错或要求打开 fielddata——
+          而 fielddata 是把字段值全加载进堆内存，<strong>极易把节点 OOM</strong>。所以正确姿势永远是「聚合走 keyword 子字段」。
+          这也是上一章「倒排服务搜索、doc values 服务聚合」那句话的现实落地。
         </p>
       </Callout>
 
@@ -144,6 +209,23 @@ export default function Ch3() {
         最后补一刀关键点：<strong>建索引分词和查询分词必须一致</strong>，否则 term 对不上、明明有数据却搜不到。
         再点一句 text（分词，全文搜）vs keyword（不分词，精确/聚合）的区别，就答得很完整了。
       </p>
+
+      <Callout variant="info" title="面试追问与误区">
+        <ul>
+          <li>
+            <strong>「改了 mapping 的 analyzer，老数据生效吗？」</strong>——不生效，必须 reindex，因为倒排索引是写入时建好的。
+          </li>
+          <li>
+            <strong>误区：以为 keyword 也会分词</strong>——keyword 整个值是一个 term，大小写敏感，搜要完全相等（可配 normalizer 做小写化）。
+          </li>
+          <li>
+            <strong>「ik_smart 和 ik_max_word 该用哪个？」</strong>——索引用 max_word 提召回，查询用 smart 提准确，是经典搭配。
+          </li>
+          <li>
+            <strong>误区：把所有字段都设 text</strong>——状态、ID、枚举这类用 keyword，既省空间又能精确过滤和聚合。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="测 ik 分词、给字段指定 analyzer">
         <p>
@@ -157,16 +239,20 @@ export default function Ch3() {
           跑完前两步，对比一下 token 列表：standard 切出一堆单字，ik 切出「苹果手机 / 很 / 好用」这样的真词。
           第三步给 <code>title</code> 设了 <code>analyzer: ik_max_word</code>（建索引细切）和
           <code>search_analyzer: ik_smart</code>（查询粗切），这正是上面说的经典搭配。
+          再用 multi-field 那段建个带 <code>name.raw</code> 的索引，跑一次 terms 聚合，体会「搜走 text、聚合走 keyword」。
         </p>
       </Practice>
 
       <Summary
         points={[
           'analyzer 由 character filter → tokenizer → token filter 三段流水线组成，tokenizer 是切词核心。',
+          '想定制就对应改三段：去标签改 char filter、换切法改 tokenizer、同义/停用词改 token filter。',
           '建索引分词与查询分词必须一致，否则切出的 term 对不上，有数据也搜不到。',
-          '内置 standard 分析器把中文按单字切，会让相关性崩坏，中文场景几乎必须换分词器。',
-          'ik 提供 ik_smart（粗粒度，适合查询）和 ik_max_word（细粒度，适合建索引）；新词靠扩展词典补充。',
+          '受控的不一致：索引用 ik_max_word 多召回、查询用 ik_smart 保准确，是刻意为之的经典搭配。',
+          '内置 standard 把中文按单字切，会让相关性崩坏，中文场景几乎必须换分词器（ik）。',
+          'ik 支持扩展词典甚至热更新，但改词典后老文档不会重切，需 reindex 才生效。',
           'text 会分词、用于全文检索；keyword 不分词、用于精确匹配、排序与聚合。',
+          'text 默认无 doc values，强行聚合靠 fielddata 极易 OOM，聚合永远走 keyword 子字段。',
           '同一字段常同时建 text + keyword 子字段，既能全文搜又能精确聚合；选错类型是常见坑。',
         ]}
       />

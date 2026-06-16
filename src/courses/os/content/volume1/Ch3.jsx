@@ -46,6 +46,46 @@ sem.wait()
 data = shm.read()
 sem.signal()`
 
+const prodConsCode = `# 生产者-消费者：条件变量经典用法
+# 三个不变量：缓冲区有空位才能生产，有数据才能消费，访问要互斥
+lock = Lock()
+not_full = Condition(lock)      # "有空位"条件
+not_empty = Condition(lock)     # "有数据"条件
+buf = []
+CAP = 10
+
+def producer(item):
+    with lock:
+        while len(buf) == CAP:  # 注意：必须用 while 不是 if（防虚假唤醒）
+            not_full.wait()     # 满了就挂起，自动释放锁
+        buf.append(item)
+        not_empty.notify()      # 通知消费者：有货了
+
+def consumer():
+    with lock:
+        while len(buf) == 0:
+            not_empty.wait()
+        item = buf.pop(0)
+        not_full.notify()       # 通知生产者：腾出空位了
+        return item`
+
+const signalCode = `#include <stdio.h>
+#include <signal.h>
+#include <unistd.h>
+
+volatile sig_atomic_t flag = 0;   // 信号处理里只能碰这种类型
+
+void handler(int sig) {           // 异步打断主流程来执行
+    flag = 1;                     // 处理函数里只做最小的事
+}
+
+int main() {
+    signal(SIGINT, handler);      // Ctrl+C 不再杀进程，转交 handler
+    while (!flag) pause();        // 等一个信号到来
+    printf('caught SIGINT, exiting gracefully\\n');
+    return 0;
+}`
+
 export default function Ch3() {
   return (
     <>
@@ -63,6 +103,11 @@ export default function Ch3() {
         要打破这堵墙又不破坏隔离，只能借助操作系统提供的「官方通道」——这些通道就是各种 IPC 机制。
         理解这个前提，你才会明白：IPC 的本质，是<strong>在隔离的前提下安全地共享或传递数据</strong>。
       </p>
+      <p>
+        从更底层看，IPC 的成本差异几乎都来自一件事：<strong>数据要不要经过内核拷贝</strong>。管道、消息队列、Socket
+        本质都是「用户态 → 内核缓冲区 → 用户态」两次拷贝；而共享内存让两个进程映射同一块物理页，数据从头到尾不离开内存，
+        所以最快。理解了这条主线，六种机制的性能排序就不用死记了。
+      </p>
 
       <h2>主流的几种方式</h2>
       <p>
@@ -71,8 +116,14 @@ export default function Ch3() {
         <em>命名管道</em>（FIFO）在文件系统里有个名字，没有亲缘关系的进程也能通过这个名字相连。简单好用，但只适合传字节流、单向。
       </p>
       <p>
+        管道有两个边界行为面试常问：缓冲区满时写端会<strong>阻塞</strong>，缓冲区空时读端会阻塞——这其实天然实现了流控；
+        当所有写端都关闭后，读端会读到 <code>EOF</code>；反过来，如果所有读端都关了还往里写，写端会收到 <code>SIGPIPE</code>
+        信号（默认会杀掉进程），这正是 <code>ps | head</code> 中 <code>head</code> 提前退出后 <code>ps</code> 也跟着停的原因。
+      </p>
+      <p>
         <strong>消息队列（message queue）</strong>：内核维护一个消息链表，进程按「消息」为单位收发，可以带类型、按类型选取。
-        比管道灵活（有边界、可选择），但单条消息有大小上限，吞吐不如共享内存。
+        比管道灵活（有边界、可选择），但单条消息有大小上限，吞吐不如共享内存。它和管道的本质区别是<strong>有边界</strong>：
+        管道是字节流，读 100 字节可能拿到两条消息的拼接；消息队列保留消息边界，读一次就是一条完整消息。
       </p>
       <p>
         <strong>共享内存（shared memory）</strong>：让多个进程把同一块物理内存映射进各自的地址空间，直接读写。
@@ -87,10 +138,15 @@ export default function Ch3() {
       <p>
         <strong>信号（signal）</strong>：一种异步通知，内核或进程给目标进程发一个编号（如 <code>SIGINT</code>、<code>SIGKILL</code>），
         通知它「发生了某件事」。它传递的信息量极小（基本就是「事件类型」本身），适合做控制和中断，不适合传数据。
+        要注意 <code>SIGKILL</code>（9）和 <code>SIGSTOP</code> 是<strong>不可捕获、不可忽略</strong>的——这就是为什么
+        <code>kill -9</code> 总能生效，而进程没机会做清理。信号处理函数里只能调用<strong>异步信号安全</strong>的函数，
+        碰共享变量也只能用 <code>sig_atomic_t</code>，否则会踩重入坑。
       </p>
+      <CodeBlock lang="c" title="signal_demo.c" code={signalCode} />
       <p>
         <strong>Socket（套接字）</strong>：最通用，既能本机进程间通信（Unix domain socket），也能<strong>跨机器</strong>
         通过网络通信（TCP/UDP）。代价是要走协议栈、有拷贝开销，本机性能不如共享内存，但它是唯一天然支持跨主机的方式。
+        本机场景里 Unix domain socket 比 TCP loopback 快不少，因为它不走 TCP/IP 协议栈，常用于 Docker、数据库本地连接。
       </p>
 
       <Example title="父子进程用管道传话">
@@ -111,6 +167,27 @@ export default function Ch3() {
         </p>
       </KeyIdea>
 
+      <table>
+        <thead>
+          <tr>
+            <th>机制</th>
+            <th>方向/形态</th>
+            <th>是否跨机</th>
+            <th>性能</th>
+            <th>是否自带同步</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>匿名管道</td><td>单向字节流</td><td>否</td><td>中</td><td>满/空阻塞</td></tr>
+          <tr><td>命名管道</td><td>单向字节流</td><td>否</td><td>中</td><td>满/空阻塞</td></tr>
+          <tr><td>消息队列</td><td>带边界消息</td><td>否</td><td>中</td><td>是（按消息）</td></tr>
+          <tr><td>共享内存</td><td>共享内存块</td><td>否</td><td>最快</td><td>否，需配信号量</td></tr>
+          <tr><td>信号量</td><td>计数器</td><td>否</td><td>—</td><td>本身就是同步</td></tr>
+          <tr><td>信号</td><td>异步通知</td><td>否</td><td>—</td><td>不传数据</td></tr>
+          <tr><td>Socket</td><td>字节流/数据报</td><td>是</td><td>较慢</td><td>否</td></tr>
+        </tbody>
+      </table>
+
       <Callout variant="warn" title="共享内存最快，但别忘了同步">
         <p>
           面试里只要说出「共享内存最快」却没补一句「它必须配同步机制」，就会被追问。原因是共享内存只负责让大家看到同一块内存，
@@ -126,6 +203,15 @@ export default function Ch3() {
         保证同一时刻只有一个线程进临界区，靠<strong>条件变量</strong>（condition variable）让线程在条件不满足时挂起、
         满足时被唤醒（典型如生产者—消费者模型）。
       </p>
+      <CodeBlock lang="python" title="producer_consumer.py" code={prodConsCode} />
+      <Callout variant="info" title="为什么条件变量要用 while 而不是 if">
+        <p>
+          上面代码里等待条件用的是 <code>while</code> 循环而不是 <code>if</code>，这是个高频考点。原因有二：一是
+          <strong>虚假唤醒</strong>（spurious wakeup），线程可能在没人通知的情况下被唤醒，醒来必须重新检查条件；
+          二是<strong>惊群</strong>，<code>notify_all</code> 唤醒了多个等待者，但资源只够一个用，其余醒来发现条件又不满足，
+          得继续等。用 <code>while</code> 兜底重新判断，才能保证醒来时条件确实成立。
+        </p>
+      </Callout>
 
       <h2>实战 / 面试怎么答</h2>
       <p>
@@ -137,6 +223,13 @@ export default function Ch3() {
         被问「进程通信和线程通信的区别」时，落点在地址空间：进程隔离所以要走 IPC，线程共享所以直接读写共享内存、
         重点变成用锁和条件变量做同步。
       </p>
+      <Callout variant="info" title="一个真实案例：Chrome 与数据库的选择">
+        <p>
+          Chrome 多进程架构里，渲染进程和 GPU 进程之间传图像帧用的是<strong>共享内存</strong>（大块像素数据，拷贝代价太高），
+          而控制消息走 Mojo IPC（基于消息）。PostgreSQL、Redis 在本机连接时优先用 <strong>Unix domain socket</strong>
+          而非 TCP，省掉协议栈开销。这些设计的共同逻辑就是：<strong>大数据走共享内存，控制信令走消息，本机连接绕开网络栈</strong>。
+        </p>
+      </Callout>
 
       <Practice title="共享内存 + 信号量的配合">
         <p>
@@ -153,11 +246,13 @@ export default function Ch3() {
       <Summary
         points={[
           '进程地址空间相互隔离，无法直接读写彼此内存，所以需要 IPC 在隔离前提下安全地传递或共享数据。',
-          '管道是单向字节流（匿名限亲缘进程、命名可跨进程）；消息队列以带类型的消息为单位收发。',
+          'IPC 性能差异的主线是数据要不要经内核拷贝：管道/队列/Socket 两次拷贝，共享内存零拷贝故最快。',
+          '管道是单向字节流（匿名限亲缘进程、命名可跨进程），满/空会阻塞，读端关后写会触发 SIGPIPE。',
+          '消息队列以带类型的消息为单位收发、保留消息边界，区别于管道的无边界字节流。',
           '共享内存把同一块物理内存映射给多个进程，是最快的 IPC，但只共享不同步，必须额外配同步机制。',
-          '信号量是计数器，靠 P/V 原子操作做同步、保护临界区，初值为 1 时即互斥锁；信号是信息量极小的异步事件通知。',
-          'Socket 最通用，既能本机也能跨机器通信，代价是走协议栈、性能不如共享内存。',
-          '线程共享进程地址空间，无需 IPC，直接读写共享内存，重点是用锁和条件变量做同步。',
+          '信号量靠 P/V 原子操作做同步，初值 1 即互斥锁；信号是信息量极小的异步通知，SIGKILL/SIGSTOP 不可捕获。',
+          'Socket 最通用、能跨机器，本机用 Unix domain socket 比 TCP loopback 快，因为不走协议栈。',
+          '线程共享地址空间无需 IPC，重点是用锁和条件变量做同步，条件判断要用 while 防虚假唤醒。',
         ]}
       />
     </>

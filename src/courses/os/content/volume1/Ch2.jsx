@@ -43,6 +43,30 @@ for p in procs:                 # FCFS 按到达顺序逐个执行
 
 print('平均等待时间 =', total_wait / len(procs))`
 
+const rrCode = `# 时间片轮转（RR），时间片 q=2，演示就绪队列的轮转
+from collections import deque
+
+procs = {'P1': 5, 'P2': 3, 'P3': 1}   # 名字: 剩余突发时间
+q = deque(['P1', 'P2', 'P3'])         # 假设同时到达
+quantum = 2
+clock = 0
+while q:
+    name = q.popleft()
+    run = min(quantum, procs[name])    # 这次最多跑一个时间片
+    clock += run
+    procs[name] -= run
+    print(f't={clock}: {name} 跑了 {run}, 剩 {procs[name]}')
+    if procs[name] > 0:
+        q.append(name)                 # 没跑完，重新排到队尾
+# 时间片越小越公平、响应越快，但切换次数越多`
+
+const vruntimeCode = `// CFS 的核心：每次选 vruntime 最小的任务
+// vruntime 增长速度与权重（nice 值）成反比：优先级高 -> 涨得慢 -> 更常被选中
+vruntime += delta_exec * NICE_0_WEIGHT / task_weight;
+
+// 所有可运行任务按 vruntime 放进红黑树，最左节点就是下一个要跑的
+// 取最小 O(log n)，整体逼近"人人平分 CPU"`
+
 export default function Ch2() {
   return (
     <>
@@ -70,12 +94,22 @@ export default function Ch2() {
       <p>
         批处理系统偏爱吞吐和周转，交互系统偏爱响应。理解了目标的取舍，就能看懂每种算法是为谁服务的。
       </p>
+      <p>
+        还要分清两类工作负载，它对调度策略影响巨大：<strong>CPU 密集型</strong>（CPU-bound）任务大部分时间在算，
+        很少等 IO，比如视频编码；<strong>IO 密集型</strong>（IO-bound）任务大部分时间在等磁盘或网络，CPU 占用很短，
+        比如数据库连接。好的调度器要让 IO 密集型任务一就绪就尽快上 CPU 发出下一次 IO 请求（保持设备忙），
+        把 CPU 留给 CPU 密集型任务长时间占用——MLFQ 和 CFS 都隐含了这个智慧。
+      </p>
 
       <h3>非抢占 vs 抢占</h3>
       <p>
         调度有两大流派。<em>非抢占式</em>（non-preemptive）：进程一旦上了 CPU，就一直跑到主动让出或结束，
         中途谁也抢不走。<em>抢占式</em>（preemptive）：操作系统可以在某个时刻（比如时间片用完、来了更高优先级的进程）
         强行把当前进程踢下来。抢占式响应更好、更公平，但频繁切换会带来上下文切换的开销。
+      </p>
+      <p>
+        抢占发生在哪些时机？面试可答四个：进程从运行态切到阻塞态（如发起 IO）、从运行态被时钟中断打回就绪态（时间片到）、
+        阻塞的进程 IO 完成回到就绪态（可能抢占当前进程）、进程终止。其中第二、三种触发的是抢占，第一、四种则连非抢占式都会切换。
       </p>
 
       <h2>经典算法逐个看</h2>
@@ -86,22 +120,30 @@ export default function Ch2() {
       <p>
         <strong>SJF / SRTF（最短作业优先 / 最短剩余时间优先）</strong>：每次挑「剩余突发时间最短」的先跑。
         SJF 是非抢占版，SRTF 是它的抢占版。它能让平均等待时间<strong>理论最优</strong>，但需要预知每个进程要跑多久（现实里难），
-        而且长进程可能被源源不断的短进程挤到永远轮不上——这就是<em>饥饿</em>（starvation）。
+        而且长进程可能被源源不断的短进程挤到永远轮不上——这就是<em>饥饿</em>（starvation）。现实里怎么估突发时间？
+        用<strong>指数加权移动平均</strong>预测：拿历史几次突发时间加权预测下一次，这是工程上对「无法预知」的妥协。
       </p>
       <p>
         <strong>优先级调度</strong>：给每个进程一个优先级，高的先跑，可抢占可不抢占。问题同样是低优先级进程会饿死，
-        常用的解法是<strong>老化</strong>（aging）：等得越久就慢慢提升优先级。
+        常用的解法是<strong>老化</strong>（aging）：等得越久就慢慢提升优先级。优先级调度还有个经典坑叫<strong>优先级反转</strong>
+        （priority inversion）：低优先级任务持有锁，高优先级任务等这把锁，结果中优先级任务一直抢 CPU，
+        让低优先级迟迟放不了锁、高优先级被无限拖延。火星探路者号就栽过这个跟头，解法是<strong>优先级继承</strong>
+        （让持锁的低优先级临时升到等锁者的优先级）。
       </p>
       <p>
         <strong>时间片轮转（RR，Round Robin）</strong>：抢占式，给每个进程一个固定<em>时间片</em>（time slice），
         到点就换下一个，循环排队。它对响应时间友好、天然公平，是交互式系统的常客。时间片大小是关键：太大退化成 FCFS，
-        太小则上下文切换的开销占比过高。
+        太小则上下文切换的开销占比过高。经验值通常让时间片略大于一次典型的交互处理时间（如 10～100ms），
+        保证 80% 的进程能在一个时间片内做完它当前要做的事。
       </p>
+      <CodeBlock lang="python" title="rr_demo.py" code={rrCode} />
       <p>
         <strong>多级反馈队列（MLFQ，Multi-Level Feedback Queue）</strong>：维护多个不同优先级的队列，
         新进程进最高优先级队列；如果它用完时间片还没结束，就被降到低一级队列。这样<strong>交互型短任务</strong>
         （很快让出 CPU 的）总能待在高优先级、响应快，<strong>计算型长任务</strong>则逐步沉到底层慢慢跑，
-        无需预知运行时间，兼顾了响应和吞吐，是工程上最实用的思路之一。
+        无需预知运行时间，兼顾了响应和吞吐，是工程上最实用的思路之一。它还有两条补丁要记：一是定期把所有任务
+        <strong>提回最高优先级</strong>（防止长任务永远沉底饿死，也应对任务行为变化），二是<strong>记账</strong>
+        防止进程靠「在时间片快用完时主动让出 IO」来赖在高优先级不降级。
       </p>
 
       <Example title="同一批进程，FCFS 的护航效应">
@@ -118,6 +160,26 @@ export default function Ch2() {
       </Example>
 
       <Scheduling />
+
+      <table>
+        <thead>
+          <tr>
+            <th>算法</th>
+            <th>抢占</th>
+            <th>优点</th>
+            <th>缺点</th>
+            <th>是否要预知时长</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>FCFS</td><td>否</td><td>简单、无饥饿</td><td>护航效应</td><td>否</td></tr>
+          <tr><td>SJF</td><td>否</td><td>平均等待最优</td><td>会饥饿</td><td>是</td></tr>
+          <tr><td>SRTF</td><td>是</td><td>平均等待更优</td><td>会饥饿、切换多</td><td>是</td></tr>
+          <tr><td>优先级</td><td>可选</td><td>支持差异化</td><td>饥饿、优先级反转</td><td>否</td></tr>
+          <tr><td>RR</td><td>是</td><td>响应好、公平</td><td>依赖时间片大小</td><td>否</td></tr>
+          <tr><td>MLFQ</td><td>是</td><td>自动区分长短任务</td><td>参数多、需调优</td><td>否</td></tr>
+        </tbody>
+      </table>
 
       <KeyIdea title="甘特图是算等待时间的利器">
         <p>
@@ -142,10 +204,24 @@ export default function Ch2() {
         谁跑得多 vruntime 就涨得快，于是自然被排到后面，从而逼近「人人平分 CPU」的理想。它用红黑树维护进程，
         取最小值很快。能讲到「靠 vruntime 实现公平」这一层，就答到位了。
       </p>
+      <CodeBlock lang="c" title="cfs_vruntime（伪代码）" code={vruntimeCode} />
+      <p>
+        进一步可以补两点显本事：其一，Linux 6.6 起 CFS 被新的 <strong>EEVDF</strong>（Earliest Eligible Virtual Deadline First）
+        调度器取代，更好地兼顾了延迟敏感任务；其二，实时任务走单独的实时调度类（<code>SCHED_FIFO</code>、<code>SCHED_RR</code>），
+        优先级永远高于普通任务，这就是为什么音频/工业控制要设成实时优先级。
+      </p>
       <p>
         被问算法对比时，按「目标 → 优缺点 → 典型问题」三段式说：FCFS 简单但有护航效应；SJF 平均等待最优但要预知时长且会饥饿；
         RR 响应好且公平但依赖时间片大小；MLFQ 不需预知时长、自动区分长短任务，最贴近实际。
       </p>
+      <Callout variant="info" title="多核调度的新问题">
+        <p>
+          单核时代不存在的问题在多核上冒出来：<strong>负载均衡</strong>（把任务在核间挪匀）和<strong>缓存亲和性</strong>
+          （cache affinity，一个任务老在同一个核上跑能复用该核的缓存，迁移到别的核要重新预热缓存）天然冲突。
+          Linux 用 per-CPU 运行队列加周期性负载迁移来平衡，迁移时会权衡缓存代价——这也是「软亲和」与 <code>taskset</code>
+          强制绑核存在的意义。
+        </p>
+      </Callout>
 
       <Practice title="算一算平均等待时间">
         <p>
@@ -162,10 +238,12 @@ export default function Ch2() {
       <Summary
         points={[
           '调度的目标是在公平、吞吐量、响应时间、周转/等待时间之间权衡，没有一种算法能全占。',
+          '区分 CPU 密集型与 IO 密集型负载，好调度器让 IO 密集型尽快上 CPU 发请求、保持设备忙。',
           '非抢占式跑完才让出，抢占式可被时间片或高优先级打断，后者响应更好但切换开销更大。',
           'FCFS 简单但有护航效应；SJF/SRTF 平均等待最优却要预知时长且会导致饥饿。',
-          '优先级调度靠老化防饥饿；RR 用时间片轮转保证响应与公平；MLFQ 自动区分长短任务、无需预知时长。',
-          'Linux CFS 用 vruntime（虚拟运行时间）取最小者运行，逼近完全公平的调度。',
+          '优先级调度靠老化防饥饿，还要警惕优先级反转，解法是优先级继承。',
+          'RR 用时间片轮转保证响应与公平；MLFQ 自动区分长短任务、无需预知时长，但要防止赖在高优先级。',
+          'Linux CFS 用 vruntime 取最小者运行逼近完全公平，新版以 EEVDF 取代；实时任务走单独调度类。',
           '计算平均等待时间先画甘特图，等待时间 = 开始执行时刻 − 到达时刻，再求平均。',
         ]}
       />

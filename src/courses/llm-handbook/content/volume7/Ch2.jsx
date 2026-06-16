@@ -59,6 +59,34 @@ if __name__ == '__main__':
     for q in ['这个月扣了我多少钱？', '网络连不上怎么办？', '你们几点关门？']:
         print(q, '->', router_agent(q))`
 
+const parallelCode = `# 并行模式：扇出 + 汇总（三个独立审查者同时跑）
+import concurrent.futures as cf
+
+def review_security(code): return '安全：未发现注入风险'
+def review_perf(code):     return '性能：建议给 user_id 加索引'
+def review_style(code):    return '风格：命名符合规范'
+
+REVIEWERS = [review_security, review_perf, review_style]
+
+def parallel_review(code):
+    # 三个审查彼此不依赖，可以同时跑，延迟取决于最慢的那个而非三者之和
+    with cf.ThreadPoolExecutor() as pool:
+        futures = [pool.submit(r, code) for r in REVIEWERS]
+        reports = [f.result() for f in futures]
+    # 汇总仍然走「单一出口」：拼成一份结构化结果再返回
+    return {'reports': reports, 'reviewer_count': len(reports)}
+
+
+# 评估-优化模式：写 -> 审 -> 改，循环到达标或到上限
+def evaluator_optimizer(task, max_rounds=3):
+    draft = produce(task)                 # 产出方先写一版
+    for _ in range(max_rounds):
+        verdict = critique(draft)         # 评估方挑刺
+        if verdict['passed']:
+            return draft                  # 达标，提前收口
+        draft = produce(task, feedback=verdict['notes'])  # 据反馈重写
+    return draft                          # 到上限也得收口，绝不死循环`
+
 export default function Ch7_2() {
   return (
     <>
@@ -114,6 +142,67 @@ export default function Ch7_2() {
         </p>
       </Callout>
 
+      <h2>怎么对号入座：一张选型表</h2>
+      <p>
+        与其死记五个名字，不如记住一个判断动作：<strong>看任务的依赖结构和确定性</strong>。
+        下面这张表把「任务长什么样」直接映射到「该用哪种模式」：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>任务形状</th>
+            <th>关键特征</th>
+            <th>选哪种</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>步骤有先后、层层递进</td>
+            <td>后一步依赖前一步</td>
+            <td>pipeline</td>
+          </tr>
+          <tr>
+            <td>输入多类、每类只走一条路</td>
+            <td>互斥分流</td>
+            <td>routing</td>
+          </tr>
+          <tr>
+            <td>子任务彼此独立，可同时做</td>
+            <td>无依赖 / 要投票</td>
+            <td>parallel</td>
+          </tr>
+          <tr>
+            <td>怎么拆要看具体输入才知道</td>
+            <td>结构运行时才确定</td>
+            <td>orchestrator-workers</td>
+          </tr>
+          <tr>
+            <td>有明确标准、一遍写不好</td>
+            <td>需要反复打磨</td>
+            <td>evaluator-optimizer</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        模式之间还能<strong>嵌套组合</strong>：一条 pipeline 的某一步内部可以是一个 parallel 扇出，
+        某个 worker 内部又可以挂一个 evaluator-optimizer 循环。别把五种模式当成五选一的单选题，
+        它们是可以拼装的积木。
+      </p>
+
+      <Callout variant="warn" title="选错模式的两个典型代价">
+        <ul>
+          <li>
+            <strong>该并行的硬串成 pipeline</strong>——三个本可同时跑的审查被排成一队，延迟白白翻三倍。
+          </li>
+          <li>
+            <strong>结构固定却用了 orchestrator-workers</strong>——任务其实每次都按同样几步走，
+            你却让一个编排者每次临场重新决策，徒增 token 和不确定性。能写死的就别让模型临场拍脑袋。
+          </li>
+        </ul>
+      </Callout>
+
+      <CodeBlock lang="python" title="parallel_and_evaluator.py" code={parallelCode} />
+
       <h2>协调器路由四拍</h2>
       <p>
         不管用哪种模式，最常见的协调器都在反复做同样四个动作，可以记成「四拍」：
@@ -142,6 +231,15 @@ export default function Ch7_2() {
           日志和评估有唯一的观测点。没有单一出口，多 Agent 很快会退化成一团谁也理不清的意大利面。
         </p>
       </KeyIdea>
+
+      <Callout variant="info" title="收口处该做的三件事">
+        <p>单一出口不只是「把结果拼起来」，它是你统一治理整个系统的地方，至少要做三件事：</p>
+        <ul>
+          <li><strong>统一兜底</strong>——任何一个专家抛错或返回空，都在这里转成一个对外的友好降级结果，而不是把异常透传给用户。</li>
+          <li><strong>统一打点</strong>——记下走了哪条路、哪个专家处理的、耗时多少。这是后面做评估和定位的唯一可靠数据源。</li>
+          <li><strong>统一脱敏</strong>——专家内部可能拿到敏感字段，在出口处做一次清洗，避免内部上下文意外泄露给调用方。</li>
+        </ul>
+      </Callout>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

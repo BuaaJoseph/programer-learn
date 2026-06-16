@@ -66,6 +66,40 @@ for epoch in range(EPOCHS):
 
         print(f'epoch {epoch} loss {loss.item():.4f}')`
 
+const gradAccumCode = `# 显存不够开大 batch？用「梯度累积」假装一个大 batch。
+# 真实 batch=4，但攒 4 个小步再更新一次 => 等效 batch=16。
+ACCUM_STEPS = 4
+optimizer.zero_grad()
+
+for step, batch in enumerate(loader):
+    out = model(**batch)
+    # 关键：loss 先除以累积步数，否则梯度会被放大 ACCUM_STEPS 倍
+    loss = out.loss / ACCUM_STEPS
+    loss.backward()                     # 梯度持续累加，先不更新
+
+    if (step + 1) % ACCUM_STEPS == 0:
+        torch.nn.utils.clip_grad_norm_(  # 顺手裁剪梯度，防止偶发的大梯度炸训练
+            model.parameters(), max_norm=1.0,
+        )
+        optimizer.step()                # 攒够了才真正挪一步
+        optimizer.zero_grad()           # 清空，开始攒下一轮`
+
+const splitCode = `import random
+
+def split_dataset(samples, val_ratio=0.1, seed=42):
+    """切出验证集。微调里最常见的事故就是没留验证集，
+    训练 loss 一路下降你以为成了，其实早就过拟合。"""
+    random.Random(seed).shuffle(samples)   # 固定 seed，保证每次切法一致、可复现
+    n_val = max(1, int(len(samples) * val_ratio))
+    val = samples[:n_val]
+    train = samples[n_val:]
+    # 体检：验证集分布要和训练集像，否则验证 loss 没有参考意义
+    assert len(set(map(id, val)) & set(map(id, train))) == 0, '训练/验证不能重叠！'
+    return train, val
+
+train, val = split_dataset(all_samples)
+print(f'train={len(train)}  val={len(val)}')`
+
 export default function Ch3_2() {
   return (
     <>

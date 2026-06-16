@@ -24,6 +24,30 @@ const sackCode = `# 假设发了 段1..段5，其中 段2 丢失
 # 开启 SACK 后，接收方可额外告知：已收到 [段3,段4,段5]
 # 发送方据此只重传 段2 一个段，而不是 段2..段5 全部重发`
 
+const fastRetransCode = `# 快速重传：不必等超时，连续 3 个重复 ACK 就立刻重传
+发送 段1 段2 段3 段4 段5
+段2 丢失
+收到 段3 -> 回 ACK(期望段2)   # 第 1 个重复 ACK
+收到 段4 -> 回 ACK(期望段2)   # 第 2 个重复 ACK
+收到 段5 -> 回 ACK(期望段2)   # 第 3 个重复 ACK
+# 发送方收到 3 个重复 ACK，判定段2丢失，立刻重传，不等 RTO 超时`
+
+const rtoCode = `# RTO（重传超时）是动态算出来的，不是固定值
+# 核心是估算 RTT 的均值与抖动（Jacobson 算法思想）：
+SRTT   = (1 - a) * SRTT + a * 新测得RTT        # 平滑后的 RTT
+RTTVAR = (1 - b) * RTTVAR + b * |SRTT - 新RTT| # RTT 的波动
+RTO    = SRTT + 4 * RTTVAR                      # 留足余量
+
+# 重传后若再超时，RTO 翻倍（指数退避），避免在已经拥塞的网络上火上浇油`
+
+const sysctlCode = `# 查看与可靠传输相关的内核参数
+sysctl net.ipv4.tcp_sack         # 1 = 开启选择性确认
+sysctl net.ipv4.tcp_window_scaling  # 1 = 开启窗口缩放，窗口可超 64KB
+sysctl net.ipv4.tcp_timestamps   # 1 = 开启时间戳，用于精确测 RTT、防序号回绕
+
+# 看某条连接实时的 RTT、窗口、重传次数
+ss -ti state established`
+
 export default function Ch2() {
   return (
     <>
@@ -67,6 +91,21 @@ export default function Ch2() {
         </p>
       </Callout>
 
+      <h3>超时重传 vs 快速重传：RTO 怎么定</h3>
+      <p>
+        「发出去多久没收到 ACK 才算丢」这个超时阈值叫 <code>RTO</code>（Retransmission TimeOut）。它<strong>不是固定值</strong>，
+        而是 TCP 根据实测的 RTT 动态算出来的：RTT 大 RTO 就大，RTT 抖动大 RTO 留的余量也大。
+        如果 RTO 设得太小，稍有延迟就误判丢包乱重传；设得太大，真丢了也要干等半天。这就是为什么测准 RTT 这么重要
+        （时间戳选项就是为它服务的）。重传后如果还超时，RTO 会<strong>指数退避</strong>（翻倍），避免在已经拥塞的网络上雪上加霜。
+      </p>
+      <CodeBlock lang="text" title="RTO 的动态估算" code={rtoCode} />
+      <p>
+        但纯靠超时重传太慢——要白白等一个 RTO。于是有了<strong>快速重传</strong>：发送方一旦收到
+        <strong>3 个重复 ACK</strong>（说明后面的段到了、但中间缺了一块），就立刻重传缺失的段，不必等 RTO 到期。
+        这是丢包恢复里最重要的优化之一，配合 SACK 能把「丢一个段」的代价压到很低。
+      </p>
+      <CodeBlock lang="text" title="快速重传：3 个重复 ACK 触发" code={fastRetransCode} />
+
       <h3>从停止等待到滑动窗口</h3>
       <p>
         最朴素的可靠方案是<em>停止等待</em>（stop-and-wait）：发一个段，死等它的 ACK 回来，再发下一个。
@@ -107,6 +146,40 @@ export default function Ch2() {
         同时又能随接收方和网络的状况动态收放。
       </p>
 
+      <h3>流量控制：rwnd 与「零窗口」死锁</h3>
+      <p>
+        接收窗口的本质是<strong>流量控制</strong>——别让快的发送方淹没慢的接收方。当接收方应用读得慢、缓冲区堆满时，
+        它会在 ACK 里通告 <code>rwnd=0</code>（零窗口），发送方就必须停下来。问题来了：接收方腾出空间后会发一个
+        「窗口更新」通知发送方继续，但<strong>如果这个更新包丢了</strong>，发送方一直等、接收方一直没新数据可确认，
+        双方就<em>死锁</em>了。
+      </p>
+      <p>
+        TCP 的解法是<strong>持续计时器</strong>（persist timer）：发送方收到零窗口后会定期发一个 1 字节的
+        <em>窗口探测</em>包，逼接收方回一个带最新窗口大小的 ACK，从而打破死锁。这是个经典的边界情况考点，
+        答出来很显细节功底。
+      </p>
+
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：把流量控制和拥塞控制混为一谈。</strong>流量控制是「别淹没<em>接收方</em>」（靠 rwnd），
+            拥塞控制是「别压垮<em>网络</em>」（靠 cwnd，下一章讲）。发送窗口 = min(rwnd, cwnd)，两者一起约束。
+          </li>
+          <li>
+            <strong>追问：为什么是 3 个重复 ACK 才快速重传，不是 1 个？</strong>因为网络乱序也会造成重复 ACK，
+            等到 3 个是为了在「乱序」和「真丢包」之间取平衡，降低误判重传。
+          </li>
+          <li>
+            <strong>追问：累积确认下，一个 ACK 丢了要紧吗？</strong>不要紧。因为后一个 ACK 会确认更靠前的字节
+            （ACK 是「这之前都收到了」），所以累积确认天然容忍个别 ACK 丢失。
+          </li>
+          <li>
+            <strong>追问：TCP 是按段重传还是按字节？</strong>逻辑上以字节序号为准，但实际重传通常以段为单位；
+            SACK 报告的也是字节区间。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「TCP 怎么保证可靠传输」，别只甩名词，按层次答：<strong>序号</strong>给数据定位、
@@ -128,6 +201,10 @@ export default function Ch2() {
           以及发生丢包时 SACK 块（SACK block）是怎么标出缺失区间的，对照上面的 <code>{`段2 丢失`}</code> 场景。
         </p>
         <CodeBlock lang="text" title="SACK 选择重传场景" code={sackCode} />
+        <p>
+          最后看看本机这些可靠传输相关的开关，并用 <code>ss -ti</code> 实时观察一条连接的 RTT、窗口和重传次数：
+        </p>
+        <CodeBlock lang="bash" title="内核参数与实时连接指标" code={sysctlCode} />
       </Practice>
 
       <Summary
@@ -137,6 +214,8 @@ export default function Ch2() {
           '停止等待「发一等一」在高带宽长 RTT 下严重浪费链路，滑动窗口用流水线把链路填满。',
           '发送窗口约束「已发未确认」的数据量，每收一个 ACK 就向右滑动，腾出空间继续发。',
           '接收窗口 rwnd 由接收方通告，发送窗口取 rwnd 与拥塞窗口的较小值。',
+          'RTO 由实测 RTT 动态估算并指数退避；快速重传靠 3 个重复 ACK 触发，不必等超时，配合 SACK 大幅降低丢包代价。',
+          '流量控制靠 rwnd 防止淹没接收方；零窗口可能死锁，TCP 用持续计时器发窗口探测包打破死锁。',
           '需要窗口，是为了在保证可靠的前提下尽量填满链路，并能随接收方与网络状况动态收放。',
         ]}
       />

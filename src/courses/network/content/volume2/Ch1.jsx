@@ -25,6 +25,26 @@ sudo tcpdump -i any -nnS 'tcp port 80 and host example.com'
 # IP B.80 > A.5000: Flags [S.], seq 9000, ack 1001
 # IP A.5000 > B.80: Flags [.],  ack 9001`
 
+const synQueueCode = `# 半连接队列（SYN_RCVD 排队等第三次握手）上限
+sysctl net.ipv4.tcp_max_syn_backlog
+# 全连接队列（握手完成、等 accept 取走）上限由 listen(backlog) 与 somaxconn 共同决定
+sysctl net.core.somaxconn
+
+# 开启 SYN cookies，遭遇 SYN flood 时不占半连接队列
+sysctl net.ipv4.tcp_syncookies     # 1 = 开启
+
+# 全连接队列溢出会被丢弃并计数，用这条看有没有发生
+nstat -az | grep -i ListenDrop
+# 或：netstat -s | grep -i 'listen queue'`
+
+const timeWaitCode = `# 统计本机各状态连接数，TIME_WAIT 异常多就要警觉
+ss -ant | awk 'NR>1{print $1}' | sort | uniq -c | sort -rn
+
+# 缓解 TIME_WAIT 堆积的内核参数（按需，谨慎）
+sysctl net.ipv4.tcp_tw_reuse      # 1 = 允许复用 TIME_WAIT 连接给新的对外连接
+sysctl net.ipv4.tcp_fin_timeout   # FIN_WAIT_2 的超时（不是 TIME_WAIT 时长）
+# 注意：tcp_tw_recycle 在新内核已移除，NAT 环境下用它会丢包，别再用`
+
 export default function Ch1() {
   return (
     <>
@@ -59,6 +79,34 @@ export default function Ch1() {
       </ul>
       <p>
         注意 <code>SYN</code> 报文本身不携带数据，但要<strong>消耗一个序号</strong>，所以确认号都是对方序号加一。
+        同样道理，<code>FIN</code> 也消耗一个序号。而纯 <code>ACK</code>（不带数据）不消耗序号，这也是为什么挥手时
+        中间那个单独的 ACK 不会让序号往前走。
+      </p>
+      <p>
+        三次握手不只是「打招呼」，它还顺带<strong>协商了一批连接参数</strong>，都写在 SYN/SYN+ACK 的 TCP 选项里：
+        <code>MSS</code>（本端能接收的最大段大小，避免 IP 分片）、<em>窗口缩放因子</em>（让接收窗口能超过 64KB，
+        是高带宽链路必需的）、<em>SACK 允许</em>（选择性确认，丢包时只重传缺的那段）、时间戳（用于 RTT 测量和防序号回绕）。
+        所以握手既是建连也是「能力协商」，这点常被忽略，但答出来很加分。
+      </p>
+
+      <h2>半连接队列与全连接队列</h2>
+      <p>
+        握手过程在内核里对应两个队列，面试和线上排障都绕不开：
+      </p>
+      <ul>
+        <li>
+          <strong>半连接队列</strong>（SYN queue）：服务端收到第一个 <code>SYN</code> 回了 SYN+ACK 后，
+          连接处于 <code>SYN_RCVD</code>，就排在这里等第三次握手的 ACK。SYN flood 攻击塞满的就是它。
+        </li>
+        <li>
+          <strong>全连接队列</strong>（accept queue）：三次握手完成、连接进入 <code>ESTABLISHED</code> 后，
+          排在这里等应用调用 <code>accept()</code> 取走。如果应用 accept 太慢、队列满了，
+          新完成的连接会被丢弃（甚至丢掉客户端的 ACK），表现为「偶发连接超时但服务器 CPU 不高」这类诡异现象。
+        </li>
+      </ul>
+      <p>
+        全连接队列的长度由 <code>listen(fd, backlog)</code> 的 backlog 和内核 <code>somaxconn</code> 取较小值决定。
+        这是一个非常实战的考点：很多「连接数上不去」的问题，根因就在 backlog 设小了或 accept 处理不过来。
       </p>
 
       <Example title="跟着序号走一遍">
@@ -134,6 +182,71 @@ export default function Ch1() {
         </p>
       </Callout>
 
+      <h2>TCP 状态机：握手挥手只是它的两条路径</h2>
+      <p>
+        握手和挥手里出现的那些大写状态（<code>SYN_SENT</code>、<code>ESTABLISHED</code>、<code>TIME_WAIT</code> 等），
+        其实都是 TCP <strong>有限状态机</strong>上的节点。把它当成一张状态图来记，比死背流程牢得多：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>状态</th>
+            <th>谁会处于</th>
+            <th>含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LISTEN</td>
+            <td>服务端</td>
+            <td>已 listen，等待 SYN</td>
+          </tr>
+          <tr>
+            <td>SYN_SENT</td>
+            <td>主动方</td>
+            <td>已发 SYN，等 SYN+ACK</td>
+          </tr>
+          <tr>
+            <td>SYN_RCVD</td>
+            <td>被动方</td>
+            <td>已回 SYN+ACK，等第三次 ACK（在半连接队列）</td>
+          </tr>
+          <tr>
+            <td>ESTABLISHED</td>
+            <td>双方</td>
+            <td>连接建立，正常传数据</td>
+          </tr>
+          <tr>
+            <td>FIN_WAIT_1 / FIN_WAIT_2</td>
+            <td>主动关闭方</td>
+            <td>已发 FIN，等对方 ACK / 等对方 FIN</td>
+          </tr>
+          <tr>
+            <td>CLOSE_WAIT</td>
+            <td>被动关闭方</td>
+            <td>收到对方 FIN、回了 ACK，自己还没发 FIN</td>
+          </tr>
+          <tr>
+            <td>LAST_ACK</td>
+            <td>被动关闭方</td>
+            <td>已发自己的 FIN，等最后一个 ACK</td>
+          </tr>
+          <tr>
+            <td>TIME_WAIT</td>
+            <td>主动关闭方</td>
+            <td>已发最后 ACK，等 2MSL</td>
+          </tr>
+        </tbody>
+      </table>
+      <Callout variant="warn" title="CLOSE_WAIT 堆积几乎一定是代码 bug">
+        <p>
+          这是高频线上事故。<code>TIME_WAIT</code> 多是正常现象（主动关闭的代价），但 <code>CLOSE_WAIT</code> 大量堆积，
+          几乎都是<strong>应用层收到了对端的 FIN 却忘了调用 <code>close()</code></strong>——比如没正确关闭连接、连接池泄漏、
+          某个异常分支没走到关闭逻辑。内核已经替你回了 ACK 进入 CLOSE_WAIT，但只有你的代码 close 了才会发出自己的 FIN。
+          所以排障口诀：<em>TIME_WAIT 多看参数和架构，CLOSE_WAIT 多查自己的代码</em>。
+        </p>
+      </Callout>
+
       <h2>SYN 洪泛攻击</h2>
       <p>
         攻击者用伪造的源地址疯狂发 <code>SYN</code>，服务端每收到一个就回 SYN+ACK 并在<em>半连接队列</em>
@@ -142,12 +255,36 @@ export default function Ch1() {
         服务端不急着分配资源，而是把连接信息编码进序号里，等收到合法的第三次握手再恢复，从而绕过半连接队列。
       </p>
 
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>追问：两次握手到底差在哪个具体场景？</strong>关键是「确认<em>客户端</em>的接收能力」和「防历史连接」。
+            两次握手下，服务端发完 SYN+ACK 就认为连接建立，但它无法确认客户端真的收到了；一个迟到的旧 SYN 也会让它白白建连。
+          </li>
+          <li>
+            <strong>追问：四次挥手能变三次吗？</strong>能。如果被动方收到 FIN 时<em>恰好也没有数据要发了</em>，
+            就能把 ACK 和自己的 FIN 合并成一个包，挥手就变成三次。这正说明「四次」不是铁律，而是「ACK 和 FIN 通常不能合并」的结果。
+          </li>
+          <li>
+            <strong>追问：为什么 TIME_WAIT 在主动关闭方，不在被动方？</strong>因为最后一个 ACK 是主动方发的，
+            必须停留以便对端 FIN 丢失时能重发 ACK；被动方收到这个 ACK 就直接 CLOSED 了。
+          </li>
+          <li>
+            <strong>误区：以为 ISN 是 0。</strong>ISN 是随机的，既防旧报文串连接，也增加序号被猜中的难度（安全）。
+          </li>
+          <li>
+            <strong>追问：连接建立后某一方突然断电会怎样？</strong>对端不会立刻知道，要靠 <em>keepalive</em> 探测或
+            上层超时才能发现，这就是「半打开连接」问题。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「讲讲三次握手」，按「<strong>为什么</strong>（确认双方收发能力、交换 ISN）→
         <strong>怎么做</strong>（SYN / SYN+ACK / ACK 三步加状态变化）→ <strong>为什么不是两次</strong>
         （防历史连接、确认双向能力）」的顺序讲，再补一句四次挥手的差异和 TIME_WAIT，基本就满分了。
-        切忌只背流程不讲原因。
+        切忌只背流程不讲原因。能顺带提一句握手时还协商了 MSS、窗口缩放、SACK 这些参数，立刻显得不一样。
       </p>
 
       <Practice title="亲手抓一次握手">
@@ -159,7 +296,16 @@ export default function Ch1() {
         <CodeBlock lang="bash" title="看连接状态" code={netstatCode} />
         <CodeBlock lang="bash" title="抓握手包" code={tcpdumpCode} />
         <p>
+          想理解半连接/全连接队列和 SYN cookies，看看这些内核参数与溢出计数：
+        </p>
+        <CodeBlock lang="bash" title="看两个队列与 SYN cookies" code={synQueueCode} />
+        <p>
+          再统计 TIME_WAIT 数量、看看缓解参数，建立「TIME_WAIT 多是正常代价、CLOSE_WAIT 多是 bug」的直觉：
+        </p>
+        <CodeBlock lang="bash" title="TIME_WAIT 统计与缓解" code={timeWaitCode} />
+        <p>
           观察后想一想：当你 <code>curl</code> 一个网址再关闭时，主动关闭的是哪一方？谁停在了 TIME_WAIT？
+          如果你的服务里出现一堆 CLOSE_WAIT，第一反应应该去查什么？
         </p>
       </Practice>
 
@@ -170,6 +316,9 @@ export default function Ch1() {
           '四次挥手：FIN → ACK → FIN → ACK，因为连接全双工要分别关闭，且服务端的 ACK 与 FIN 通常分两步发。',
           'TIME_WAIT 等待 2MSL，是为了确保最后一个 ACK 送达、并让残留报文消散；过多可用 tw_reuse、长连接等缓解。',
           'SYN flood 用伪造 SYN 占满半连接队列，SYN cookies 是常见防御手段。',
+          '握手同时协商连接参数：MSS、窗口缩放因子、SACK 允许、时间戳——建连即能力协商。',
+          '内核有半连接队列（等第三次握手）与全连接队列（等 accept），后者溢出会丢连接，常是连接数上不去的根因。',
+          '把状态当成状态机记：TIME_WAIT 多是正常代价（在主动关闭方），CLOSE_WAIT 大量堆积几乎一定是没调用 close 的代码 bug。',
           '用 netstat/ss 看状态、用 tcpdump 抓包对照 seq/ack，是把握手原理落到实处的最佳方式。',
         ]}
       />

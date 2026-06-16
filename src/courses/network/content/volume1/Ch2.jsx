@@ -195,6 +195,69 @@ export default function Ch2() {
         </ul>
       </Callout>
 
+      <h2>连不上时，按链路逐段排查</h2>
+      <p>
+        这道题的逆向用法是排障：访问失败时，把链路当成一条流水线，从前往后定位卡在哪一段。
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>症状</th>
+            <th>大概率卡在哪一段</th>
+            <th>验证手段</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>域名打不开、IP 能开</td>
+            <td>DNS 解析</td>
+            <td><code>dig</code> / <code>nslookup</code> 看能否解析出 IP</td>
+          </tr>
+          <tr>
+            <td>解析出 IP 但连接超时</td>
+            <td>TCP 握手（防火墙/端口未开）</td>
+            <td><code>telnet ip 443</code> / <code>nc -vz ip 443</code></td>
+          </tr>
+          <tr>
+            <td>连得上但报证书错误</td>
+            <td>TLS 握手（证书过期/不匹配）</td>
+            <td><code>openssl s_client</code> 看证书链</td>
+          </tr>
+          <tr>
+            <td>请求发出去半天没响应</td>
+            <td>服务器处理慢（TTFB 高）</td>
+            <td><code>curl -w '%{time_starttransfer}'</code></td>
+          </tr>
+          <tr>
+            <td>内容下完但页面白屏</td>
+            <td>浏览器渲染（JS 报错/资源 404）</td>
+            <td>浏览器 Console 与 Network 面板</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为 DNS 解析就是「问一台服务器」。</strong>其实是浏览器→系统→本地递归解析器→
+            根/顶级域/权威的多级递归 + 多级缓存，结构性地说清楚才显功底。
+          </li>
+          <li>
+            <strong>追问：keep-alive 和 TCP 长连接是一回事吗？</strong>HTTP keep-alive 是「复用同一条 TCP 连接发多个请求」，
+            底层就是不立刻四次挥手；它减少的是握手开销，但 HTTP/1.1 仍是「一条连接同一时刻只处理一个请求」（队头阻塞），
+            这点要和 HTTP/2 的多路复用分清。
+          </li>
+          <li>
+            <strong>追问：渲染时为什么 JS 会「阻塞」？</strong>因为 <code>script</code> 默认会暂停 HTML 解析，
+            可能修改 DOM；用 <code>defer</code>/<code>async</code> 才能不阻塞。这是把网络链路延伸到前端性能的好切入点。
+          </li>
+          <li>
+            <strong>追问：第二次更快只靠缓存吗？</strong>不止——还有 TLS 会话复用（0-RTT）、TCP 连接复用、
+            浏览器对资源的预解析与预连接（<code>dns-prefetch</code>/<code>preconnect</code>）。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         回答这道题的最佳策略是<strong>先给骨架、再按需展开</strong>：先一口气说出
@@ -213,6 +276,14 @@ export default function Ch2() {
         </p>
         <CodeBlock lang="bash" title="dig 观察 DNS 解析" code={digCode} />
         <p>
+          再换不同记录类型和不同 DNS 服务器解析同一个域名，亲眼看到 CNAME 链和就近调度返回的不同 IP：
+        </p>
+        <CodeBlock lang="bash" title="dig 看记录类型与就近调度" code={nslookupCode} />
+        <p>
+          想验证 TLS 复用带来的提速、看证书链，用下面这组命令对比首次与复用的握手耗时：
+        </p>
+        <CodeBlock lang="bash" title="观察 TLS 握手与会话复用" code={tlsResumeCode} />
+        <p>
           再打开浏览器的 Network 面板，刷新页面看 Timing 一栏的 Queueing / DNS / Connection / TTFB / Content Download，
           和上面命令的结果对照，整条链路就从文字变成了你能亲眼看到的瀑布图。
         </p>
@@ -222,9 +293,12 @@ export default function Ch2() {
         points={[
           '完整链路：URL 解析 → DNS 解析 → TCP 三次握手 →（HTTPS 则 TLS 握手）→ 发 HTTP 请求 → 服务器响应 → 浏览器渲染 → TCP 四次挥手。',
           'DNS 解析层层查缓存：浏览器缓存 → 系统缓存/hosts → 本地 DNS 服务器 → 递归查询（根 → 顶级域 → 权威），按 TTL 缓存。',
+          'DNS 默认走 UDP 53，响应超 512 字节或区域传送时切 TCP；记录类型 A/AAAA/CNAME/MX/NS/TXT，CDN 靠返回不同 IP 做就近调度。',
+          'TLS 1.2 握手 2-RTT、1.3 优化到 1-RTT 且支持 0-RTT 会话复用；SNI 让一个 IP 托管多个 HTTPS 站点能返回正确证书。',
           '三次握手建立可靠 TCP 连接、确认双方收发能力；TLS 握手只在 HTTPS 出现，位于 TCP 之后、HTTP 请求之前。',
           '浏览器渲染：HTML→DOM、CSS→CSSOM，合成渲染树后经布局（layout）与绘制（paint）显示到屏幕。',
           '缓存贯穿全程：DNS 缓存省解析、HTTP 缓存（强缓存/304 协商缓存）省传输、TCP keep-alive 省重复握手，是第二次更快的原因。',
+          '排障思路：把链路当流水线，按 DNS→TCP→TLS→服务器处理→渲染逐段定位，每段都有对应的验证命令。',
           '回答策略：先报完整骨架再逐段展开关键点，主动引出缓存，避免一头扎进单个细节。',
         ]}
       />
