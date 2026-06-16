@@ -73,6 +73,8 @@ export default function CourseCover({ course }) {
         <AgentLoopScene />
       ) : coverScene === 'forge' ? (
         <ForgeScene />
+      ) : coverScene === 'frameworks' ? (
+        <FrameworksScene />
       ) : (
         <AttentionScene />
       )}
@@ -558,6 +560,39 @@ function ForgeScene() {
         <circle key={i} cx={s.x} cy={s.y} r={1.5 + (i % 3)} fill="#ffd27a" fillOpacity={0.5 + (i % 2) * 0.3} />
       ))}
       <text x="40" y="178" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">node + typescript · build your own coding agent</text>
+    </g>
+  )
+}
+
+function FrameworksScene() {
+  // 多个框架节点连成一张网：同一个模型后端(中心) 被不同框架(外围)接入。
+  const hub = { x: 200, y: 100 }
+  const nodes = [
+    { x: 70, y: 40, t: 'smol' },
+    { x: 330, y: 40, t: 'OpenAI' },
+    { x: 50, y: 110, t: 'Pydantic' },
+    { x: 350, y: 110, t: 'LangGraph' },
+    { x: 90, y: 168, t: 'CrewAI' },
+    { x: 250, y: 170, t: 'LlamaIdx' },
+    { x: 320, y: 168, t: 'Spring' },
+  ]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.35" strokeWidth="1.3">
+        {nodes.map((n, i) => (
+          <line key={i} x1={hub.x} y1={hub.y} x2={n.x} y2={n.y} />
+        ))}
+      </g>
+      {nodes.map((n, i) => (
+        <g key={i}>
+          <rect x={n.x - 34} y={n.y - 13} width="68" height="26" rx="7" fill="#ffffff" fillOpacity="0.14" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+          <text x={n.x} y={n.y + 4} textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff">{n.t}</text>
+        </g>
+      ))}
+      {/* 中心：统一的模型后端 */}
+      <circle cx={hub.x} cy={hub.y} r="34" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.4" />
+      <text x={hub.x} y={hub.y - 2} textAnchor="middle" fontFamily="var(--display)" fontSize="13" fontWeight="700" fill="#ffffff">Qwen</text>
+      <text x={hub.x} y={hub.y + 12} textAnchor="middle" fontFamily="var(--mono)" fontSize="7.5" fill="#ffffff" fillOpacity="0.85">百炼后端</text>
     </g>
   )
 }
