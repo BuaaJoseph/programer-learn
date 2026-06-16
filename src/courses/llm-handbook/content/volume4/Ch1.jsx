@@ -105,6 +105,24 @@ def run_agent(question, max_iterations=5):
 
 print(run_agent('北京今天几度？'))`
 
+const wrongFlowCode = `# 反面教材：这是新手最常见的「断裂历史」写法，会让模型困惑甚至报错。
+resp = client.chat.completions.create(model='gpt-4o-mini', messages=messages, tools=tools)
+msg = resp.choices[0].message
+
+# ❌ 错误：直接把工具结果塞进去，却没先把模型那条 tool_calls 消息加回历史
+result = real_get_weather('北京')
+messages.append({'role': 'tool', 'content': str(result)})   # 缺 tool_call_id！
+# 模型看到一条凭空冒出来的 tool 结果，前面却没有对应的 tool_calls，历史对不上。
+
+# ✅ 正确：先 append(msg)，再 append 带 tool_call_id 的结果
+messages.append(msg)                                         # 1) 模型的调用意图
+for call in msg.tool_calls:                                  # 2) 逐个工具结果
+    messages.append({
+        'role': 'tool',
+        'tool_call_id': call.id,                             # 必须能对应回那次调用
+        'content': str(real_get_weather('北京')),
+    })`
+
 export default function Ch4_1() {
   return (
     <>
