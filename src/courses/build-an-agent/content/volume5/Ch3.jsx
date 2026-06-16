@@ -163,7 +163,7 @@ export default function Ch3() {
           既够它读几十个文件，也防止它在隔离上下文里失控空转。
         </li>
         <li>
-          <strong><code>confirm</code> 复用主代理的确认通道</strong>：<code>confirm: (req) => agent.requestConfirm(req)</code>。
+          <strong><code>confirm</code> 复用主代理的确认通道</strong>：<code>{'confirm: (req) => agent.requestConfirm(req)'}</code>。
           子代理要执行危险写操作时，确认请求仍然弹回给<strong>用户</strong>——安全这条线不因为「在子代理里」就打折。
         </li>
         <li>
