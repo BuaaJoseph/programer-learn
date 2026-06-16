@@ -145,6 +145,43 @@ const testOutput = `> forge@0.7.0 test
 ℹ cancelled 0
 ℹ duration_ms 142.3`
 
+const snapshotTest = `import { test, snapshot } from 'node:test'
+import { renderToolLine } from '../src/render.js'
+
+// 快照测试：把"渲染出来长啥样"钉死。改动若让输出变了，diff 会立刻报出来。
+test('工具调用行渲染快照', (t) => {
+  const line = renderToolLine({ name: 'edit', input: { path: 'src/a.ts' } })
+  // 第一次跑生成快照文件；之后跑比对，不一致即 fail
+  t.assert.snapshot(line)
+})`
+
+const propertyTest = `// 属性测试：不写死具体例子，而是断言"对任意输入都成立的不变量"
+test('edit 替换后，oldString 不再出现且长度变化符合预期', () => {
+  for (const [text, oldS, newS] of cases()) {
+    const cwd = tmp()
+    writeFileSync(join(cwd, 'a.txt'), text)
+    const before = (text.match(new RegExp(escape(oldS), 'g')) ?? []).length
+    if (before !== 1) continue // 只测唯一命中
+    editTool.execute({ path: 'a.txt', oldString: oldS, newString: newS }, { cwd })
+    const after = readFileSync(join(cwd, 'a.txt'), 'utf8')
+    // 不变量：恰好替换一处，长度变化 = newS.length - oldS.length
+    assert.equal(after.length, text.length + (newS.length - oldS.length))
+  }
+})`
+
+const ciYaml = `name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+      - run: npm test
+      # 注意：没有任何 API key——假 Provider 让测试完全离线，CI 才能稳定跑`
+
 export default function Ch4() {
   return (
     <article>
@@ -171,6 +208,33 @@ export default function Ch4() {
         不确定的（模型具体吐什么字）才交给运行时，确定的（流程与行为）交给测试。
       </KeyIdea>
 
+      <h2>Agent 测试的根本难题：非确定性</h2>
+      <p>
+        在动手前必须把这个坎讲透，否则你会写出一堆「时灵时不灵」的脆弱测试。普通函数测试的黄金假设是
+        <strong>「同输入同输出」</strong>，可 LLM 偏偏违背它：同一句 prompt 调两次，措辞会不同、有时甚至连「调不调工具」
+        都不一样。这意味着——
+      </p>
+      <ul>
+        <li><strong>不能断言模型说了什么</strong>：<code>assert.equal(out, '已修改 port')</code> 这种断言注定时不时挂，因为措辞本就会变。</li>
+        <li><strong>不能在 CI 里真调模型</strong>：要联网、要密钥、要花钱、还慢，而且因为输出不稳定，挂了你都分不清是「真退化」还是「模型今天换了个说法」。</li>
+        <li><strong>不能依赖外部环境</strong>：网络抖一下、限流一下，测试就红，CI 根本没法当门禁用。</li>
+      </ul>
+      <p>
+        破解之道是把「确定的」和「不确定的」<strong>切开</strong>：模型这块用<strong>假 Provider</strong>替换成可控脚本，
+        于是整条主循环重新变回「同输入同输出」的确定性系统；而模型本身的质量，交给另一类专门的「评测（eval）」去做，
+        不混进单元测试。这条切割线是整章的核心思想。
+      </p>
+      <table>
+        <thead>
+          <tr><th>层次</th><th>测什么</th><th>用什么</th><th>进 CI 门禁吗</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>单元/集成</td><td>主循环、权限、工具（确定性）</td><td>假 Provider + node:test</td><td>是，每次必跑</td></tr>
+          <tr><td>快照</td><td>渲染输出格式不退化</td><td>node:test 快照</td><td>是</td></tr>
+          <tr><td>评测 eval</td><td>真实模型完成任务的质量</td><td>真 Provider + 评分</td><td>否，单独跑、看趋势</td></tr>
+        </tbody>
+      </table>
+
       <h2>工具怎么测：在临时目录里跑真实读写</h2>
       <p>
         工具是 Agent 最贴近副作用的部分，恰恰也最好测：在一个临时目录里跑真实的文件读写，
@@ -187,6 +251,12 @@ export default function Ch4() {
         <code>--test</code> 是 Node 内置的测试运行器，会自动发现并跑匹配到的文件。
         零额外测试框架，零配置文件——这正是我们想要的轻量。
       </p>
+
+      <Callout variant="note">
+        <strong>为什么用真实文件而不是 mock fs？</strong>因为工具的价值恰恰在「它真能正确操作文件系统」。mock 掉 fs，
+        你测的就只是「我以为 fs 怎么工作」，而临时目录里跑真实读写测的是「fs 真的怎么工作」。代价只是几毫秒的磁盘 IO，
+        换来的是对真实行为的信心——这笔买卖非常划算。临时目录天然隔离、跑完即弃，不污染仓库，所以「真实」并不等于「危险」。
+      </Callout>
 
       <CodeBlock lang="ts" title="test/tools.test.ts" code={toolsTest} />
 
@@ -214,6 +284,12 @@ export default function Ch4() {
           而不是抛出异常崩掉主循环——这正是卷 1 给所有工具定下的契约：失败要变成可喂回模型的结果。
         </li>
       </ul>
+
+      <Callout variant="tip">
+        <strong>工程经验：优先测边界与错误路径。</strong>「写了能读回」这种 happy path 当然要测，但真正容易退化、
+        真正会出事的是<strong>边界</strong>：多处命中、文件不存在、空内容、路径越界。上面四个测里有三个在测错误/边界——
+        这个比例是对的。一条朴素的规律：bug 几乎都藏在 <code>if/else</code> 的那个「else」里。
+      </Callout>
 
       <h2>主循环集成测试：关键是「假 Provider」</h2>
       <p>
@@ -252,12 +328,59 @@ export default function Ch4() {
         把「怎么拿到下一回合」抽象成接口，测试时就能换成离线脚本。这就是好设计在测试阶段的回报。
       </p>
 
+      <Callout variant="note">
+        <strong>假 Provider 为什么比「mock 库打桩」更好？</strong>它是一个真实实现了接口的类，类型系统会逼着它和真 Provider
+        保持同一个契约——接口一改，假 Provider 编译不过，你立刻知道要同步。而 mock 库往往用字符串/任意对象打桩，接口漂移了
+        它还能「跑过」，给你虚假的安全感。<strong>用真类型约束的假实现 &gt; 无类型的 mock</strong>，这是 TS 项目里很值钱的一条经验。
+      </Callout>
+
+      <h2>快照测试：把「长啥样」钉死</h2>
+      <p>
+        有些东西不好用 <code>assert.equal</code> 一条条写——比如终端渲染出来的那一行带颜色、带截断的输出。
+        手写期望值又臭又长，还容易写错。这时用<strong>快照测试</strong>：第一次跑把输出录成快照文件，之后每次跑拿当前输出
+        和快照比，<strong>一旦 diff 就报警</strong>。Node 22+ 的 <code>node:test</code> 内置了快照能力：
+      </p>
+      <CodeBlock lang="ts" title="test/render.test.ts（快照）" code={snapshotTest} />
+      <p>
+        快照的价值在于「<strong>意外变更会被立刻揪出来</strong>」：你本来只想改个工具逻辑，结果手滑改了渲染格式，
+        快照测试当场红给你看。它特别适合守「输出格式」这种「不该变、变了往往是 bug」的东西。
+      </p>
+      <Callout variant="warn">
+        <strong>快照的常见误区：无脑 <code>--update</code>。</strong>快照红了，正确动作是<strong>看 diff、判断这变化是不是预期的</strong>——
+        是预期的才更新快照，不是预期的就去修代码。养成「红了就 update」的肌肉记忆，快照测试就退化成了橡皮图章，等于没测。
+        同理，别给快照里塞时间戳、随机 id 这类<strong>本就会变</strong>的内容，否则它永远红，最后只能被无视。
+      </Callout>
+
+      <h2>属性测试：与其举例，不如断言不变量</h2>
+      <p>
+        逐个写例子总有漏的角落。另一种思路是<strong>属性测试</strong>：不写死「输入 A 得输出 B」，而是断言
+        「<strong>对任意合法输入，某个不变量恒成立</strong>」，然后喂一堆随机/构造的输入去撞它。比如 edit 工具有个天然不变量：
+        唯一命中替换后，文件长度变化必然等于 <code>{'newString.length - oldString.length'}</code>：
+      </p>
+      <CodeBlock lang="ts" title="test/edit.property.test.ts（属性测试，示意）" code={propertyTest} />
+      <p>
+        属性测试常能逼出你举例时根本想不到的边界（空串、超长、含特殊字符）。它不取代举例测试，而是补在它旁边——
+        举例测试讲清「典型行为」，属性测试守住「普适规律」。
+      </p>
+
       <Example title="跑一次测试">
         <p>一条命令把全部测试跑起来：</p>
         <CodeBlock lang="bash" code={runTest} />
         <p>输出大致长这样，最后几行是汇总，7 个测试全绿：</p>
         <CodeBlock lang="text" code={testOutput} />
       </Example>
+
+      <h2>接进 CI：每次推送自动把关</h2>
+      <p>
+        测试的价值在「自动、每次、挡在合并前」。把 <code>npm test</code> 接进 CI，每次 push / PR 自动跑，
+        红了就别想合。最关键的一点前面已经埋好了——<strong>因为用了假 Provider，整套测试完全离线，CI 里不需要任何 API key</strong>，
+        这才让 CI 能稳定、免费、秒级地跑：
+      </p>
+      <CodeBlock lang="yaml" title=".github/workflows/ci.yml" code={ciYaml} />
+      <p>
+        留意 <code>npm ci</code>（而非 <code>npm install</code>）：它严格按 lockfile 装、不改 lockfile，保证 CI 装的依赖和你本地一字不差——
+        可复现是 CI 的命根子。再强调一遍那条注释：<strong>没有任何密钥</strong>，正是「确定性切割」带来的红利。
+      </p>
 
       <Callout variant="tip">
         测试策略：确定性的核心都要测——工具、主循环、权限裁决、压缩触发条件。
@@ -287,11 +410,12 @@ export default function Ch4() {
       <Summary
         points={[
           'Agent 回归风险高（会改代码、跑命令），但核心逻辑是确定性的，必须测。',
-          '工具单测：用 node:test + node:assert + tsx，在临时目录里跑真实读写，断言写读往返、edit 唯一性、失败返回 isError 而非抛异常等契约。',
+          '根本难题是非确定性：不能断言模型措辞、不能在 CI 真调模型；解法是切开确定与不确定，模型用假 Provider 替换，质量交给单独的 eval。',
+          '工具单测：用 node:test + node:assert + tsx，在临时目录里跑真实读写（不 mock fs），断言写读往返、edit 唯一性、失败返回 isError 而非抛异常等契约，优先测边界与错误路径。',
           'test 脚本 node --import tsx --test test/*.test.ts，零额外测试框架。',
-          '主循环集成测试靠「假 Provider」：实现 Provider 接口、按脚本离线返回回合，覆盖停机、工具执行、权限闸门三大行为。',
-          '假 Provider 能成立，全靠卷 1 / 卷 6 的 Provider 抽象——好设计的回报。',
-          '测确定性的核心（工具、主循环、权限、压缩），断言行为而非模型文案。',
+          '主循环集成测试靠「假 Provider」：实现 Provider 接口、按脚本离线返回回合，覆盖停机、工具执行、权限闸门三大行为；类型约束的假实现优于无类型 mock。',
+          '快照测试钉死渲染输出格式，红了要看 diff 别无脑 update；属性测试断言不变量、逼出举例想不到的边界。',
+          '接 CI（npm ci + npm test）每次 push 自动把关；因假 Provider 离线，CI 无需任何 API key。',
           '卷 7 四件套（持久化 + 成本延迟 + 可观测性 + 测试）把 forge 推到「敢交付」，下一卷打包发布。',
         ]}
       />
