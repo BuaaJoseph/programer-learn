@@ -231,6 +231,42 @@
   color: var(--accent-strong);
 }
 
+/* 分类翻页器 */
+.cat-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+.cat-pager-btn {
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.cat-pager-btn:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-sm);
+}
+.cat-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cat-pager-info {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  min-width: 48px;
+  text-align: center;
+}
+
 /* ============ 课程卡片网格 ============ */
 .course-grid {
   display: grid;
