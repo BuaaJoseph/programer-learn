@@ -151,6 +151,24 @@ export default function Ch3() {
         飞机的黑匣子不参与飞行，但出事后能还原每一个动作。审计日志对 Agent 是同样的角色：它不影响主流程，却记录下「模型决定 → 权限裁定 → 确认 → 执行」的完整链路，让每一步都可回放、可排查、可追责。
       </KeyIdea>
 
+      <p>
+        除了「出事复盘」，审计还撑起另外两件容易被低估的事。一是<strong>可观测性</strong>：
+        Agent 是个黑盒，你光看它「最后改对了没」，看不出它<strong>为此烧了多少 token、绕了几轮、卡在哪一步</strong>。
+        结构化日志把这些隐藏成本量化出来——哪类任务最费钱、哪个工具最常失败、模型在哪儿反复打转，
+        都能从日志里聚合出来。二是<strong>合规与追责</strong>：在受监管的环境里（金融、医疗、企业内部），
+        「一个 AI 改动了系统」这件事本身就需要留痕——谁在什么时间、授权了什么操作、改了什么，
+        必须有一份不可抵赖的记录备查。审计日志就是这份记录的载体。
+      </p>
+      <KeyIdea title="先结构化，再谈一切">
+        <p>
+          审计的所有价值——回放、统计、追踪、合规——都建立在一个前提上：<strong>日志是结构化的</strong>。
+          一旦你把信息拼成一句人话（「执行了 edit，用户已确认」），就再也别想干净地按字段筛选、聚合、对接工具了。
+          正确的方向是反过来：先按字段存成机器可读的对象，要给人看时再渲染成人话。结构化是地基，
+          这个顺序错了，后面全是返工。
+        </p>
+      </KeyIdea>
+      <CodeBlock lang="ts" title="结构化 vs 非结构化：差在能不能查" code={structuredVsTextSrc} />
+
       <h2>二、为什么选 JSONL</h2>
       <p>
         我们选 JSONL（JSON Lines，每行一个独立 JSON 对象）作为格式，而不是一个大 JSON 数组，也不是纯文本。理由很实在：
@@ -220,6 +238,46 @@ export default function Ch3() {
         </p>
       </Example>
 
+      <h2>六、回放：把日志读回成时间线</h2>
+      <p>
+        有了结构化的事件流，最直接的用法就是<strong>回放</strong>——把一次会话的日志逐行读出来，
+        按时间重建「到底发生了什么」。注意一个关键区分：<strong>回放的是「决策与事件」，不是「重新执行」</strong>。
+        审计不是录像带、不能倒回去重跑（重跑会再次产生副作用），它是飞机黑匣子那样的飞行记录——
+        告诉你当时每一步的状态和选择，让你在脑子里把过程还原一遍。
+      </p>
+      <CodeBlock lang="ts" title="一个最小的回放器" code={replaySrc} />
+      <p>
+        这段 <code>replay</code> 把四类事件各渲染成一行人话，串起来就是一条清晰的时间线：
+        模型在 9:12:03 决定调 edit、权限裁定为 ask、用户 4 秒后点头、edit 在 12 毫秒内执行成功。
+        排查问题时，这条线就是你的第一手现场——比追问用户「你当时干了啥」可靠一万倍。
+        因为日志是结构化的，写这种回放、过滤、统计工具几乎不费力，<code>JSON.parse</code> 一行就拿到对象了。
+      </p>
+
+      <h2>七、和追踪系统集成：从日志到分布式追踪</h2>
+      <p>
+        当 forge 从「本地单进程」长成「多 Agent、跨服务、长时间运行」的系统，单纯的行式日志就不够看了——
+        你会想知道「这次会话总共花了多久、时间分布在哪几步、哪一步阻塞了后面」。这正是
+        <strong>分布式追踪（distributed tracing）</strong>要解决的，而从 JSONL 升级过去，成本出乎意料地低：
+        只要给每条记录补上 <code>traceId</code> / <code>spanId</code> / 父子关系和耗时，审计事件就摇身变成 trace 里的 span。
+      </p>
+      <CodeBlock lang="ts" title="给审计事件加上 trace/span，接进 OpenTelemetry" code={traceSrc} />
+      <p>
+        一旦事件带上了这几个字段，你就能把它们喂给 OpenTelemetry，在 Jaeger、Tempo、Datadog 这类后端里
+        把一次会话画成一棵调用树：哪一步耗时最长、哪一步报了错、模型来回绕了几轮，全都可视化。
+        前面那个 <code>confirm</code> 花了 4.5 秒——回放里只是一行，在火焰图里却是一根扎眼的长条，
+        一眼看出「时间其实卡在等用户点头」。这就是结构化地基的复利：当初多花几分钟把字段定规整，
+        日后接观测、接追踪、接告警，全是顺水推舟。
+      </p>
+      <Callout variant="tip" title="一条日志，三种读法">
+        <p>
+          同一份 <code>.forge/audit-*.jsonl</code>，可以被三类人 / 三种工具读出三种价值：
+          <strong>开发者</strong>用 <code>replay</code> 还原现场排 bug；
+          <strong>运维 / SRE</strong>把它接进 OTel 看耗时、错误率、token 成本；
+          <strong>合规 / 审计岗</strong>把它当作「谁授权了什么操作」的不可抵赖凭证。
+          这就是「先结构化」的回报——一次写入，多方复用，谁都不用迁就谁。
+        </p>
+      </Callout>
+
       <Callout variant="warn" title="审计日志别提交到 git">
         审计里塞满了敏感信息：绝对路径、执行过的命令、文件 diff 的具体内容，甚至可能间接带出密钥或内部结构。这些东西<strong>绝不能进版本库</strong>。好在 forge 在初始化时已经把 <code>.forge/</code> 写进了 <code>.gitignore</code>，默认就帮你拦住了——但接手别人项目时，记得确认这一行还在。
       </Callout>
@@ -228,7 +286,7 @@ export default function Ch3() {
         现在我们只是把日志写下来了。有了这套<strong>结构化</strong>的事件流，卷 7「可观测性」会在它之上继续盖楼：基于 type 的调试开关（只看权限事件 / 只看工具调用）、按 <code>usage</code> 字段做成本统计、把 llm_round 串成耗时火焰图。地基打得越规整，上层越省力。
       </Callout>
 
-      <h2>六、卷 3 小结</h2>
+      <h2>八、卷 3 小结</h2>
       <p>
         这一卷我们围绕一个主题：<strong>让一个会自己动手的 Agent 变得可信</strong>。三章下来，攒齐了三件套：
       </p>
@@ -255,6 +313,9 @@ export default function Ch3() {
           '选 JSONL 格式：可追加、可 grep/jq 逐行处理、易解析，崩溃也不会让整个文件作废。',
           'src/audit.ts 用接口 AuditLog 解耦实现：FileAuditLog 按 sessionId 分文件落到 .forge/，log() 自动加 ts 并 try/catch 静默失败；noopAudit 供测试或关闭审计时注入。',
           '在主循环四个节点埋点：llm_round、permission、confirm、tool_call，串起一次操作的完整生命周期。',
+          '审计还撑起可观测性（量化 token/轮数/失败）与合规追责（不可抵赖的授权留痕）；一切的前提是「先结构化、再渲染成人话」。',
+          '回放是把日志读回成时间线还原现场——回放的是决策与事件，不是重新执行（黑匣子，不是录像带）。',
+          '补上 traceId/spanId/耗时，审计事件就升级成分布式追踪的 span，可接 OpenTelemetry 在 Jaeger/Tempo 里画调用树、看瓶颈。',
           'sessionId 用 ISO 时间戳并把冒号点号换成连字符，得到合法且自然按时间排序的文件名。',
           '审计含敏感信息，.forge/ 已写进 .gitignore，绝不提交版本库。',
           '卷 3 收官：权限(deny) + 确认(ask) + 审计(留痕) 三件套让 forge 可被信任、敢放手；下一卷进入上下文工程。',

@@ -69,6 +69,38 @@ const bailianJson = `{
   "model": "qwen-max"
 }`
 
+const deepMergeTs = `function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+// 深合并：仅对「值都是对象」的同名键递归合并，其余一律「后者覆盖前者」。
+// 用它能让 mcpServers 这类嵌套对象按键合并，而不是被整体替换。
+function deepMerge<T>(base: T, override: Partial<T>): T {
+  const out: Record<string, unknown> = { ...(base as object) }
+  for (const [k, v] of Object.entries(override as object)) {
+    if (v === undefined) continue // 显式 undefined 不参与覆盖，避免抹掉默认值
+    if (isObject(v) && isObject(out[k])) {
+      out[k] = deepMerge(out[k], v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out as T
+}`
+
+const envOverrideTs = `// 把环境变量当作「比文件更高优先级」的来源，叠在最上层。
+// 这样既能在 CI / 容器里用 env 注入密钥（不落盘），又不破坏文件配置。
+export function loadConfig(cwd: string): ForgeConfig {
+  const global = readJson(join(homedir(), '.forge', 'config.json'))
+  const project = readJson(join(cwd, '.forge', 'config.json'))
+  const fromFiles = { ...global, ...project }
+  const fromEnv: Partial<ForgeConfig> = {}
+  if (process.env.ANTHROPIC_API_KEY) fromEnv.apiKey = process.env.ANTHROPIC_API_KEY
+  if (process.env.FORGE_MODEL) fromEnv.model = process.env.FORGE_MODEL
+  // 优先级（低 → 高）：内置默认 < 全局文件 < 项目文件 < 环境变量
+  return { ...fromFiles, ...fromEnv }
+}`
+
 const indexTs = `const config = loadConfig(process.cwd())
 const provider = createProvider({ provider: config.provider, model: config.model, contextWindow: config.contextWindow })
 // …
@@ -101,6 +133,25 @@ export default function Ch1() {
         好工具的能力差异应该通过「配置」来表达，而不是通过「改源码」。把易变的决策从代码里抽出来放进配置文件，工具才能被复用、被分发、被不同场景调教，而核心逻辑保持稳定。
       </KeyIdea>
 
+      <p>
+        这背后其实有一条流传已久的工程原则：<strong>12-Factor App</strong> 的第三条——「在环境中存储配置」（Store config in the environment）。它的核心主张是把「随部署环境变化的东西」（密钥、端点、开关）与「不随环境变化的代码」严格分开。判断一个值该不该外置，有个朴素的试金石：<em>这份代码要是现在开源出去、推上公共仓库，会不会有什么东西不该被人看到、或者别人拿去跑不起来？</em>凡是「会泄露」（密钥）或「换个人/换台机器就得改」（模型、端点）的，都该外置。
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>类别</th><th>例子</th><th>该放哪</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>稳定的实现逻辑</td><td>主循环、工具契约、消息编解码</td><td>源码（编译进产物）</td></tr>
+          <tr><td>因人因项目而异的决策</td><td>provider、model、maxTokens、mcpServers</td><td>配置文件</td></tr>
+          <tr><td>敏感且随环境变化</td><td>API key、自建代理的 baseURL</td><td>环境变量优先，文件兜底</td></tr>
+        </tbody>
+      </table>
+
+      <Callout variant="note">
+        有人会问：那「默认值」算配置吗？不算。默认值是代码对「绝大多数人不会去改的东西」给出的合理兜底——它属于实现的一部分，写在代码里。配置只负责表达「我和默认不一样的地方」。这条界线想清楚了，配置文件才会保持短小：一份健康的项目级配置往往只有三五行，而不是把每个参数都抄一遍。
+      </Callout>
+
       <h2>二、两级配置：全局默认 + 项目覆盖</h2>
       <p>
         我们采用两级配置：
@@ -121,7 +172,35 @@ export default function Ch1() {
         这种「全局默认 + 项目覆盖」的分层非常实用，你天天都在用它——<code>git</code> 就是这么干的。<code>~/.gitconfig</code> 配你的全局 user.name、邮箱、别名，而仓库里的 <code>.git/config</code> 可以为这个项目单独覆盖。绝大多数项目沿用全局默认，个别项目按需特殊化，既省事又灵活。forge 的两级配置就是同一套思路。
       </Callout>
 
-      <h2>三、配置模块 src/config.ts</h2>
+      <p>
+        <strong>为什么只要两级，而不是三级、五级？</strong>层级越多，「最终生效的值到底来自哪」就越难推理——这是配置系统最常见的痛点。你可能见过那种工具：值能来自命令行参数、环境变量、项目文件、用户文件、系统级文件、再加上代码默认值，整整六层。出了问题想查「为什么 model 是这个值」，得在脑子里跑一遍六层覆盖。forge 刻意只保留「全局 + 项目」两级文件（外加密钥的环境变量旁路），覆盖原因永远能一句话说清。<strong>层级数是要克制的设计预算，不是越多越显得专业。</strong>
+      </p>
+
+      <p>
+        说说优先级的精确顺序。从低到高是：<strong>内置默认值 → 全局文件 → 项目文件 → 环境变量</strong>。越靠近「具体使用场景」的来源，优先级越高——这符合直觉：你在某个项目目录里专门写下的，理应压过你给所有项目定的全局默认；而临时用环境变量注入的（常见于 CI、容器），又该压过落盘的文件，因为它最贴近「此刻这一次运行」。</p>
+
+      <h2>三、合并的两个坑：浅合并 vs 深合并</h2>
+      <p>
+        前面的 <code>loadConfig</code> 用对象展开做<strong>浅合并</strong>。浅合并只看顶层键：项目里写了 <code>model</code>，就整体替换全局的 <code>model</code>。对 <code>model</code>、<code>maxTokens</code> 这种「值是标量」的字段，这完全正确。
+      </p>
+      <p>
+        但有个隐蔽的坑藏在 <code>mcpServers</code> 这种<strong>嵌套对象</strong>上。假设你全局配了 <code>filesystem</code> 和 <code>git</code> 两个 MCP server，然后在某个项目里只想<strong>额外</strong>加一个 <code>postgres</code>。如果你在项目文件里写 <code>mcpServers</code>，浅合并会用项目的整个 <code>mcpServers</code> 对象替换掉全局的——结果 <code>filesystem</code> 和 <code>git</code> 全没了，只剩 <code>postgres</code>。这几乎一定不是你想要的。
+      </p>
+      <p>
+        解决办法是对「值都是对象」的字段做<strong>深合并</strong>（递归地按键合并），其余字段仍走「后者覆盖」。下面是一个通用的小工具：
+      </p>
+
+      <CodeBlock lang="ts" title="src/config.ts（深合并）" code={deepMergeTs} />
+
+      <p>
+        注意两个细节。其一，<code>isObject</code> 把数组排除在「可深合并」之外——数组该整体替换还是逐项合并，没有放之四海皆准的答案，整体替换是最不容易让人意外的选择（你写了新数组，就是想要这个新数组）。其二，显式的 <code>undefined</code> 直接跳过，不参与覆盖：否则一个粗心写出的 <code>{'{ model: undefined }'}</code> 会把全局精心配好的 <code>model</code> 抹成空，这种「被空值覆盖」是配置系统里极常见、又极难排查的 bug。
+      </p>
+
+      <Callout variant="warn">
+        <strong>常见误区：以为合并是「越深越好」。</strong>恰恰相反。深合并让「一个值到底从哪来」变得更难追踪——同一个 <code>mcpServers.filesystem.args</code> 可能一半来自全局、一半来自项目。forge 的取舍是：<em>只在真正需要按键累加的嵌套对象上用深合并，顶层标量一律浅覆盖。</em>能用简单语义就别上复杂语义，这是配置可维护性的关键。
+      </Callout>
+
+      <h2>四、配置模块 src/config.ts</h2>
       <p>
         下面是完整的配置模块。它只做三件事：定义配置的形状（<code>ForgeConfig</code>）、安全地读一个 JSON 文件（<code>readJson</code>）、把两级配置合并成最终配置（<code>loadConfig</code>）。
       </p>
@@ -153,7 +232,34 @@ export default function Ch1() {
         <CodeBlock lang="json" title="~/.forge/config.json（用百炼）" code={bailianJson} />
       </Example>
 
-      <h2>四、把配置接进入口</h2>
+      <h2>五、密钥安全：别让 key 落进仓库</h2>
+      <p>
+        <code>apiKey</code> 是整套配置里唯一「泄露就出事」的字段——它等于你账号的付费权限。所以它的处理要比别的字段更小心一层。forge 的策略是<strong>双通道</strong>：既允许写进配置文件（方便本地开发），也允许走环境变量 <code>ANTHROPIC_API_KEY</code>（方便 CI、容器、共享机器），而且让环境变量优先。
+      </p>
+
+      <CodeBlock lang="ts" title="src/config.ts（环境变量叠在最上层）" code={envOverrideTs} />
+
+      <p>
+        为什么让 env 优先于文件？因为环境变量<strong>不落盘</strong>——它只活在进程的生命周期里，不会被 <code>git add .</code> 误提交，也不会随项目目录被拷贝、被压缩包发出去。在 CI 里，密钥通常存在平台的 Secret 管理里，运行时才注入成环境变量，全程不碰文件系统。这是密钥处理的黄金路径。
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>放置方式</th><th>泄露风险</th><th>适用场景</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>硬编码进源码</td><td>极高（必进仓库）</td><td>永远不要</td></tr>
+          <tr><td>项目级 config.json</td><td>中（靠 .gitignore 兜底）</td><td>本地单人开发</td></tr>
+          <tr><td>全局 ~/.forge/config.json</td><td>低（在仓库外）</td><td>个人机器默认密钥</td></tr>
+          <tr><td>环境变量 / Secret 管理</td><td>最低（不落盘）</td><td>CI、容器、团队协作</td></tr>
+        </tbody>
+      </table>
+
+      <Callout variant="warn">
+        <strong>最危险的一类事故：密钥进了 git 历史。</strong>很多人以为「我把含密钥的文件删了再提交一次就安全了」——错。git 记录全部历史，那次含密钥的 commit 永远躺在 <code>git log</code> 里，任何 clone 过仓库的人都能翻出来。一旦发生，唯一正确的处置是<strong>立刻吊销并轮换那把 key</strong>，而不是寄希望于「改写历史」。预防永远比补救便宜，所以 <code>.forge/</code> 进 <code>.gitignore</code> 这一步从项目第一天就要做对。
+      </Callout>
+
+      <h2>六、把配置接进入口</h2>
       <p>
         配置模块写好了，下一步是在程序启动时加载它，并把各字段喂给真正需要的地方。
       </p>
@@ -170,6 +276,20 @@ export default function Ch1() {
       <Callout variant="warn">
         <code>config.json</code> 里有可能放 API key 这类敏感信息。所以项目级的 <code>.forge/</code> 目录一定要进 <code>.gitignore</code>（forge 已经替你这么做了）。千万不要把含密钥的配置文件提交到仓库——一旦推上远端，密钥就等于泄露了。
       </Callout>
+
+      <Example title="一次配置加载的完整推演">
+        <p>
+          把前面所有规则串起来走一遍，假设有这样三个来源：
+        </p>
+        <ul>
+          <li>全局 <code>~/.forge/config.json</code>：<code>{'{ "model": "claude-opus-4-8", "maxTokens": 8192 }'}</code></li>
+          <li>项目 <code>.forge/config.json</code>：<code>{'{ "maxTokens": 4096 }'}</code></li>
+          <li>环境变量：<code>ANTHROPIC_API_KEY=sk-ant-xxx</code></li>
+        </ul>
+        <p>
+          最终生效的配置是：<code>model</code> 取全局的 <code>claude-opus-4-8</code>（项目没覆盖）；<code>maxTokens</code> 取项目的 <code>4096</code>（项目压过全局）；<code>apiKey</code> 取环境变量的值（env 压过文件，也没落进任何文件）；而 <code>contextWindow</code> 三处都没写，于是落到代码里的默认值。一句话：<strong>每个字段独立地按「内置默认 &lt; 全局 &lt; 项目 &lt; 环境」取最高优先级的来源。</strong>这种「逐字段判定」正是浅合并/对象展开天然给你的行为。
+        </p>
+      </Example>
 
       <Callout variant="note">
         下一章预告：我们会用 <code>config.provider</code> 和 <code>config.model</code> 来驱动一个 Provider 工厂（<code>createProvider</code>），实现「换模型不改主循环」——把模型从硬依赖变成可插拔的组件。

@@ -62,6 +62,47 @@ export function createProvider(cfg: ProviderConfig = {}): Provider {
 
 export type { Provider } from './types.js'`
 
+const badCouplingSketch = `// ❌ 反例：内核直接依赖具体 SDK，厂商方言外溢到主循环里。
+import Anthropic from '@anthropic-ai/sdk'
+
+async function agentLoop(messages: Message[]) {
+  const client = new Anthropic()                 // 主循环知道了「我在用 Anthropic」
+  const stream = client.messages.stream({        // Anthropic 专有的 API 形状
+    model: 'claude-opus-4-8',
+    max_tokens: 8192,
+    messages: toAnthropicMessages(messages),     // 翻译逻辑散落在主循环
+  })
+  // …想换成别家？整个主循环都要改
+}`
+
+const dipSketch = `// ✅ 正例：内核只依赖抽象，具体实现由外部注入（依赖倒置）。
+class Agent {
+  constructor(private provider: Provider) {}      // 只认接口，不认厂商
+  async loop(messages: Message[]) {
+    const turn = await this.provider.complete({    // 调的是抽象方法
+      system, messages, tools, maxTokens,
+    })
+    // …换厂商？换的是构造时传进来的那个 provider，loop 一行不动
+  }
+}`
+
+const testDoubleSketch = `// 测试用的假 Provider：不发任何网络请求，直接返回预设回复。
+// 因为内核只依赖 Provider 接口，测试时把真实现换成它即可。
+class FakeProvider implements Provider {
+  readonly model = 'fake-model'
+  readonly contextWindow = 200_000
+  constructor(private scripted: AssistantTurn[]) {}
+  async complete(): Promise<AssistantTurn> {
+    return this.scripted.shift() ?? { content: [{ type: 'text', text: '(空)' }] }
+  }
+  async countTokens(): Promise<number> {
+    return 0 // 测试里不关心真实 token 数
+  }
+}
+
+// 于是可以脱离网络、零成本、毫秒级地测主循环的行为：
+const agent = new Agent({ provider: new FakeProvider([scriptedTurn]) })`
+
 export default function Ch2() {
   return (
     <article>
@@ -83,6 +124,21 @@ export default function Ch2() {
         薄抽象层 = 内核与具体厂商解耦。主循环、工具、CLI 全都只依赖 <code>Provider</code> 接口（<code>model</code> / <code>contextWindow</code> /{' '}
         <code>complete</code> / <code>countTokens</code>），不关心背后是 Claude 还是别人。换模型、换厂商，核心逻辑一行都不用碰。
       </KeyIdea>
+
+      <p>
+        这件事在软件工程里有个正式名字：<strong>依赖倒置原则</strong>（Dependency Inversion Principle，SOLID 里的 D）。它说的是——高层模块（我们的主循环、Agent 逻辑）不该依赖低层模块（某家厂商的 SDK），两者都该依赖于<strong>抽象</strong>（<code>Provider</code> 接口）。直觉上「主循环要调 LLM，所以它依赖 Anthropic SDK」是自然的，但这恰恰是把依赖箭头指错了方向。看看下面这组正反对比，差别一眼就出来：
+      </p>
+
+      <CodeBlock lang="ts" title="反例：内核直接依赖 SDK" code={badCouplingSketch} />
+      <CodeBlock lang="ts" title="正例：内核依赖抽象，实现外部注入" code={dipSketch} />
+
+      <p>
+        反例里，<code>Anthropic</code> 这个名字、<code>messages.stream</code> 的形状、<code>max_tokens</code> 这种蛇形命名的参数，全都<strong>泄进</strong>了主循环。换厂商，意味着主循环要跟着改。正例里，<code>Agent</code> 构造时被「注入」一个 <code>Provider</code>，它压根不知道、也不需要知道这个 provider 背后是谁——这就是「倒置」：让具体去适配抽象，而不是让抽象去迁就具体。
+      </p>
+
+      <Callout variant="tip">
+        判断一层抽象有没有真正解耦，有个简单的检验：<strong>在内核代码里搜一下厂商的名字</strong>。如果 <code>grep -r 'anthropic'</code> 只在 <code>provider/claude.ts</code> 这一个文件里命中，主循环、工具、CLI 全都干净，那这层抽象就立住了。一旦厂商名字开始在内核到处出现，抽象就已经漏了——这是个比任何文档都诚实的健康度指标。
+      </Callout>
 
       <h2>接口本体：一个 Provider 必须能做的事</h2>
       <p>
