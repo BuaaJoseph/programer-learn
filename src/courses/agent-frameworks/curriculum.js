@@ -64,8 +64,8 @@ export const VOLUMES = [
     subtitle: 'Role-Based Crews',
     theme: '已脱离 LangChain 的独立框架，用「角色 + 任务 + 流程」组织一队会协作的 Agent，适合研究、创作类多视角工作。',
     chapters: [
-      { slug: 'af5-c1', title: 'CrewAI 原理：Agent/Task/Crew/Process 与 Flows', topic: '原理', hook: '角色(role/goal/backstory)+任务+Crew 协作；Process 选 sequential/hierarchical；Flows 做事件驱动的确定性编排。Crews 与 Flows 怎么配合。', minutes: 120, hasContent: false },
-      { slug: 'af5-c2', title: '实战：Researcher→Writer 两角色出报告（接百炼）', topic: '实战', hook: 'LLM(openai/qwen-plus) 接百炼，搭一个研究员+撰稿人顺序协作的 Crew，用 context 串起任务，kickoff 产出一篇报告。', minutes: 150, hasContent: false },
+      { slug: 'af5-c1', title: 'CrewAI 原理：Agent/Task/Crew/Process 与 Flows', topic: '原理', hook: '角色(role/goal/backstory)+任务+Crew 协作；Process 选 sequential/hierarchical；Flows 做事件驱动的确定性编排。Crews 与 Flows 怎么配合。', minutes: 120, hasContent: true },
+      { slug: 'af5-c2', title: '实战：Researcher→Writer 两角色出报告（接百炼）', topic: '实战', hook: 'LLM(openai/qwen-plus) 接百炼，搭一个研究员+撰稿人顺序协作的 Crew，用 context 串起任务，kickoff 产出一篇报告。', minutes: 150, hasContent: true },
     ],
   },
   {
