@@ -1,7 +1,5 @@
-import { Link } from 'react-router-dom'
 import PlatformLayout from '../PlatformLayout.jsx'
 import CourseCard from '../components/CourseCard.jsx'
-import { CATEGORIES } from '../../catalog/categories.js'
 import { COURSES } from '../../catalog/courses.js'
 
 export default function Home() {
@@ -17,27 +15,6 @@ export default function Home() {
             服务端、前端、移动端……每门课都用「直白讲清概念 + 举例子 + 动手实践」的方式带你从原理学到落地。
             选一个方向，开始系统地啃下来。
           </p>
-        </section>
-
-        <section className="cat-nav">
-          {CATEGORIES.map((cat) => (
-            <div className="cat-nav-row" key={cat.id}>
-              <Link to={`/c/${cat.id}`} className="cat-nav-head">
-                <span className="cat-nav-icon">{cat.icon}</span>
-                <span>
-                  <strong>{cat.title}</strong>
-                  <em>{cat.subtitle}</em>
-                </span>
-              </Link>
-              <div className="cat-nav-subs">
-                {cat.subs.map((sub) => (
-                  <Link key={sub.id} to={`/c/${cat.id}/${sub.id}`} className="chip">
-                    {sub.title}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
         </section>
 
         <section>
