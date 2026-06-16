@@ -4,6 +4,7 @@ import { ALL_TOOLS } from './tools/index.js'
 import { ClaudeProvider } from './provider/claude.js'
 import { SYSTEM_PROMPT } from './system.js'
 import { startRepl } from './repl.js'
+import { FileAuditLog } from './audit.js'
 
 const DIM = '\x1b[2m'
 const RED = '\x1b[31m'
@@ -17,11 +18,14 @@ async function main(): Promise<void> {
   }
 
   const provider = new ClaudeProvider()
+  const sessionId = new Date().toISOString().replace(/[:.]/g, '-')
+  const audit = new FileAuditLog(process.cwd(), sessionId)
   const agent = new Agent({
     provider,
     tools: ALL_TOOLS,
     system: SYSTEM_PROMPT,
     cwd: process.cwd(),
+    audit,
     // 事件渲染器：把 Agent 的内部事件画到终端。
     onEvent: (e) => {
       switch (e.type) {

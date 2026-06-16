@@ -2,6 +2,16 @@ import type { Message, ContentBlock, ToolUseBlock, ToolResultBlock } from './typ
 import type { Tool, ToolContext } from './tools/types.js'
 import type { Provider } from './provider/types.js'
 import { buildToolRegistry } from './tools/index.js'
+import { defaultPolicy, type PermissionPolicy } from './permissions.js'
+import { noopAudit, type AuditLog } from './audit.js'
+
+/** 危险操作确认请求：交给上层（CLI）向用户问一句 y/N。 */
+export interface ConfirmRequest {
+  tool: string
+  input: Record<string, unknown>
+  /** 给人看的这次操作摘要。 */
+  reason: string
+}
 
 export interface AgentOptions {
   provider: Provider
@@ -13,6 +23,12 @@ export interface AgentOptions {
   maxTurns?: number
   /** 把内部事件回调给上层（CLI 用它做展示）。 */
   onEvent?: (e: AgentEvent) => void
+  /** 权限策略，默认 defaultPolicy。 */
+  permissions?: PermissionPolicy
+  /** 需要确认时回调上层；返回 true 表示用户同意执行。不提供则视为拒绝。 */
+  confirm?: (req: ConfirmRequest) => Promise<boolean>
+  /** 审计日志，默认不记录。 */
+  audit?: AuditLog
 }
 
 export type AgentEvent =
@@ -31,6 +47,9 @@ export class Agent {
   private maxTokens: number
   private maxTurns: number
   private onEvent?: (e: AgentEvent) => void
+  private policy: PermissionPolicy
+  private confirm?: (req: ConfirmRequest) => Promise<boolean>
+  private audit: AuditLog
   /** 跨多次 runTurn 持续累积的会话历史。 */
   messages: Message[] = []
 
@@ -43,6 +62,14 @@ export class Agent {
     this.maxTokens = opts.maxTokens ?? 8192
     this.maxTurns = opts.maxTurns ?? 50
     this.onEvent = opts.onEvent
+    this.policy = opts.permissions ?? defaultPolicy
+    this.confirm = opts.confirm
+    this.audit = opts.audit ?? noopAudit
+  }
+
+  /** 设置危险操作确认回调（供 REPL 注入 y/N 提问）。 */
+  setConfirm(confirm: (req: ConfirmRequest) => Promise<boolean>): void {
+    this.confirm = confirm
   }
 
   /** 当前使用的模型标识（来自 Provider）。 */
@@ -73,6 +100,7 @@ export class Agent {
         maxTokens: this.maxTokens,
         onTextDelta: (delta) => this.onEvent?.({ type: 'assistant_delta', text: delta }),
       })
+      this.audit.log({ type: 'llm_round', model: this.provider.model, stopReason: res.stopReason, usage: res.usage })
       this.messages.push({ role: 'assistant', content: res.content })
 
       const text = res.content
@@ -117,12 +145,33 @@ export class Agent {
       this.onEvent?.({ type: 'tool_end', name: call.name, output: msg, isError: true })
       return { type: 'tool_result', tool_use_id: call.id, content: msg, is_error: true }
     }
+
+    // —— 安全闸门：执行前先过权限策略 ——
+    const verdict = this.policy.decide(tool, call.input, this.ctx.cwd)
+    this.audit.log({ type: 'permission', tool: tool.name, input: call.input, decision: verdict.decision, reason: verdict.reason })
+    if (verdict.decision === 'deny') {
+      const msg = `已被权限策略拒绝：${verdict.reason}`
+      this.onEvent?.({ type: 'tool_end', name: call.name, output: msg, isError: true })
+      return { type: 'tool_result', tool_use_id: call.id, content: msg, is_error: true }
+    }
+    if (verdict.decision === 'ask') {
+      const approved = this.confirm ? await this.confirm({ tool: tool.name, input: call.input, reason: verdict.reason }) : false
+      this.audit.log({ type: 'confirm', tool: tool.name, reason: verdict.reason, approved })
+      if (!approved) {
+        const msg = '用户拒绝了这次操作。'
+        this.onEvent?.({ type: 'tool_end', name: call.name, output: msg, isError: true })
+        return { type: 'tool_result', tool_use_id: call.id, content: msg, is_error: true }
+      }
+    }
+
     try {
       const r = await tool.execute(call.input, this.ctx)
+      this.audit.log({ type: 'tool_call', tool: call.name, input: call.input, isError: !!r.isError })
       this.onEvent?.({ type: 'tool_end', name: call.name, output: r.output, isError: !!r.isError })
       return { type: 'tool_result', tool_use_id: call.id, content: r.output, is_error: r.isError }
     } catch (err) {
       const msg = `工具异常：${(err as Error).message}`
+      this.audit.log({ type: 'tool_call', tool: call.name, input: call.input, isError: true, error: msg })
       this.onEvent?.({ type: 'tool_end', name: call.name, output: msg, isError: true })
       return { type: 'tool_result', tool_use_id: call.id, content: msg, is_error: true }
     }

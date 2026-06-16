@@ -47,9 +47,9 @@ export const VOLUMES = [
     subtitle: 'Safety & Human-in-the-Loop',
     theme: '能改代码、能跑命令的 Agent 必须可控。这一卷加上权限模型、危险操作确认、审计日志——让 forge 能被信任。',
     chapters: [
-      { slug: 'ba3-c1', title: '权限模型：Deny > Ask > Allow', topic: '权限', hook: '不是所有工具都该静默执行。设计一套按工具+参数匹配的权限规则，决定哪些放行、哪些必须问你。', minutes: 150, hasContent: false },
-      { slug: 'ba3-c2', title: '危险确认：动手前先停一下', topic: '危险确认 / HITL', hook: 'rm -rf、写到 .git、改系统文件……在执行前弹出确认，把「人在回路」做成一道真实的闸门。', minutes: 120, hasContent: false },
-      { slug: 'ba3-c3', title: '审计日志：每一步都留痕', topic: '审计', hook: '把每次工具调用、每次确认、每次 LLM 往返写成结构化日志，事后可回放、可排查、可信任。', minutes: 120, hasContent: false },
+      { slug: 'ba3-c1', title: '权限模型：Deny > Ask > Allow', topic: '权限', hook: '不是所有工具都该静默执行。设计一套按工具+参数匹配的权限规则，决定哪些放行、哪些必须问你。', minutes: 150, hasContent: true },
+      { slug: 'ba3-c2', title: '危险确认：动手前先停一下', topic: '危险确认 / HITL', hook: 'rm -rf、写到 .git、改系统文件……在执行前弹出确认，把「人在回路」做成一道真实的闸门。', minutes: 120, hasContent: true },
+      { slug: 'ba3-c3', title: '审计日志：每一步都留痕', topic: '审计', hook: '把每次工具调用、每次确认、每次 LLM 往返写成结构化日志，事后可回放、可排查、可信任。', minutes: 120, hasContent: true },
     ],
   },
   {
