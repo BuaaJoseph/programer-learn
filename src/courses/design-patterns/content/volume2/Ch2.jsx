@@ -307,7 +307,9 @@ export default function Ch2() {
           'Java IO 流是装饰器的经典案例，如 BufferedInputStream 套 FileInputStream 再套 DataInputStream。',
           '适配器：把一个类的接口转换成客户端期望的另一种接口，解决「接口对不上」的兼容问题。',
           '适配器的现实例子：SLF4J 桥接各日志框架、InputStreamReader 把字节流适配成字符流。',
-          '外观：为复杂子系统提供统一简化的高层入口，如 Spring MVC 的 DispatcherServlet 调度一切。',
+          '装饰类「既 is-a 又 has-a」Component，所以能被当作普通组件继续装饰，从而无限套娃。',
+          '适配器分对象适配器（组合，首选）与类适配器（继承，受单继承限制少用），体现合成复用原则。',
+          '外观：为复杂子系统提供统一简化的高层入口，如 Spring MVC 的 DispatcherServlet、SLF4J、BFF，是迪米特法则的产物。',
           '三者意图区别：装饰器增强功能（接口不变）、适配器转换接口（接口变）、外观简化入口（接口收敛）。',
         ]}
       />

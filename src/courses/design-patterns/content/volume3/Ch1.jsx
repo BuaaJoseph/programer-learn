@@ -68,6 +68,44 @@ public class PayService {
     }
 }`
 
+const springStrategyCode = `// Spring 风格：让容器自动收集所有策略，连手动注册都省了
+@Component
+public class AlipayStrategy implements PayStrategy {
+    public String type() { return "alipay"; }
+    public void pay(long amount) { /* ... */ }
+}
+
+@Service
+public class PayService {
+
+    private final Map<String, PayStrategy> registry = new HashMap<>();
+
+    // 构造时 Spring 自动把所有 PayStrategy 实现注入成 List
+    public PayService(List<PayStrategy> strategies) {
+        for (PayStrategy s : strategies) {
+            registry.put(s.type(), s);
+        }
+    }
+    // 也可直接注入 Map<String, PayStrategy>，key 默认是 beanName
+
+    public void pay(String type, long amount) {
+        registry.get(type).pay(amount);   // 新增策略 = 加一个 @Component，主流程零改动
+    }
+}`
+
+const lambdaStrategyCode = `// 函数式写法：策略只有一个方法时，可以直接用 Lambda/方法引用充当策略
+// 把策略表注册成 Map<String, Consumer<Long>>，省掉一堆策略类
+
+Map<String, LongConsumer> strategies = Map.of(
+    "alipay",   amount -> System.out.println("支付宝支付 " + amount),
+    "wechat",   amount -> System.out.println("微信支付 " + amount),
+    "unionpay", amount -> System.out.println("银联支付 " + amount)
+);
+
+strategies.get("wechat").accept(100L);
+
+// 这正是 JDK 里 Comparator / Runnable 的用法本质：函数式策略`
+
 export default function Ch1() {
   return (
     <>

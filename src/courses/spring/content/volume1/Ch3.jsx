@@ -121,6 +121,23 @@ export default function Ch3() {
         典型用途就是那几样：<strong>事务管理</strong>（<code>@Transactional</code> 本质就是 AOP）、
         <strong>统一日志</strong>、<strong>权限校验</strong>、性能监控等。凡是「和业务无关、却到处都要写」的逻辑，都适合用 AOP。
       </p>
+      <p>
+        还有两个常被追问的术语：<strong>织入</strong>（Weaving）指把切面应用到目标对象、生成代理的过程；
+        <strong>引入</strong>（Introduction）指给现有类动态「加」一个它本来没有的接口实现。
+        Spring AOP 的织入发生在<strong>运行时</strong>（生成动态代理），而 AspectJ 还支持编译期、类加载期织入，
+        功能更全但更重。这就引出一个关键边界——
+      </p>
+      <KeyIdea title="Spring AOP 和 AspectJ 不是一回事">
+        <p>
+          很多人把它们混为一谈。<strong>Spring AOP</strong> 是 Spring 自带的、基于<strong>动态代理</strong>的轻量 AOP，
+          只能拦截<strong>容器管理的 Bean 的方法执行</strong>（method execution），靠运行时生成代理实现，
+          所以才会有「自调用失效」「final 不能代理」这些限制。
+          <strong>AspectJ</strong> 是一套独立完整的 AOP 框架，能在编译期/类加载期直接改字节码，
+          可拦截字段访问、构造器、甚至非 Spring 管理的对象，能力强但需要专门的编译器或 agent。
+          Spring 只是<strong>借用了 AspectJ 的注解语法</strong>（<code>@Aspect</code>、<code>@Around</code> 这些），
+          底层引擎仍是自己的代理，不要因为注解一样就以为用上了 AspectJ 的全部能力。
+        </p>
+      </KeyIdea>
 
       <h2>两种动态代理：JDK 与 CGLIB</h2>
       <p>
