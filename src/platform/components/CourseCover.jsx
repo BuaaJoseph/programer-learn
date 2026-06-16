@@ -63,6 +63,12 @@ export default function CourseCover({ course }) {
         <ThreadsScene />
       ) : coverScene === 'beans' ? (
         <BeansScene />
+      ) : coverScene === 'netlayers' ? (
+        <NetLayersScene />
+      ) : coverScene === 'osproc' ? (
+        <OsProcScene />
+      ) : coverScene === 'patterns' ? (
+        <PatternsScene />
       ) : (
         <AttentionScene />
       )}
@@ -422,6 +428,61 @@ function BeansScene() {
         )
       })}
       <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">IoC · AOP · transaction</text>
+    </g>
+  )
+}
+
+function NetLayersScene() {
+  const layers = ['应用层 HTTP', '传输层 TCP/UDP', '网络层 IP', '链路层']
+  return (
+    <g>
+      <text x="40" y="42" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">TCP/IP layers</text>
+      {layers.map((l, i) => (
+        <g key={i}>
+          <rect x={40 + i * 8} y={54 + i * 28} width="300" height="22" rx="6" fill="#ffffff" fillOpacity={0.24 - i * 0.04} stroke="#ffffff" strokeOpacity="0.5" />
+          <text x={52 + i * 8} y={69 + i * 28} fontFamily="var(--mono)" fontSize="10" fontWeight="700" fill="#ffffff">{l}</text>
+        </g>
+      ))}
+      <text x="40" y="186" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">TCP · HTTP · HTTPS</text>
+    </g>
+  )
+}
+
+function OsProcScene() {
+  return (
+    <g>
+      <text x="40" y="42" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">process / thread / memory</text>
+      {[0, 1].map((p) => (
+        <g key={p}>
+          <rect x={40 + p * 160} y="56" width="140" height="80" rx="10" fill="#ffffff" fillOpacity="0.1" stroke="#ffffff" strokeOpacity="0.5" />
+          <text x={52 + p * 160} y="74" fontFamily="var(--mono)" fontSize="10" fontWeight="700" fill="#ffffff">进程 {p + 1}</text>
+          {[0, 1, 2].map((t) => (
+            <rect key={t} x={52 + p * 160 + t * 40} y="84" width="32" height="42" rx="4" fill="#ffffff" fillOpacity="0.2" stroke="#ffffff" strokeOpacity="0.4" />
+          ))}
+          <text x={110 + p * 160} y="148" textAnchor="middle" fontFamily="var(--mono)" fontSize="8" fill="#ffffff" fillOpacity="0.7">threads</text>
+        </g>
+      ))}
+      <text x="40" y="186" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">scheduling · IO · 虚拟内存</text>
+    </g>
+  )
+}
+
+function PatternsScene() {
+  const cells = ['单例', '工厂', '代理', '策略', '观察者', '装饰器']
+  return (
+    <g>
+      <text x="40" y="42" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">design patterns</text>
+      {cells.map((c, i) => {
+        const x = 40 + (i % 3) * 100
+        const y = 56 + Math.floor(i / 3) * 48
+        return (
+          <g key={c}>
+            <rect x={x} y={y} width="88" height="38" rx="9" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" />
+            <text x={x + 44} y={y + 24} textAnchor="middle" fontFamily="var(--display)" fontSize="14" fontWeight="700" fill="#ffffff">{c}</text>
+          </g>
+        )
+      })}
+      <text x="40" y="186" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">SOLID · 创建/结构/行为型</text>
     </g>
   )
 }

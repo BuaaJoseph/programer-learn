@@ -13,6 +13,9 @@ import elasticsearch from '../courses/elasticsearch/index.js'
 import jvm from '../courses/jvm/index.js'
 import javaConcurrency from '../courses/java-concurrency/index.js'
 import spring from '../courses/spring/index.js'
+import network from '../courses/network/index.js'
+import os from '../courses/os/index.js'
+import designPatterns from '../courses/design-patterns/index.js'
 
 export const COURSES = [
   llmHandbook,
@@ -28,6 +31,9 @@ export const COURSES = [
   zookeeper,
   nginx,
   elasticsearch,
+  network,
+  os,
+  designPatterns,
 ]
 
 export function getCourse(slug) {

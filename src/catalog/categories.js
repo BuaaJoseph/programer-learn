@@ -34,6 +34,17 @@ export const CATEGORIES = [
       { id: 'ios', title: 'iOS', subtitle: 'iOS' },
     ],
   },
+  {
+    id: 'cs',
+    title: '计算机基础',
+    subtitle: 'CS Fundamentals',
+    icon: '🧱',
+    subs: [
+      { id: 'network', title: '计算机网络', subtitle: 'Network' },
+      { id: 'os', title: '操作系统', subtitle: 'Operating System' },
+      { id: 'design', title: '设计模式', subtitle: 'Design Patterns' },
+    ],
+  },
 ]
 
 export function findCategory(catId) {

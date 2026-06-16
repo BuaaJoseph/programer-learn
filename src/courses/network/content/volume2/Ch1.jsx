@@ -1,0 +1,178 @@
+import Lead from '@/components/cards/Lead.jsx'
+import KeyIdea from '@/components/cards/KeyIdea.jsx'
+import Example from '@/components/cards/Example.jsx'
+import Practice from '@/components/cards/Practice.jsx'
+import Callout from '@/components/cards/Callout.jsx'
+import CodeBlock from '@/components/cards/CodeBlock.jsx'
+import Summary from '@/components/cards/Summary.jsx'
+import Handshake from '@/courses/network/illustrations/Handshake.jsx'
+
+const netstatCode = `# 看所有 TCP 连接及其状态
+netstat -ant
+
+# 只看处于某些状态的连接（Linux）
+ss -ant state established
+ss -ant state time-wait
+
+# 统计各状态各有多少条，排查 TIME_WAIT 过多
+netstat -ant | awk 'NR>2 {print $6}' | sort | uniq -c | sort -rn`
+
+const tcpdumpCode = `# 抓与目标主机的握手包，-S 显示绝对序号，便于看 seq/ack
+sudo tcpdump -i any -nnS 'tcp port 80 and host example.com'
+
+# 典型的三次握手会看到三行（Flags 依次为 [S] [S.] [.]）：
+# IP A.5000 > B.80: Flags [S],  seq 1000
+# IP B.80 > A.5000: Flags [S.], seq 9000, ack 1001
+# IP A.5000 > B.80: Flags [.],  ack 9001`
+
+export default function Ch1() {
+  return (
+    <>
+      <Lead>
+        <p>
+          TCP 是面向连接的协议：在真正传数据之前，双方要先「打个招呼」把连接建立起来；传完了，
+          再「好好道别」把连接关掉。建立连接要三步，关闭连接要四步——这就是大名鼎鼎的
+          <em>three-way handshake</em> 和 <em>four-way handshake</em>，几乎是每场面试的必考题。
+        </p>
+      </Lead>
+
+      <h2>三次握手：建立连接</h2>
+      <p>
+        握手的目的，是让双方<strong>互相确认对方的收发能力都正常</strong>，并交换各自的初始序号
+        （<em>ISN</em>，initial sequence number）。整个过程靠 TCP 首部里的两个标志位 <code>SYN</code>
+        （想建立连接）和 <code>ACK</code>（确认收到）来驱动。
+      </p>
+      <ul>
+        <li>
+          <strong>第一次</strong>：客户端发 <code>SYN</code>，带上自己的初始序号 <code>seq=x</code>，
+          自己进入 <code>SYN_SENT</code> 状态。意思是「我想和你建连，我的序号从 x 开始」。
+        </li>
+        <li>
+          <strong>第二次</strong>：服务端回 <code>SYN+ACK</code>，带自己的序号 <code>seq=y</code>，
+          同时 <code>ack=x+1</code> 确认收到了客户端的 SYN，进入 <code>SYN_RCVD</code> 状态。
+          意思是「收到了你的 x，我的序号从 y 开始」。
+        </li>
+        <li>
+          <strong>第三次</strong>：客户端回 <code>ACK</code>，带 <code>ack=y+1</code> 确认服务端的 SYN，
+          双方都进入 <code>ESTABLISHED</code>，连接建立完成，可以开始传数据了。
+        </li>
+      </ul>
+      <p>
+        注意 <code>SYN</code> 报文本身不携带数据，但要<strong>消耗一个序号</strong>，所以确认号都是对方序号加一。
+      </p>
+
+      <Example title="跟着序号走一遍">
+        <p>假设客户端 ISN 为 1000，服务端 ISN 为 9000：</p>
+        <ul>
+          <li>
+            <code>C → S: SYN, seq=1000</code>　→　<code>S → C: SYN ACK, seq=9000, ack=1001</code>　→
+            <code>C → S: ACK, seq=1001, ack=9001</code>
+          </li>
+        </ul>
+        <p>
+          第三步之后，客户端接下来发的第一个数据段就从 <code>seq=1001</code> 开始。
+          ISN 不是固定的 0，而是随机生成的，目的是防止旧连接的报文被新连接误收，也提高了一点安全性。
+        </p>
+      </Example>
+
+      <Handshake />
+
+      <KeyIdea title="为什么是三次，不是两次">
+        <p>
+          三次握手是<strong>确认双方收发能力都正常</strong>的最小步数：第二次握手让客户端确认「服务端能收能发」，
+          第三次握手让服务端确认「客户端能收能发」。如果只有两次，服务端无法确认客户端是否真的收到了自己的 SYN+ACK。
+          更关键的是<strong>防止历史失效连接</strong>：如果一个早已超时的旧 SYN 在网络里兜了一圈才到达服务端，
+          两次握手会让服务端直接建连并白白等待；而三次握手中，客户端发现这个连接不是自己想要的，会回
+          <code>RST</code> 拒绝，避免浪费资源。
+        </p>
+      </KeyIdea>
+
+      <h2>四次挥手：关闭连接</h2>
+      <p>
+        TCP 连接是<strong>全双工</strong>的——两个方向各自独立。关闭时要把两个方向分别关掉，所以需要四步。
+        假设由客户端主动关闭：
+      </p>
+      <ul>
+        <li>
+          <strong>第一次</strong>：客户端发 <code>FIN</code>，表示「我没有数据要发了」，进入 <code>FIN_WAIT_1</code>。
+        </li>
+        <li>
+          <strong>第二次</strong>：服务端回 <code>ACK</code>，进入 <code>CLOSE_WAIT</code>；客户端收到后进入
+          <code>FIN_WAIT_2</code>。此时<strong>客户端到服务端方向已关闭，但服务端到客户端方向还能发</strong>（半关闭状态）。
+        </li>
+        <li>
+          <strong>第三次</strong>：服务端把剩余数据发完后，再发自己的 <code>FIN</code>，进入 <code>LAST_ACK</code>。
+        </li>
+        <li>
+          <strong>第四次</strong>：客户端回 <code>ACK</code>，进入 <code>TIME_WAIT</code>；服务端收到后立即进入
+          <code>CLOSED</code>。
+        </li>
+      </ul>
+      <p>
+        为什么挥手要四次而握手只要三次？因为握手时服务端可以把 <code>SYN</code> 和 <code>ACK</code>
+        合在一个报文里；而挥手时，服务端收到 FIN 后<strong>可能还有数据没发完</strong>，所以只能先单独回 ACK，
+        等数据发完再单独发 FIN——<code>ACK</code> 和 <code>FIN</code> 必须分开，于是多了一步。
+      </p>
+
+      <Callout variant="warn" title="TIME_WAIT 与 2MSL">
+        <p>
+          主动关闭方在最后会停留在 <code>TIME_WAIT</code> 状态，等待 <strong>2MSL</strong>
+          （MSL 是报文最大生存时间）才真正关闭，原因有两个：
+        </p>
+        <ul>
+          <li>
+            <strong>保证最后一个 ACK 能到达对方</strong>：万一这个 ACK 丢了，对方会重发 FIN，
+            而处于 TIME_WAIT 的一方还能再回一次 ACK；2MSL 足够覆盖一来一回。
+          </li>
+          <li>
+            <strong>让本连接的残留报文在网络中消散</strong>，避免它们「串门」到使用相同四元组的新连接里。
+          </li>
+        </ul>
+        <p>
+          高并发短连接的服务器容易堆积大量 TIME_WAIT，占满端口。常见缓解手段：开启
+          <code>net.ipv4.tcp_tw_reuse</code>、用长连接 / 连接池减少连接数、让被动方（如客户端）来主动关闭。
+        </p>
+      </Callout>
+
+      <h2>SYN 洪泛攻击</h2>
+      <p>
+        攻击者用伪造的源地址疯狂发 <code>SYN</code>，服务端每收到一个就回 SYN+ACK 并在<em>半连接队列</em>
+        里留一个 <code>SYN_RCVD</code> 表项等待第三次握手；但攻击者永远不回 ACK，队列很快被占满，
+        正常用户再也连不上——这就是 <em>SYN flood</em>。常见防御是 <strong>SYN cookies</strong>：
+        服务端不急着分配资源，而是把连接信息编码进序号里，等收到合法的第三次握手再恢复，从而绕过半连接队列。
+      </p>
+
+      <h2>实战 / 面试怎么答</h2>
+      <p>
+        被问「讲讲三次握手」，按「<strong>为什么</strong>（确认双方收发能力、交换 ISN）→
+        <strong>怎么做</strong>（SYN / SYN+ACK / ACK 三步加状态变化）→ <strong>为什么不是两次</strong>
+        （防历史连接、确认双向能力）」的顺序讲，再补一句四次挥手的差异和 TIME_WAIT，基本就满分了。
+        切忌只背流程不讲原因。
+      </p>
+
+      <Practice title="亲手抓一次握手">
+        <p>
+          先用 <code>netstat</code> / <code>ss</code> 观察本机连接的状态分布，重点找
+          <code>ESTABLISHED</code> 和 <code>TIME_WAIT</code>；再用 <code>tcpdump</code> 抓一次访问网页时的握手包，
+          对照 seq / ack 号的变化。
+        </p>
+        <CodeBlock lang="bash" title="看连接状态" code={netstatCode} />
+        <CodeBlock lang="bash" title="抓握手包" code={tcpdumpCode} />
+        <p>
+          观察后想一想：当你 <code>curl</code> 一个网址再关闭时，主动关闭的是哪一方？谁停在了 TIME_WAIT？
+        </p>
+      </Practice>
+
+      <Summary
+        points={[
+          '三次握手：SYN → SYN+ACK → ACK，双方交换初始序号 ISN 并各自从 SYN_SENT/SYN_RCVD 进入 ESTABLISHED。',
+          '三次而非两次：既要确认双方收发能力都正常，又要防止历史失效连接被误建。',
+          '四次挥手：FIN → ACK → FIN → ACK，因为连接全双工要分别关闭，且服务端的 ACK 与 FIN 通常分两步发。',
+          'TIME_WAIT 等待 2MSL，是为了确保最后一个 ACK 送达、并让残留报文消散；过多可用 tw_reuse、长连接等缓解。',
+          'SYN flood 用伪造 SYN 占满半连接队列，SYN cookies 是常见防御手段。',
+          '用 netstat/ss 看状态、用 tcpdump 抓包对照 seq/ack，是把握手原理落到实处的最佳方式。',
+        ]}
+      />
+    </>
+  )
+}
