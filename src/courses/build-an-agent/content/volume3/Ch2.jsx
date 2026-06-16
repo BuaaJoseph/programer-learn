@@ -68,6 +68,42 @@ const sessionDenySrc = `forge> 把 README 里的版本号改成 1.0
 明白，这次我不改了。如果你想先看看具体会改哪一行，
 我可以把 diff 贴出来给你确认，再决定要不要动手。`
 
+const tocttouSrc = `// TOCTOU：Time-Of-Check To Time-Of-Use（检查时与使用时之间的窗口）
+// 危险确认天生有这个缝隙——「问人」和「执行」是两个时刻，中间状态可能变。
+
+// 1) 用户看到的确认：
+//    ⚠ forge 想要执行：写入文件 config.json
+//    允许吗？[y/N] y          ← 此刻 config.json 是普通文件
+
+// 2) 用户点头到真正落盘之间（哪怕只有几十毫秒）：
+//    └─ 另一个进程把 config.json 换成了指向 /etc/passwd 的符号链接
+
+// 3) forge 真正执行 write 时：
+//    └─ 内容被写进了 /etc/passwd —— 用户批准的根本不是这件事！
+
+// 缓解思路：
+//   · 确认时展示的标识，要和执行时校验的标识一致（比如对内容/路径做快照再核对）
+//   · 尽量缩短 check→use 的窗口，别在确认后还做一堆可被插队的中间步骤
+//   · 真正高危场景用文件描述符（openat + O_NOFOLLOW）而非「路径」来操作`
+
+const autoApproveSrc = `// 自动批准策略：在「安全」和「省心」之间分档，而不是一刀切全放或全问。
+type AutoApprove =
+  | { mode: 'never' }                          // 永远问人（最安全，最累）
+  | { mode: 'session', scope: string[] }       // 本次会话内，某些类别记住批准
+  | { mode: 'pattern', allow: RegExp[] }        // 命中白名单模式的自动放行
+
+// 关键：自动批准只能降低「ask → allow」，绝不能动「deny」。
+// 红线规则永远压在最上面，再怎么图省事也不能把 deny 自动批掉。
+function shouldAutoApprove(req: ConfirmRequest, cfg: AutoApprove): boolean {
+  if (cfg.mode === 'never') return false
+  if (cfg.mode === 'session') return cfg.scope.includes(req.tool)
+  if (cfg.mode === 'pattern') {
+    const text = String(req.input.command ?? req.input.path ?? '')
+    return cfg.allow.some((re) => re.test(text))
+  }
+  return false
+}`
+
 export default function Ch2() {
   return (
     <article>
@@ -88,6 +124,15 @@ export default function Ch2() {
         工程的做法是：把不可逆、有副作用的关键写操作，做成<strong>可中断、可审查</strong>的。在真正落盘、
         真正执行命令之前，停一下，把「我接下来要干什么」摊开给人看，等人点头才继续。这一停，就是 agent
         从「玩具 demo」迈向「敢交真实文件系统」的那道门槛。
+      </p>
+
+      <p>
+        往深一层说，人在回路解决的不是「模型不够强」，而是<strong>责任归属</strong>和<strong>不可逆性</strong>两个根本问题。
+        责任归属：当一个写操作落盘前有人点过头，这件事就从「Agent 擅自做的」变成「人授权 Agent 做的」——
+        无论结果好坏，链路上有一个明确的决策点，事后查得清、说得明。不可逆性：读操作错了重读一遍即可，
+        但 <code>rm</code>、<code>git push --force</code>、<code>DROP TABLE</code> 这类操作一旦发生就<strong>没有撤销键</strong>。
+        HITL 的精髓，就是在<strong>不可逆的那一刻之前</strong>插入一个可逆的暂停点。能撤销的操作不必拦，
+        拦的成本得花在真正回不了头的地方。
       </p>
 
       <KeyIdea title="危险确认 = 把「执行权」在关键节点交还给人">

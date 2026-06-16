@@ -66,6 +66,35 @@ export const defaultPolicy: PermissionPolicy = {
   },
 }`
 
+const matchOrderSrc = `// 规则匹配的「最具体优先」示意（卷 6 配置化后的形态）：
+// 一条命令可能同时命中多条规则，谁说了算？答案是：deny 永远压过 allow，
+// 同档之间则「更具体的规则」覆盖「更宽泛的规则」。
+const rules = [
+  { match: 'bash:*',            decision: 'ask'   },  // 兜底：所有 bash 默认问
+  { match: 'bash:git *',        decision: 'allow' },  // 放宽：git 子命令信得过
+  { match: 'bash:git push *',   decision: 'ask'   },  // 收窄：但 push 还是要问
+  { match: 'bash:rm -rf *',     decision: 'deny'  },  // 红线：删除直接拒
+]
+
+// 对 "git push origin main" 求值：
+//   命中 bash:*（ask）、bash:git *（allow）、bash:git push *（ask）
+//   按「最具体优先」→ ask 胜出。
+// 对 "rm -rf node_modules" 求值：
+//   命中 bash:*（ask）、bash:rm -rf *（deny）
+//   deny 一票否决 → deny 胜出。`
+
+const allowlistTrapSrc = `// 白名单陷阱：看起来人畜无害的前缀匹配，能被轻松绕过。
+// 假设你给 "git" 开了白名单（git 我还信不过吗？），于是写了：
+if (cmd.startsWith('git ')) return { decision: 'allow', reason: 'git 命令放行' }
+
+// 但下面这些「都以 git 开头」的命令，全都被静默放行了：
+//   git commit -m "x"; rm -rf /          ← 分号串了第二条命令
+//   git log --oneline | sh               ← 管道把日志喂给 shell
+//   git -c core.pager='rm -rf ~' log     ← 用 -c 注入恶意 pager
+//   git diff $(rm -rf /)                 ← 命令替换在参数里执行
+// 教训：基于「整条命令字符串」的前缀/正则白名单，在 shell 面前几乎必然漏。
+// shell 的元字符（; | & $() \`\` 换行）让「这条命令到底会执行什么」无法靠字面判断。`
+
 const gateSrc = `// —— 安全闸门：执行前先过权限策略 ——
 const verdict = this.policy.decide(tool, call.input, this.ctx.cwd)
 this.audit.log({ type: 'permission', tool: tool.name, input: call.input, decision: verdict.decision, reason: verdict.reason })
@@ -104,6 +133,14 @@ export default function Ch1() {
         删掉的文件不会自己回来，覆盖掉的代码找不回上一版。所以我们不能赌「模型这次不会出错」，
         必须在执行前加一道独立的、不依赖模型判断的闸门。
       </p>
+      <p>
+        这里有一个容易被忽略的设计哲学：<strong>权限闸门和模型必须是两套独立的判断系统</strong>。
+        如果你把「这条命令危不危险」也交给模型自己判（比如让它在调用前先想一句「我觉得这安全」），
+        那等于没设防——出错的恰恰是模型的判断本身，让出错的人给自己签字，毫无意义。
+        闸门的价值就在于它是<strong>确定性的、可审查的、不受模型当下状态影响的</strong>一段普通代码：
+        同样的输入永远给同样的裁定，不会因为 prompt 被诱导、上下文被污染就改主意。
+        安全机制的第一原则是「不要把守门的钥匙交给被守的对象」。
+      </p>
 
       <KeyIdea title="Deny &gt; Ask &gt; Allow：优先级从严">
         <p>
@@ -114,6 +151,34 @@ export default function Ch1() {
           越危险的判断越靠前，宁可严一点，也不放过一次破坏。
         </p>
       </KeyIdea>
+
+      <Callout variant="note" title="和 Claude Code / sandbox 的对比：同一个问题的三种答法">
+        <p>
+          forge 这套「执行前裁定 + 人确认」并不是凭空发明的，业界对「怎么管住会动手的 Agent」大体有三条路线，
+          各有取舍：
+        </p>
+        <ul>
+          <li>
+            <strong>策略闸门（forge / Claude Code）</strong>：在工具执行前用一套规则裁定 allow/ask/deny，
+            危险的拦、拿不准的问人。优点是<strong>颗粒度细、对人透明</strong>——你能看到每一步在干什么；
+            缺点是规则要靠人维护，黑名单永远不全。Claude Code 的 <code>permissions</code> 配置
+            （<code>{'allow / ask / deny'}</code> 三档 + 工具名/参数匹配）就是这一路，forge 是它的简化版教学实现。
+          </li>
+          <li>
+            <strong>沙箱隔离（sandbox / 容器）</strong>：干脆把 Agent 关进一个受限环境——只读的根文件系统、
+            限定的网络、用完即弃的容器。优点是<strong>就算它想干坏事也出不了笼子</strong>，不依赖规则全不全；
+            缺点是<strong>笼子里的破坏照样发生</strong>（删光工作区里的代码沙箱拦不住），而且每次起容器有成本、配置也重。
+          </li>
+          <li>
+            <strong>事后审计（只记不拦）</strong>：什么都放行，但把每一步记下来事后追责。优点是零打扰、不挡路；
+            缺点很明显——<strong>它根本不防，只负责告诉你「已经出事了」</strong>。
+          </li>
+        </ul>
+        <p>
+          成熟的系统从不三选一，而是<strong>叠着用</strong>：沙箱兜底（最坏情况下也炸不出笼子）+ 策略闸门做细颗粒控制
+          + 审计留痕事后复盘。forge 这一卷正好把后两层讲透，第三章接审计。这就是纵深防御的雏形。
+        </p>
+      </Callout>
 
       <h2>三种裁定的语义</h2>
       <p>
@@ -221,6 +286,49 @@ export default function Ch1() {
         可能是模型把路径算错了，也可能是被诱导越权。无论哪种，都没有「问一下也许是对的」的余地，直接 <code>deny</code> 最安全。
       </p>
 
+      <Callout variant="warn" title="边界情况：路径前缀判断的一个真实坑">
+        <p>
+          <code>abs.startsWith(resolve(cwd))</code> 看着没问题，其实藏着一个经典越界漏洞。
+          假设 <code>cwd</code> 是 <code>/home/user/app</code>，那么 <code>/home/user/app-secrets/key</code>
+          也会通过 <code>startsWith</code> 检查——因为字符串前缀确实匹配，可它根本不在工作区里！
+          正确的写法要带上分隔符：判断 <code>abs === cwd</code> 或 <code>{'abs.startsWith(cwd + path.sep)'}</code>。
+          另外还要小心符号链接（symlink）——一个看似在工作区内的路径，可能软链到工作区外，
+          <code>resolve</code> 并不会跟随 symlink，真正较真时得用 <code>fs.realpath</code> 先解真身。
+          安全代码里，「差不多对」往往就等于「有洞」。
+        </p>
+      </Callout>
+
+      <h3>规则匹配：多条规则命中时谁说了算</h3>
+      <p>
+        现在的 <code>defaultPolicy</code> 是一串 if-else，逻辑简单。但等到卷 6 把策略做成可配置的规则列表，
+        就会冒出一个新问题：<strong>一条命令同时命中多条规则时，按谁的裁定算？</strong>
+        这是所有权限系统都要回答的核心问题，forge 的答案延续 Deny &gt; Ask &gt; Allow 的精神，
+        再加一条「最具体优先」：
+      </p>
+      <CodeBlock lang="ts" title="规则匹配的优先级（卷 6 的形态预览）" code={matchOrderSrc} />
+      <p>
+        两条规则缺一不可：<strong>deny 一票否决</strong>保证任何时候红线规则都压得住放宽规则，
+        不会因为你给 <code>git</code> 开了白名单就让 <code>{'git ... && rm -rf'}</code> 溜过去；
+        <strong>同档最具体优先</strong>让你能先放宽一大类（<code>{'git *'}</code> 全 allow）、再精确收窄个别危险子集
+        （<code>{'git push *'}</code> 单独 ask）。这套「先宽后窄、deny 封顶」的合并语义，和防火墙规则、
+        云上 IAM 策略的求值逻辑是同一个思路——显式 deny 永远胜过 allow。
+      </p>
+
+      <Callout variant="warn" title="白名单陷阱：给 shell 命令开白名单，几乎必然漏">
+        <p>
+          最诱人也最危险的偷懒，是给「我信得过的命令」开白名单来少敲 y。问题在于：
+          <strong>shell 命令的字面，和它实际会执行的东西，是两回事。</strong>
+        </p>
+        <CodeBlock lang="ts" title="一个看似安全、实则千疮百孔的白名单" code={allowlistTrapSrc} />
+        <p>
+          分号、管道、<code>{'$()'}</code> 命令替换、反引号、换行……shell 的元字符多到你列不全，
+          任何基于「整条命令字符串」的前缀或正则白名单，都能被它们绕开。这也是为什么 forge 的默认姿态是
+          <strong>对所有 bash 一律 ask</strong>，只对最明显的灾难命令 deny——它压根不试图去「白名单某条命令」，
+          因为它知道这件事在 shell 面前做不干净。真要做命令白名单，得在<strong>解析过命令结构</strong>之后
+          （拆出真正的 argv、拒绝任何带元字符的命令），而不是对原始字符串做前缀匹配。
+        </p>
+      </Callout>
+
       <h2>把闸门接进主循环</h2>
       <p>
         策略造好了，接下来要把它<strong>插进执行路径</strong>。位置就在 <code>agent.ts</code> 的 <code>execOne</code> 里，
@@ -292,15 +400,65 @@ export default function Ch1() {
         </p>
       </Callout>
 
+      <h2>权限设计的常见误区</h2>
+      <p>
+        最后把工程里真实踩过的坑列成一张对照表。它们的共同点是：单看都「能跑」，
+        放进对抗性或边界场景就出事。
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>常见做法（坑）</th>
+            <th>为什么有问题</th>
+            <th>正确姿态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>让模型自己判断「这步安不安全」</td>
+            <td>守门的钥匙交给被守的对象，出错的人给自己签字</td>
+            <td>闸门是独立的确定性代码，不受 prompt 影响</td>
+          </tr>
+          <tr>
+            <td>只做黑名单，命中才拦</td>
+            <td>黑名单永远列不全，换个写法就绕过</td>
+            <td>默认 ask 兜底，黑名单只挡最明显的灾难</td>
+          </tr>
+          <tr>
+            <td>给整条 shell 命令字符串开前缀白名单</td>
+            <td>分号 / 管道 / <code>{'$()'}</code> 能拼接出任意命令</td>
+            <td>解析出 argv 再判，或干脆只对结构化工具放行</td>
+          </tr>
+          <tr>
+            <td>用 <code>startsWith(cwd)</code> 判越界</td>
+            <td><code>app-secrets</code> 也匹配 <code>app</code> 前缀</td>
+            <td>带分隔符比较，必要时 <code>realpath</code> 解 symlink</td>
+          </tr>
+          <tr>
+            <td>deny 时 <code>throw</code> 抛异常</td>
+            <td>模型看不到原因，整轮对话可能崩</td>
+            <td>构造 <code>is_error</code> 结果回灌，拒绝即反馈</td>
+          </tr>
+          <tr>
+            <td>忘了接 confirm 就默认放行</td>
+            <td>问不到人却偷偷执行，安全姿态反了</td>
+            <td>缺省即拒绝（<code>... : false</code>）</td>
+          </tr>
+        </tbody>
+      </table>
+
       <Summary
         points={[
           '能改文件、能跑 shell 的 Agent 副作用不可逆，必须在「模型决定」和「真正执行」之间加一道独立的安全闸门。',
+          '守门的闸门必须独立于模型：确定性、可审查、不受 prompt 诱导——别把守门的钥匙交给被守的对象。',
           '裁定分三档，优先级从严：Deny（明确危险，直接拒）> Ask（写操作，先问一句）> Allow（只读，静默放行）。',
           'deny 不抛异常，而是构造 is_error 的 tool_result 把理由回灌给模型——拒绝即反馈，让模型换个安全做法。',
           'permissions.ts：PermissionResult 带 reason（既给人看确认、也写审计）；DESTRUCTIVE 黑名单挡最明显的灾难命令。',
           'decide 严格按只读→bash 分级→write/edit 越界检查→其它默认 ask 的顺序判；写 .git 或工作目录之外直接 deny。',
           '闸门接在 execOne 执行工具之前：deny 直接返回错误结果，ask 调 confirm 征求同意，没有 confirm 回调时默认拒绝。',
           '黑名单永远不全，所以靠纵深防御：写操作一律 ask、最明显的破坏才 deny，人作为最后兜底。',
+          '和业界对比：策略闸门（forge/Claude Code）颗粒细、沙箱兜底防越狱、审计只记不拦——成熟系统三层叠用。',
+          '规则合并语义：deny 一票否决 + 同档最具体优先（先宽后窄），和防火墙/IAM 同思路；前缀白名单在 shell 面前必漏。',
           '下一章：危险确认——把 ask 的 this.confirm 接到 REPL，看它怎么向用户问出那句 y/N。',
         ]}
       />

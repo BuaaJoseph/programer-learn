@@ -46,6 +46,42 @@ export function readProjectMemory(cwd: string): string | null {
   return null
 }`
 
+const ecosystemCode = `// 不同工具的「约定文件」生态：名字不同，思路一样——把项目规矩写进版本库。
+const MEMORY_FILES = [
+  'AGENTS.md',      // 社区中立约定，越来越多工具共同支持
+  '.forge/AGENTS.md', // forge 专属位置
+  'CLAUDE.md',      // Claude Code 的项目记忆
+  '.cursorrules',   // Cursor 的规则文件
+  '.github/copilot-instructions.md', // GitHub Copilot
+]
+
+// 兼容多种生态：按优先级找，命中第一个非空的就用。
+export function readProjectMemory(cwd: string): string | null {
+  for (const name of MEMORY_FILES) {
+    try {
+      const text = readFileSync(join(cwd, name), 'utf8').trim()
+      if (text) return text
+    } catch {
+      // 不存在就跳过
+    }
+  }
+  return null
+}`
+
+const layeredMemoryCode = `// 记忆分层：把不同生命周期的「记忆」分开管理，拼接顺序体现信任与优先级。
+function buildMemoryLayers(cwd: string): string[] {
+  const layers: string[] = []
+  // 1) 全局记忆：用户机器级偏好（如 ~/.forge/AGENTS.md），跨项目共享
+  const global = readGlobalMemory()
+  if (global) layers.push(\`# 全局偏好\\n\${global}\`)
+  // 2) 项目记忆：随仓库走，信任度高
+  const project = readProjectMemory(cwd)
+  if (project) layers.push(\`# 项目约定（来自 AGENTS.md）\\n\${project}\`)
+  // 3) 动态记忆（进阶）：Agent 运行中学到的东西，下次启动读回
+  //    本章不实现，仅留出位置
+  return layers
+}`
+
 const injectCode = `const memory = readProjectMemory(cwd)
 if (memory) {
   parts.push(\`\\n# 项目约定（来自 AGENTS.md）\\n\${memory}\`)
@@ -142,10 +178,142 @@ export default function Ch2() {
         所以对不信任的仓库，运行 forge 之前请先亲眼看一遍它的 AGENTS.md，确认里面没有可疑指令再说。
       </Callout>
 
+      <Callout variant="warn" title="深入：为什么 AGENTS.md 注入比用户输入更危险">
+        <p>
+          普通的提示注入藏在用户粘贴的文本里，用户多少有点防备。而 AGENTS.md 注入有三个让它更阴险的特点：
+        </p>
+        <ul>
+          <li><strong>进的是高信任层。</strong> 它拼进 system prompt，享受的是「开发者可信指令」的待遇，比藏在工具结果里的注入更容易被执行。</li>
+          <li><strong>触发是自动的。</strong> 你只要 clone + 运行，根本不需要主动粘贴什么，攻击就生效了。</li>
+          <li><strong>它很安静。</strong> 一份正常的 AGENTS.md 里夹一句恶意指令，扫一眼很难发现，尤其文件很长时。</li>
+        </ul>
+        <p>
+          防御上有几层：(1) 对不可信仓库先人工 review AGENTS.md；(2) 把它当「数据」而非「指令」注入——加明确的边界标注、降低它的指令权重；
+          (3) 在 Agent 侧对高危工具（删除、网络外发、执行 shell）加二次确认，让即使被注入也过不了「人这一关」。
+        </p>
+      </Callout>
+
       <Callout variant="note" title="这是「静态记忆」">
         本章实现的是静态记忆：启动时读一次，整个会话期间不变。
         更动态的记忆——Agent 在运行过程中学到东西、再写回文件供下次启动使用——是另一个进阶话题，
         本课程不展开。先把「能读、能注入」这条基础链路打通。
+      </Callout>
+
+      <h2>记忆分层：不是所有记忆都一样</h2>
+      <p>
+        把「项目记忆」想成一个单一文件，是入门视角。真正成熟的 Agent 通常有<strong>分层的记忆</strong>，
+        不同层的生命周期、作用范围、信任度都不同：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>层级</th>
+            <th>存放位置</th>
+            <th>作用范围</th>
+            <th>谁维护</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>全局记忆</td>
+            <td><code>{'~/.forge/AGENTS.md'}</code></td>
+            <td>当前用户的所有项目</td>
+            <td>用户本人（个人偏好）</td>
+          </tr>
+          <tr>
+            <td>项目记忆</td>
+            <td>仓库根 <code>AGENTS.md</code></td>
+            <td>这个项目，所有协作者</td>
+            <td>项目维护者（进版本库）</td>
+          </tr>
+          <tr>
+            <td>子目录记忆</td>
+            <td>子包里的 <code>AGENTS.md</code></td>
+            <td>monorepo 里的某个子项目</td>
+            <td>子项目负责人</td>
+          </tr>
+          <tr>
+            <td>动态记忆</td>
+            <td>运行时写回的文件</td>
+            <td>跨会话延续</td>
+            <td>Agent 自己（进阶）</td>
+          </tr>
+        </tbody>
+      </table>
+      <CodeBlock lang="ts" title="src/context.ts（记忆分层）" code={layeredMemoryCode} />
+      <p>
+        拼接顺序不是随便排的：它直接对应<strong>优先级</strong>。一般「越具体、越靠近当前任务」的层放得越靠后、覆盖越靠前的层——
+        项目约定能覆盖全局偏好，子目录约定能覆盖项目约定。这和 CSS 的层叠、配置文件的合并是同一个直觉。
+      </p>
+
+      <h2>静态记忆 vs 动态记忆</h2>
+      <p>
+        本章实现的 AGENTS.md 是<strong>静态记忆</strong>：人手写好、进版本库、启动读一次、整个会话不变。
+        它的好处是可审计、可 review、可回滚——它就是一段普通代码，谁都能看到改了什么。
+      </p>
+      <p>
+        与之相对的是<strong>动态记忆</strong>：Agent 在干活过程中「学到」东西（比如发现「这个项目的测试要先起 docker」），
+        把它写回某个文件，下次启动时读回来。动态记忆听起来很美，但工程上有几个真实的坑：
+      </p>
+      <ul>
+        <li><strong>污染风险：</strong>Agent 学错了一条，会一直带着错误往下跑，且不易被人发现。</li>
+        <li><strong>无界增长：</strong>不加约束地往记忆文件里追加，文件会越长越大，最终自己撑爆 token 预算。</li>
+        <li><strong>可信度下降：</strong>动态记忆是 Agent 自己写的，不像 AGENTS.md 经过人 review，信任度天然更低。</li>
+      </ul>
+      <Callout variant="tip" title="工程经验：先把静态记忆做扎实">
+        绝大多数项目，一份维护良好的静态 AGENTS.md 已经能解决 90% 的「入乡随俗」需求。
+        别急着上动态记忆——它引入的复杂度和风险，往往超过它带来的收益。等你真的遇到「同一类信息每个会话都要重新发现一遍」的痛点，再考虑。
+      </Callout>
+
+      <h2>约定文件生态：不止 AGENTS.md</h2>
+      <p>
+        AGENTS.md 只是一种命名约定。整个工具生态里，不同的 AI 编码工具各有自己的「项目记忆文件名」，但思路完全一致——
+        都是「把项目规矩写进版本库里的一个文本文件，工具启动时读」：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>文件名</th>
+            <th>所属工具</th>
+            <th>特点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>AGENTS.md</code></td>
+            <td>中立约定（多工具）</td>
+            <td>不绑定单一厂商，越来越多工具向它靠拢</td>
+          </tr>
+          <tr>
+            <td><code>CLAUDE.md</code></td>
+            <td>Claude Code</td>
+            <td>支持分层、<code>{'@'}</code> 引用其它文件</td>
+          </tr>
+          <tr>
+            <td><code>.cursorrules</code></td>
+            <td>Cursor</td>
+            <td>规则式，可按文件 glob 触发不同规则</td>
+          </tr>
+          <tr>
+            <td><code>.github/copilot-instructions.md</code></td>
+            <td>GitHub Copilot</td>
+            <td>放在 .github 下，随仓库走</td>
+          </tr>
+        </tbody>
+      </table>
+      <CodeBlock lang="ts" title="src/context.ts（兼容多种生态）" code={ecosystemCode} />
+      <Callout variant="tip" title="兼容主流约定文件，体验更好">
+        让 forge 多认几个常见文件名，几乎零成本，却能让它在「别人已经为其它工具配好的项目」里直接受益——
+        用户不用为 forge 再写一份。这是一种很划算的「生态友好」。
+      </Callout>
+
+      <Callout variant="note" title="常见误区：把 AGENTS.md 当 README 写">
+        <ul>
+          <li><strong>写成项目介绍：</strong>大段「本项目是一个电商后台，始于 2021……」对 Agent 当下行动毫无帮助，纯占 token。</li>
+          <li><strong>写得太长：</strong>它每轮都进上下文，越长越烧钱、越稀释重点。控制在「一屏纪律」之内最好。</li>
+          <li><strong>放空泛要求：</strong>「请写高质量代码」不如「函数超过 50 行就拆分」可执行。</li>
+          <li><strong>不随项目更新：</strong>命令改了、目录结构变了却忘了改 AGENTS.md，会把 Agent 带向错误的旧路径。</li>
+        </ul>
       </Callout>
 
       <h2>开场上下文已经齐了</h2>

@@ -47,6 +47,21 @@ const cliRenderCode = `case 'context_usage': {
   break
 }`
 
+const precheckCode = `// 进阶：发送前预检。先估算这次请求会占多少 token，超窗就先压缩再发。
+async function ensureFits(agent: Agent): Promise<void> {
+  const estimated = await agent.provider.countTokens({
+    system: agent.system,
+    messages: agent.messages,
+    tools: agent.tools,
+  })
+  const limit = agent.provider.contextWindow
+  // 留出生成回复的余量（maxTokens）：输入 + 预期输出都要塞进窗口。
+  const budget = limit - agent.maxTokens
+  if (estimated > budget * agent.compactThreshold) {
+    await agent.compact() // 从不让请求真的撞墙
+  }
+}`
+
 export default function Ch3() {
   return (
     <article>
