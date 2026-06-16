@@ -209,6 +209,33 @@ export const grepTool: Tool = {
   },
 }`
 
+const globTableSrc = `// glob 元字符的编译规则（globToRegExp 的核心）：
+//
+//   glob 写法        编译成正则      含义
+//   *                [^/]*           匹配任意字符，但「不跨目录」
+//   **               .*              匹配任意字符，「可跨任意层目录」
+//   ?                [^/]            匹配单个非分隔符字符
+//   .  +  ( ) 等      \\. \\+ \\( ...   正则元字符被转义成「字面量」
+//
+// 几个例子（pattern -> 能否匹配）：
+//   src/*.ts      匹配 src/a.ts          ；不匹配 src/x/a.ts（* 不跨目录）
+//   src/**/*.ts   匹配 src/a.ts、src/x/y/a.ts（** 跨目录）
+//   *.test.ts     匹配 a.test.ts         ；那个点是字面量，不会匹配 "axtestxts"`
+
+const seqVsParSrc = `// 同一轮里读三个文件，串行 vs 并行的墙钟时间差距：
+
+// 串行：一个 await 完再下一个，时间是三者之和
+const a = await read('a.ts')   // ~30ms
+const b = await read('b.ts')   // ~30ms
+const c = await read('c.ts')   // ~30ms
+// 总耗时 ≈ 90ms
+
+// 并行：一起发出去、一起等齐，时间约等于最慢的那一个
+const [a2, b2, c2] = await Promise.all([
+  read('a.ts'), read('b.ts'), read('c.ts'),
+])
+// 总耗时 ≈ 30ms —— I/O 等待是重叠的，不是叠加的`
+
 export default function Ch4() {
   return (
     <>

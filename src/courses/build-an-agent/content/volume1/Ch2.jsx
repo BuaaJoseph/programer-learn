@@ -110,6 +110,43 @@ export function buildToolRegistry(tools: Tool[] = ALL_TOOLS): Map<string, Tool> 
 
 export type { Tool } from './types.js'`
 
+const schemaShapesSrc = `// inputSchema 不只是「列出字段名」——它在用类型/约束给模型「划框框」。
+// 框越准，模型瞎填的空间越小。几种常用写法：
+
+inputSchema: {
+  type: 'object',
+  properties: {
+    // 1) 枚举：把取值锁死在有限集合里，模型几乎不可能填错
+    mode: { type: 'string', enum: ['read', 'append', 'overwrite'],
+      description: '写入模式。' },
+
+    // 2) 数字范围：给上下界，避免模型填出离谱的值
+    limit: { type: 'number', minimum: 1, maximum: 100,
+      description: '最多返回多少条，默认 20。' },
+
+    // 3) 数组：声明元素类型，模型才知道每一项该放什么
+    paths: { type: 'array', items: { type: 'string' },
+      description: '一批文件路径。' },
+
+    // 4) 布尔开关：天然只有 true/false，描述说清「开了会怎样」
+    recursive: { type: 'boolean',
+      description: '是否递归子目录；默认 false。' },
+  },
+  required: ['mode'],
+}`
+
+const descBadGoodSrc = `// description 是模型选不选你、怎么用你的「唯一情报」。同一个工具，两种写法天差地别：
+
+// ❌ 太干：只说「是什么」，模型不知道何时该用、有什么坑
+description: '执行 SQL。'
+
+// ✅ 到位：说清「干什么 / 何时用 / 边界与禁忌」
+description:
+  '对只读副本执行一条 SELECT 查询并返回结果（最多 1000 行）。' +
+  '用于回答关于业务数据的统计类问题。' +
+  '只允许 SELECT；不要用它做 INSERT/UPDATE/DELETE——写操作请用 mutate_db 工具。' +
+  '查询前若不确定表结构，先调用 describe_table。'`
+
 export default function Ch2() {
   return (
     <>
@@ -176,6 +213,34 @@ export default function Ch2() {
         <p>
           <strong>required 一定要准。</strong> 漏标必填项，模型可能省略关键参数导致执行失败；
           多标了，又会逼模型瞎编一个它本不需要的值。required 列表就是「不给我我没法干活」的那些字段，不多不少。
+        </p>
+      </Callout>
+
+      <p>
+        把上面这条「干 / 何时用 / 边界」掰开看，最直观的就是好坏对比。下面同一个查询工具，
+        干巴巴的写法和到位的写法，给模型的「情报量」差着量级：
+      </p>
+      <CodeBlock lang="ts" title="description 的反例与正例" code={descBadGoodSrc} />
+      <p>
+        注意正例里那两句「<strong>不要用它做写操作，写请用 mutate_db</strong>」「<strong>不确定表结构先 describe_table</strong>」——
+        这是 description 工程里最值钱的部分：<strong>主动划清和邻居工具的分工，并指明前置步骤</strong>。
+        模型选工具时其实是在做一道阅读理解，你把边界和协作关系写进去，它就很少会越界或漏步骤。
+        反过来，如果两个工具描述含糊、职责重叠，模型就会在它们之间反复横跳、选错。
+      </p>
+
+      <h3>inputSchema 的进阶：用约束给模型「划框框」</h3>
+      <p>
+        forge 内核里的 <code>JSONSchema</code> 是简化版，但 JSON Schema 本身能表达的约束远不止「字段名 + 类型」。
+        在真实工具里，你应当尽量用 <code>enum</code>、<code>minimum/maximum</code>、<code>items</code> 这些约束把参数空间收紧——
+        <strong>框划得越准，模型瞎填的余地越小，执行前就能挡掉一批非法输入</strong>：
+      </p>
+      <CodeBlock lang="ts" title="几种常用的参数约束写法" code={schemaShapesSrc} />
+      <Callout variant="note" title="schema 约束是「第一道闸」，但不是「唯一一道」">
+        <p>
+          有了 <code>enum</code> / <code>minimum</code> 这些约束，是不是 execute 里就可以省掉校验了？<strong>不能。</strong>
+          schema 约束依赖模型「自觉遵守」和厂商「是否强校验」——多数厂商会尽量约束模型输出，但<strong>不保证</strong>百分百合法。
+          所以正确的姿势是：schema 负责<strong>引导</strong>模型（让它大概率填对），execute 里仍要把 <code>input</code> 当不可信输入做<strong>防御性校验</strong>
+          （回想上一章 echo 工具里的 <code>String(input.text ?? '')</code>）。两道闸叠加，才是生产级的稳。
         </p>
       </Callout>
 
@@ -276,6 +341,45 @@ export default function Ch2() {
           <code>bash</code> 等一个个真实工具，每写好一个，要做的「接线」工作只有：在 <code>ALL_TOOLS</code>
           数组里 <code>import</code> 进来、加上一行。主循环、注册表、Provider 翻译层，统统不用动。
           工具的「定义」和「调度」彻底解耦了——这正是契约带来的红利。
+        </p>
+      </Callout>
+
+      <h3>为什么是「数组 + Map」两层，而不只用一个？</h3>
+      <p>
+        新手会问：直接用一个 Map 当注册表不就行了，何必既留数组又建 Map？因为这两层服务于<strong>两个不同的消费者</strong>，
+        各自的访问模式不一样：
+      </p>
+      <table>
+        <thead>
+          <tr><th>结构</th><th>谁在用</th><th>访问模式</th><th>为何合适</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ALL_TOOLS</code> 数组</td>
+            <td>Provider（发请求前）</td>
+            <td>整体遍历，翻译成 SDK 的 tools 列表</td>
+            <td>需要稳定顺序、要全量取出</td>
+          </tr>
+          <tr>
+            <td><code>name → Tool</code> 的 Map</td>
+            <td>主循环（执行时）</td>
+            <td>按模型给的名字 O(1) 查单个</td>
+            <td>查找快、不必线性扫数组</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        数组保留了「顺序」与「可遍历」，Map 提供了「按键秒查」。
+        用 Map 从数组派生（而不是反过来），保证两者永远一致、单一数据源——改 <code>ALL_TOOLS</code> 一处，两边同步更新。
+      </p>
+
+      <Callout variant="note" title="工具不是越多越好：注册表也是「上下文预算」的一部分">
+        <p>
+          每多注册一个工具，它的 <code>name</code> + <code>description</code> + <code>inputSchema</code> 都要随每一次请求发给模型，
+          占着输入 token，也占着模型的注意力。工具一多，模型反而容易<strong>选错</strong>或<strong>在相似工具间犹豫</strong>。
+          所以「能扩展」不等于「应该无限堆」。真实工程里有两种常见对策：一是把职责相近的工具<strong>合并</strong>
+          （比如不做 read_file/read_lines/read_head 三个，而做一个带参数的 read）；二是按场景<strong>动态裁剪</strong>注册表——
+          <code>buildToolRegistry(tools)</code> 之所以允许传入自定义工具集，正是为这种「这个会话只放它该用的那几个工具」留的口子。
         </p>
       </Callout>
 

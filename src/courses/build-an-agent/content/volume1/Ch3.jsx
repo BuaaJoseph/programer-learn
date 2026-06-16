@@ -1,10 +1,58 @@
+import { useState } from 'react'
 import Lead from '@/components/cards/Lead.jsx'
 import KeyIdea from '@/components/cards/KeyIdea.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
+import Figure from '@/components/illustrations/Figure.jsx'
 import LoopStepper from '@/courses/build-an-agent/illustrations/LoopStepper.jsx'
+
+// 小插图：循环的三种「停因」对照——正常收尾 / 安全阀触顶 / 致命错误。
+function StopReasons() {
+  const [pick, setPick] = useState('done')
+  const cases = {
+    done: {
+      label: '正常收尾',
+      color: 'var(--green)',
+      desc: '模型这轮没有 tool_use → 任务完成，break，返回 finalText。这是我们想要的停。',
+    },
+    cap: {
+      label: '安全阀触顶',
+      color: 'var(--rose)',
+      desc: 'turn 转满 maxTurns 仍未收尾 → 被迫 break。任务可能没做完，生产版应回报 max_turns。',
+    },
+    fatal: {
+      label: '致命错误',
+      color: 'var(--rose)',
+      desc: 'provider.complete 自己抛异常（网络/鉴权/限流）→ 循环内无法自愈，往上抛。注意它不同于「工具失败」。',
+    },
+  }
+  const controls = (
+    <>
+      {Object.entries(cases).map(([k, v]) => (
+        <button key={k} className={`fig-btn ${pick === k ? 'active' : ''}`} onClick={() => setPick(k)}>{v.label}</button>
+      ))}
+    </>
+  )
+  const cur = cases[pick]
+  return (
+    <Figure caption="主循环会因三类性质完全不同的原因停下：只有「没有 tool_use」是正常收尾；触顶和致命错误都是异常的停，上层应当能区分。" controls={controls}>
+      <svg viewBox="0 0 460 120" width="460" role="img" aria-label="循环停机的三种原因">
+        <rect x="18" y="44" width="96" height="34" rx="8" fill="var(--accent-soft)" stroke="var(--accent-line)" />
+        <text x="66" y="65" textAnchor="middle" fontFamily="var(--mono)" fontSize="10" fill="var(--accent-strong)">while 循环</text>
+        <line x1="114" y1="61" x2="160" y2="61" stroke={cur.color} strokeWidth="1.6" markerEnd="url(#sr-a)" />
+        <rect x="160" y="40" width="120" height="42" rx="8" fill="var(--bg-subtle)" stroke={cur.color} />
+        <text x="220" y="66" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill={cur.color}>{cur.label}</text>
+        <defs>
+          <marker id="sr-a" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill={cur.color} /></marker>
+        </defs>
+        <rect x="18" y="92" width="424" height="22" rx="6" fill="var(--bg-subtle)" stroke="var(--border)" />
+        <text x="28" y="107" fontFamily="var(--sans)" fontSize="10.5" fill="var(--ink)">{cur.desc}</text>
+      </svg>
+    </Figure>
+  )
+}
 
 const pseudoSrc = `// 主循环的本质：一段几乎不含智能的 while 循环
 messages.push({ role: 'user', content: userInput })
@@ -21,6 +69,44 @@ while (true) {
 }
 
 return finalText  // 把最终答案交还用户`
+
+const stopReasonSrc = `// stop_reason：模型为什么停下这一轮。不同值要不同对待。
+switch (res.stopReason) {
+  case 'end_turn':
+    // 模型自己觉得说完了。配合「没有 tool_use」即可收尾。
+    break
+
+  case 'tool_use':
+    // 模型停下是为了等工具结果——执行工具、回灌、再转一圈。
+    // （forge 实际不读这个字段，而是直接看 content 里有没有 tool_use，更可靠。）
+    break
+
+  case 'max_tokens':
+    // 输出被 maxTokens 截断了！回复可能是「半句话」，
+    // 甚至 tool_use 的 input JSON 都没写完——这种残缺结果直接回灌会很危险。
+    // 生产级做法：要么调大 maxTokens 重试，要么提示模型「接着上次继续」。
+    break
+
+  case 'stop_sequence':
+    // 命中了你设的停止串。在我们的循环里一般用不到。
+    break
+}`
+
+const reactSrc = `// 主循环跑出来的 messages，本质上就是一条 ReAct 轨迹（Reason + Act 交替）：
+//
+//   user:      把端口从 3000 改成 8080
+//   assistant: [Reason] 我得先找到端口定义在哪
+//              [Act]    grep "3000"
+//   user:      [Observe] server.ts:12:  const PORT = 3000
+//   assistant: [Reason] 找到了，在 server.ts 第 12 行，用 edit 精确替换
+//              [Act]    edit server.ts  3000 -> 8080
+//   user:      [Observe] 已修改 server.ts
+//   assistant: [Reason] 改完了，没有更多动作
+//              (无 tool_use) -> 循环停
+//
+// 「Reason→Act→Observe」三步在我们的循环里分别对应：
+//   text 块（想）/ tool_use 块（做）/ tool_result（看到结果）。
+// 我们没有显式写 ReAct，但循环结构天然就长成了它的样子。`
 
 const agentSrc = `import type { Message, ContentBlock, ToolUseBlock, ToolResultBlock } from './types.js'
 import type { Tool, ToolContext } from './tools/types.js'
@@ -271,6 +357,49 @@ export default function Ch3() {
         <code>stop_reason</code> 只是模型给的提示，真正决定权在我们手里这个 filter。
       </p>
 
+      <h3>停机条件：到底有几种「该停」的理由？</h3>
+      <p>
+        一个 Agent 循环的健壮性，几乎全体现在「它什么时候停、怎么停」上。归拢一下，forge 这个循环会因为<strong>三类</strong>原因停下，
+        三类的「性质」完全不同，绝不能混为一谈：
+      </p>
+      <ul>
+        <li>
+          <strong>正常收尾（该停）</strong>：模型这一轮没有任何 <code>tool_use</code>——它认为任务完成、给出了最终文本。这是我们<strong>想要</strong>的停。
+        </li>
+        <li>
+          <strong>安全阀触顶（被迫停）</strong>：转够了 <code>maxTurns</code> 圈还没收尾，强制 <code>break</code>。这是<strong>异常</strong>的停，
+          意味着任务可能没真正完成，上层应当感知到「是撞上限停的，不是正常停的」。
+        </li>
+        <li>
+          <strong>致命错误（崩了）</strong>：<code>provider.complete</code> 本身抛异常（网络断了、鉴权失败、限流）。
+          注意这<strong>不同于工具失败</strong>——工具失败会变成 tool_result 回灌、循环继续；而调模型这一步炸了，是没法在循环内自愈的，得往上抛。
+        </li>
+      </ul>
+      <p>
+        一个值得记住的设计取舍：forge 故意<strong>不</strong>区分「正常停」和「触顶停」的返回值（都返回 <code>finalText</code>），
+        这是本卷为了讲清主干刻意做的简化。生产级实现通常会额外返回一个 <code>stopReason: 'completed' | 'max_turns'</code>，
+        让 CLI 能提示用户「我转到上限了，可能没做完，要不要让我接着干？」——这正是简化版和生产版的一道分水岭。
+      </p>
+
+      <StopReasons />
+
+      <h3>stop_reason：模型自己给的「我为什么停」</h3>
+      <p>
+        上面 forge 靠「有没有 tool_use」这个事实来决定停不停，那 Provider 返回的 <code>stopReason</code> 字段还有什么用？
+        它是模型<strong>自报</strong>的停下原因，几种值的处置策略很不一样，其中一个尤其是隐藏的坑：
+      </p>
+      <CodeBlock lang="ts" title="stop_reason 的几种取值与处置" code={stopReasonSrc} />
+      <Callout variant="warn" title="最阴的坑：max_tokens 截断会产出「半个 tool_use」">
+        <p>
+          <code>'end_turn'</code> 和 <code>'tool_use'</code> 都好办，真正会咬人的是 <code>'max_tokens'</code>：
+          模型的输出被你设的 <code>maxTokens</code> 硬生生切断了。如果切在一段文本中间，顶多是回复不完整；
+          但如果切在一个 <code>tool_use</code> 的 <code>input</code> JSON 中间——你拿到的就是个<strong>参数残缺甚至无法解析</strong>的工具调用。
+          这时若照常去执行，轻则参数错乱、重则触发 API 报错。所以严谨的循环会在回灌前检查 stop_reason：
+          若是 <code>max_tokens</code>，要么调大上限重试，要么提示模型「上次被截断了，请重发完整的调用」。
+          forge 本卷为保持主干清爽暂未处理它，但你心里要清楚这个坑的存在。
+        </p>
+      </Callout>
+
       <Callout variant="warn" title="maxTurns：没有它，一次失控就能烧光你的钱">
         <p>
           想象模型陷进了一个怪圈：读文件 → 觉得不对 → 再读 → 还是不对 → 再读……每一圈都是一次真金白银的 API 调用，
@@ -328,6 +457,31 @@ export default function Ch3() {
           （具体的 Claude Provider 我们在后面的卷里实现。）
           这种干净的解耦，正是上一章我们不嫌麻烦、自己定义 <code>Message</code> / <code>ContentBlock</code> 类型换来的回报：
           内核与厂商之间有一条清晰的边界，换模型时内核一行都不用动。
+        </p>
+      </Callout>
+
+      <h2>这个循环，其实就是 ReAct</h2>
+      <p>
+        如果你读过 Agent 相关的论文或博客，一定见过 <strong>ReAct</strong>（Reasoning + Acting）这个名字。
+        很多人把它当成某种高深的「框架」或「prompt 技巧」，但说穿了，ReAct 描述的就是
+        「<strong>推理（Reason）→ 行动（Act）→ 观察结果（Observe）</strong>」这样一个不断循环的过程——
+        而这，正是我们这一章手搓出来的主循环。换句话说，<strong>你已经实现了 ReAct，只是没给它起这个名字</strong>。
+      </p>
+      <CodeBlock lang="ts" title="主循环跑出的 messages 就是一条 ReAct 轨迹" code={reactSrc} />
+      <p>
+        三者一一对应：模型的 <strong>text 块</strong>是「想」（Reason），<strong>tool_use 块</strong>是「做」（Act），
+        forge 回灌的 <strong>tool_result</strong>是「看到结果」（Observe）。它们在 messages 里交替沉淀，就是一条 ReAct 轨迹。
+        早期的 ReAct 论文是靠在 prompt 里硬写「Thought: … Action: … Observation: …」的文本格式、再用正则把动作解析出来；
+        而今天有了原生的 <code>tool_use</code> 内容块，这套「格式约定 + 解析」被厂商内化进了模型和 API，
+        我们只要按结构读写消息就行。<strong>原理没变，工程上干净了一个数量级。</strong>
+      </p>
+      <Callout variant="note" title="为什么不需要「显式规划」步骤？">
+        <p>
+          有些 Agent 框架会强制模型先产出一份「计划」（plan），再逐步执行。forge 这个循环里没有这一步——
+          因为「下一步做什么」每一轮都由模型<strong>临场</strong>根据最新的观察结果决定（这正是 ReAct 相对「先规划后执行」的优势：
+          它能根据中途看到的东西<strong>动态调整</strong>，不会一条道走到黑）。
+          显式规划在某些超长任务里有用（能减少跑偏），但它也更僵硬、更贵。本卷选最朴素的 ReAct 式循环，
+          是因为它用最少的机制就能覆盖绝大多数任务——先掌握这个，再谈花活。
         </p>
       </Callout>
 

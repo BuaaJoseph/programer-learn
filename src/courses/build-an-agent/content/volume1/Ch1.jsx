@@ -84,6 +84,35 @@ const roundtripSrc = `messages = [
   ]},
 ]`
 
+const mergeSrc = `// 同一个 role 的连续内容，要合进「一条消息的 content 数组」，
+// 而不是拆成两条相同 role 的消息。下面是对比：
+
+// ✅ 正确：一条 assistant 消息里放多个块
+{ role: 'assistant', content: [
+  { type: 'text', text: '我先看一眼配置，再查时间。' },
+  { type: 'tool_use', id: 'tu_a', name: 'read',     input: { path: 'config.json' } },
+  { type: 'tool_use', id: 'tu_b', name: 'get_time', input: { timezone: 'Asia/Shanghai' } },
+]}
+
+// ❌ 错误：把它拆成两条连续的 assistant 消息
+{ role: 'assistant', content: [{ type: 'text', text: '我先看一眼配置，再查时间。' }] }
+{ role: 'assistant', content: [{ type: 'tool_use', id: 'tu_a', name: 'read', input: {} }] }
+// 多数厂商要求 user / assistant 严格交替，连续两条同 role 会直接被 API 拒绝。`
+
+const providerDiffSrc = `// 同一段「带工具结果的对话」，三家厂商的线格式各不一样——
+// 这正是 forge 要在 Provider 层做翻译、内核只认自己类型的原因。
+
+// Anthropic Messages API：工具结果是 user 消息里的 tool_result 块
+{ role: 'user', content: [
+  { type: 'tool_result', tool_use_id: 'tu_01', content: '2026-06-16 21:40:12' },
+]}
+
+// OpenAI Chat Completions：工具结果是一条独立的 role: 'tool' 消息
+{ role: 'tool', tool_call_id: 'call_01', content: '2026-06-16 21:40:12' }
+
+// Google Gemini：用 role: 'function' / functionResponse，字段名又不同
+{ role: 'function', parts: [{ functionResponse: { name: 'get_time', response: {} } }] }`
+
 export default function Ch1() {
   return (
     <>
@@ -145,6 +174,29 @@ export default function Ch1() {
         </p>
       </Example>
 
+      <h2>为什么 role 只有两种？「轮流说话」是模型训练出来的本能</h2>
+      <p>
+        你可能会问：现实对话里明明还有「系统」「工具」「旁白」等多种身份，为什么 messages 里硬要压成
+        <code>user</code> / <code>assistant</code> 两种？答案藏在模型的训练方式里。指令微调阶段，模型见到的几乎全是
+        「人说一句、助手答一句」的<strong>交替对话</strong>样本，它对「轮次」的理解就建立在这种交替结构上。
+        把工具结果伪装成一条 <code>user</code> 消息喂回去，本质上是在对模型说：「环境（代你的那个人）反馈了这些信息，
+        请接着往下想。」模型于是顺理成章地把它当成新的输入来处理。
+      </p>
+      <p>
+        这也带出一条几乎所有厂商都遵守的硬约束：<strong>user 与 assistant 必须严格交替，不能连续出现两条同 role 的消息</strong>。
+        如果模型一轮里又说话、又要调工具，这些内容必须合并进<strong>同一条</strong> assistant 消息的 content 数组，
+        而不是拆成两条 assistant。下面这组对比是新手最常踩的坑：
+      </p>
+      <CodeBlock lang="ts" title="同 role 的内容要合进一条消息，不能拆成两条" code={mergeSrc} />
+      <Callout variant="tip" title="工具结果之所以挂在 user 身上，是「没有第三种角色」的妥协">
+        <p>
+          严格说，工具结果既不是「人类用户」说的，也不是「模型助手」说的——它是程序产出的。但既然线协议里只有两种 role，
+          而工具结果在语义上是「喂给模型的新输入」，把它归到 <code>user</code> 这一侧就是最自然的选择。
+          记住这层「妥协」的本质，你就不会再纠结「为什么不发明一个 tool 角色」——
+          OpenAI 确实发明了 <code>role: 'tool'</code>，但那只是<strong>线格式</strong>层面的差异，下文会看到。
+        </p>
+      </Callout>
+
       <h2>历史是怎么一轮轮变长的</h2>
       <p>
         每经过一轮（模型回一次、可能伴随一次工具调用与结果），messages 就在<strong>末尾</strong>追加几条，
@@ -157,6 +209,49 @@ export default function Ch1() {
       <p>
         这也解释了为什么后面卷会有「上下文管理」这一课：历史只增不减，token 也只增不减，
         总有一天会撑爆模型的上下文窗口。但那是后话——现在，先让结构正确。
+      </p>
+
+      <h2>「模型无状态」这件事的工程含义</h2>
+      <p>
+        新手最大的认知错位，是默认模型「记得」上次的对话。它<strong>不记得</strong>。每一次 HTTP 请求都是独立的，
+        服务端不替你保存任何会话状态——你这次发过去的 messages 是什么，模型眼里的「历史」就是什么。
+        所谓「连续对话」，纯粹是<strong>客户端</strong>（forge）每次都把累积的整段历史重新发过去营造出来的幻觉。
+        这个事实有三个直接的工程后果，值得各记一笔：
+      </p>
+      <ul>
+        <li>
+          <strong>成本随轮数二次增长。</strong>第 N 轮要把前 N-1 轮的全部内容再发一遍，
+          所以越聊到后面，单轮的输入 token 越多。一段 20 轮的对话，总输入 token 不是 20 份，而接近
+          1+2+…+20 = 210 份单轮量级。这就是为什么长对话会越来越慢、越来越贵——也是 prompt caching（缓存历史前缀）能省钱的原因。
+        </li>
+        <li>
+          <strong>历史是「可重放、可编辑」的。</strong>既然状态全在客户端，你完全可以在发送前对 messages 动手脚：
+          截断最早的几轮、把冗长的工具结果摘要掉、甚至插入一条伪造的 assistant 消息来「示范」格式。
+          后续卷的「上下文管理」「few-shot 引导」都建立在这个自由度上。
+        </li>
+        <li>
+          <strong>调试极其友好。</strong>因为请求是无状态的，复现一个 bug 只需要把当时那份 messages 原样再发一次。
+          把出问题的 messages 数组 dump 成 JSON 存下来，就是一份完美的最小复现样本。
+        </li>
+      </ul>
+
+      <h2>同一段对话，不同厂商的「线格式」长得不一样</h2>
+      <p>
+        前面讲的「工具结果挂在 user 身上」是 Anthropic Messages API 的约定。但换一家厂商，
+        线上传输的 JSON 结构就变了样——这恰恰是 forge 要在 Provider 层做翻译、内核只认自己那套类型的根本原因。
+        同样是「查时间，工具返回 21:40:12」，三家的写法对比如下：
+      </p>
+      <CodeBlock lang="ts" title="三家厂商对「工具结果」的线格式各不相同" code={providerDiffSrc} />
+      <ul>
+        <li><strong>Anthropic</strong>：工具结果是 <code>user</code> 消息里的 <code>tool_result</code> 内容块，靠 <code>tool_use_id</code> 配对。</li>
+        <li><strong>OpenAI</strong>：发明了独立的 <code>role: 'tool'</code> 消息，配对字段叫 <code>tool_call_id</code>。</li>
+        <li><strong>Gemini</strong>：用 <code>role: 'function'</code> 加 <code>functionResponse</code>，连「内容块」的容器都叫 <code>parts</code>。</li>
+      </ul>
+      <p>
+        字段名、角色名、嵌套结构全不一样，但<strong>语义是同一件事</strong>：把某次工具调用的结果，配着它的 id，回灌给模型。
+        forge 的做法是：内核里只存一套中立的 <code>Message</code> / <code>ContentBlock</code>（就是上一节那张表的结构），
+        到了真正发请求时，由对应的 Provider 把它「翻译」成该厂商的线格式；收到回复再「翻译」回来。
+        这层翻译被关在 <code>src/provider</code> 里，内核对厂商差异一无所知——这正是本章末尾要展开的主题。
       </p>
 
       <h2>forge 的真实类型：src/types.ts</h2>
@@ -195,6 +290,27 @@ export default function Ch1() {
           所以 forge 执行工具时，必须把发起调用时的那个 <code>id</code> 原样带回结果里——一个字符都不能改。
         </p>
       </KeyIdea>
+
+      <Callout variant="warn" title="边界情况：tool_result 必须「数量相等、id 全中」">
+        <p>
+          配对不是「尽量对上就行」，而是 API 层面的<strong>硬约束</strong>，违反就直接报错、整轮作废。两条最容易翻车的规则：
+        </p>
+        <ul>
+          <li>
+            <strong>一轮有几个 tool_use，下一条 user 消息就必须回几个 tool_result，一个都不能少。</strong>
+            哪怕某个工具你没法执行（不认识它、或它崩了），也得为它造一条 <code>is_error: true</code> 的结果占位，
+            而不能干脆不回——漏一个，API 会抱怨「有 tool_use 没有对应的 tool_result」。
+          </li>
+          <li>
+            <strong>每个 tool_result 的 tool_use_id 必须命中本轮某个真实存在的 tool_use 的 id。</strong>
+            凭空多回一条、或 id 拼错一个字符，同样报错。
+          </li>
+        </ul>
+        <p>
+          这就是为什么本卷最后一章的调度器，无论工具成功、失败、还是根本不存在，<strong>都坚持产出一条结果</strong>——
+          不是为了好看，是为了凑齐这个配对契约。
+        </p>
+      </Callout>
 
       <p>
         还有 <code>is_error?</code>。工具会失败：文件不存在、命令报错、参数非法。
