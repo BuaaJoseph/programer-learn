@@ -125,6 +125,15 @@ export default function Ch1() {
         （constraint）和你自己写的业务逻辑<strong>共同</strong>达成的。换句话说，A、I、D 是手段，C 是结果。
       </p>
 
+      <Callout variant="note" title="一致性（C）常被误解：它是约束 + 业务共同的产物">
+        <p>
+          很多人以为只要数据库保证了 A、I、D，一致性就自动成立——这是误区。数据库只能守住<strong>它知道的规则</strong>：
+          主键唯一、外键有效、非空约束、CHECK 约束（8.0 起真正生效）。但“转账前后两账户总额不变”“库存不能为负”这类
+          <strong>业务一致性</strong>，数据库并不知道，得靠你在事务里写对逻辑（比如扣库存时加 <code>WHERE stock {'>='} qty</code> 判断）。
+          所以一致性是“数据库约束 + 你的业务代码 + A/I/D 机制”三者合力的结果，缺哪一环都可能破坏一致性。
+        </p>
+      </Callout>
+
       <KeyIdea title="四性的分工">
         <p>
           记住这条对应关系，ACID 就不再是死记硬背：<strong>原子性由 undo log 实现，持久性由 redo log 实现，
@@ -143,6 +152,15 @@ export default function Ch1() {
         之后每条语句都需要手动提交。
       </p>
 
+      <h3>隐式提交：这些语句会偷偷结束你的事务</h3>
+      <p>
+        一个隐蔽的坑：并非所有语句都受事务控制。<strong>DDL（<code>CREATE</code>/<code>ALTER</code>/<code>DROP</code>/<code>TRUNCATE</code>）、
+        以及 <code>LOCK TABLES</code>、再次 <code>START TRANSACTION</code> 等语句，会触发隐式提交</strong>——
+        把当前事务里已执行的修改直接 COMMIT 掉。所以如果你在事务中间夹了一条 <code>CREATE TABLE</code>，
+        之后的 <code>ROLLBACK</code> 是回滚不了前面那些 DML 的，它们早被隐式提交了。记住：<strong>事务里只放 DML，别夹 DDL</strong>。
+      </p>
+      <CodeBlock lang="sql" title="ddl_implicit_commit.sql" code={ddlTrxSql} />
+
       <Callout variant="warn" title="忘记提交 / 长事务的代价">
         <p>
           关掉 autocommit 又忘了 <code>COMMIT</code>，是线上最隐蔽的坑之一：你的修改对别人不可见，而且这个事务持有的锁和
@@ -158,12 +176,40 @@ export default function Ch1() {
       </p>
       <CodeBlock lang="sql" title="savepoint.sql" code={savepointSql} />
 
+      <Example title="一次长事务引发的全站雪崩">
+        <p>
+          某服务上线一个“批量导出”功能：开一个事务，循环 5 万次，每次查一条、调一次外部 HTTP 接口拼数据，最后统一提交。
+          上线后数据库 CPU 不高，但写接口大面积超时。排查：
+        </p>
+        <ul>
+          <li><code>information_schema.INNODB_TRX</code> 里有个事务已经跑了 600 秒还没提交（卡在等外部 HTTP）。</li>
+          <li>它持有的行锁迟迟不放，后面的更新全在排队；同时它撑着 undo 版本链不让 purge，<code>History list length</code> 涨到几百万。</li>
+        </ul>
+        <p>
+          修复：把外部调用<strong>移出事务</strong>，先在事务外把数据查好、调好，事务里只做最后那一下写入并立刻提交。
+          铁律：<strong>事务里绝不能有网络 IO、用户交互、sleep 这类不可控的等待</strong>。
+        </p>
+      </Example>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“事务的四大特性各自靠什么实现？”</strong>——原子性 undo log、持久性 redo log、隔离性 锁+MVCC、一致性 是前三者+约束的结果（标准答案，务必能脱口而出）。</li>
+          <li><strong>“autocommit 关了忘提交会怎样？”</strong>——修改对别人不可见、长期持锁、撑大 undo，是最隐蔽的线上事故源。</li>
+          <li><strong>“为什么长事务危险？”</strong>——持锁久阻塞他人 + undo 链无法回收拖慢 MVCC purge + 回滚段膨胀占空间，三重危害。</li>
+        </ul>
+      </Callout>
+
       <h2>这对实际开发意味着什么</h2>
       <p>
         凡是「多步修改必须同生共死」的场景——下单扣库存、转账、积分变动配合订单状态——都必须放进同一个事务，
         而不是寄希望于「应用层一步步执行不出错」。同时要警惕事务边界：把不相干的远程调用、慢查询、用户交互塞进事务里，
         会无谓地拉长事务、放大锁竞争。原则是<strong>事务要小、要快、要有明确的提交或回滚出口</strong>。
       </p>
+      <p>
+        线上排查长事务的第一招，就是查 <code>INNODB_TRX</code> 按开始时间升序排，最老的那个往往就是元凶；
+        再结合 <code>History list length</code> 判断 undo 是否在堆积。
+      </p>
+      <CodeBlock lang="sql" title="long_trx.sql" code={longTrxSql} />
 
       <Practice title="亲手跑一遍转账事务">
         <p>
