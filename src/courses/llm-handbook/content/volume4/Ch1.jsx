@@ -160,6 +160,24 @@ export default function Ch4_1() {
         而这些事，一段普通代码轻轻松松就能做。于是分工变得自然——模型负责<strong>判断该做什么、参数填什么</strong>
         （它擅长理解自然语言、做决策），你的代码负责<strong>真正去做</strong>（确定性、可控、可审计）。工具调用就是把这两半拼起来的协议。
       </p>
+      <p>
+        这种分工还有一个常被忽视的好处：<strong>可审计性</strong>。因为每一次「真正动手」都发生在你的代码里，你可以在执行前后
+        加日志、加权限检查、加人工确认。模型说「我要给这个账户转账 1 万元」，你的代码完全可以拦下来要求二次确认。
+        如果让模型直接拥有执行力，这层安全闸门就不存在了。所以「意图与执行分离」不只是技术约定，更是<strong>安全设计的基石</strong>——
+        把不确定的决策（模型）和确定的执行（代码）隔开，风险才可控。
+      </p>
+
+      <table>
+        <thead>
+          <tr><th></th><th>模型负责</th><th>你的代码负责</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>做什么</td><td>判断该用哪个工具、填什么参数</td><td>真正调用函数/API/数据库</td></tr>
+          <tr><td>擅长</td><td>理解自然语言、做决策</td><td>确定性、可控、可审计</td></tr>
+          <tr><td>输出</td><td>一段 tool_call 意图（文本）</td><td>真实的执行结果</td></tr>
+          <tr><td>可靠性</td><td>概率性，可能出错/幻觉</td><td>由你保证，可校验可兜底</td></tr>
+        </tbody>
+      </table>
 
       <Example title="“北京今天几度” 走完整一轮">
         <p>一次工具调用，对话历史里其实经历了四步，缺一不可：</p>
@@ -210,6 +228,15 @@ export default function Ch4_1() {
         </ul>
       </Callout>
 
+      <p>
+        第一个坑值得专门拿代码看一眼，因为它太普遍了。对话历史必须是<strong>自洽</strong>的：一条 <code>role=tool</code> 的结果消息，
+        前面必须有一条带对应 <code>tool_call_id</code> 的 <code>tool_calls</code> 消息「认领」它。少了那一步，历史就断了。
+      </p>
+      <CodeBlock lang="python" title="broken_vs_correct_flow.py" code={wrongFlowCode} />
+      <p>
+        记住这个顺序：<strong>先 append 模型的意图消息，再 append 工具结果</strong>，且结果必须携带 <code>tool_call_id</code>。
+        这是工具调用最容易写错、却最难调试的地方——报错信息往往含糊，只说「消息格式不对」，让你摸不着头脑。</p>
+
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
         理解了「意图与执行分离」，你就抓住了 Agent 工程的骨架：所谓 Agent，不过是一个
@@ -229,6 +256,16 @@ export default function Ch4_1() {
           请求两个工具，或者分两轮依次请求——这取决于模型的判断，而你的循环要能从容应对两种情况。
         </p>
       </Practice>
+
+      <Example title="一轮里可能有多个 tool_call">
+        <p>
+          注意上面 mini_agent 里执行工具用的是 <code>for call in msg.tool_calls</code>——这个循环不是多余的。
+          现代模型支持<strong>并行工具调用</strong>：当它判断几个工具互不依赖时，会在一条消息里一次性返回多个 <code>tool_call</code>。
+          比如问「北京和上海各几度」，模型可能同时发出 <code>get_weather(北京)</code> 和 <code>get_weather(上海)</code> 两个调用。
+          你的代码要把它们<strong>逐个执行、逐个回灌</strong>（每个结果带各自的 <code>tool_call_id</code>），缺一个都会让历史不自洽。
+          这也是为什么哪怕只接一个工具，也建议从一开始就写成「遍历 tool_calls」的形式，省得以后返工。
+        </p>
+      </Example>
 
       <Summary
         points={[
