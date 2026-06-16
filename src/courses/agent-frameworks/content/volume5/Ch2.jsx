@@ -1,17 +1,23 @@
 import Lead from '@/components/cards/Lead.jsx'
+import KeyIdea from '@/components/cards/KeyIdea.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 
-const installCode = `pip install crewai
-export DASHSCOPE_API_KEY=sk-xxxxxxxx`
+const installSnippet = `# 安装 CrewAI（Python 3.10–3.13）
+pip install crewai
 
-const crewCode = `import os
+# 配置百炼 API Key（OpenAI 兼容协议）
+export DASHSCOPE_API_KEY="sk-你的key"
+
+# 运行
+python examples/agent-frameworks/05-crewai/research_write_crew.py`
+
+const fullCode = `import os
 
 from crewai import LLM, Agent, Crew, Process, Task
 
-# 接百炼：openai/ 前缀让 CrewAI 走 OpenAI 兼容路径。
 llm = LLM(
     model="openai/qwen-plus",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -42,7 +48,7 @@ write_task = Task(
     description="根据研究要点，写一篇约 300 字的中文科普短文。",
     expected_output="一篇约 300 字的短文。",
     agent=writer,
-    context=[research_task],  # 拿到上一个任务的产出作为上下文
+    context=[research_task],
 )
 
 crew = Crew(
@@ -61,86 +67,159 @@ def main() -> None:
 if __name__ == "__main__":
     main()`
 
+const llmSnippet = `llm = LLM(
+    model="openai/qwen-plus",   # openai/ 前缀 = 走 OpenAI 兼容协议
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key=os.environ["DASHSCOPE_API_KEY"],
+)`
+
+const contextSnippet = `write_task = Task(
+    description="根据研究要点，写一篇约 300 字的中文科普短文。",
+    expected_output="一篇约 300 字的短文。",
+    agent=writer,
+    context=[research_task],   # 把 research_task 的产出接力进来
+)`
+
+const toolSnippet = `from crewai.tools import tool
+
+@tool("简单计算器")
+def calc(expr: str) -> str:
+    """对一个算术表达式求值，返回结果字符串。"""
+    return str(eval(expr))   # 演示用；生产环境请勿直接 eval
+
+researcher = Agent(
+    role="技术研究员",
+    goal="就给定主题梳理 3-5 个关键要点",
+    backstory="你擅长快速抓住一个技术话题的核心，条理清晰。",
+    llm=llm,
+    tools=[calc],     # 把工具挂到 Agent 上，它就能在推理时调用
+    verbose=True,
+)`
+
+const hierVariant = `# 把 Process 换成 hierarchical，需要额外提供 manager_llm
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.hierarchical,   # 由经理动态委派
+    manager_llm=llm,                # 必填：经理用哪个模型来委派
+)`
+
+const flowWrap = `from crewai.flow.flow import Flow, start, listen
+
+
+class ResearchWriteFlow(Flow):
+    @start()
+    def choose_topic(self):
+        topic = "什么是 AI Agent"
+        self.state["topic"] = topic
+        return topic
+
+    @listen(choose_topic)
+    def run_crew(self, topic):
+        # Flow 负责确定性流程；创造性的协作交给自治的 Crew
+        result = crew.kickoff(inputs={"topic": topic})
+        return result
+
+
+if __name__ == "__main__":
+    print(ResearchWriteFlow().kickoff())`
+
 export default function Ch2() {
   return (
     <article>
       <Lead>
-        理论讲完，这一章我们真刀真枪搭一个两角色 Crew：研究员先就某个主题梳理出关键要点，撰稿人再据此写成一篇通俗短文。两个角色顺序协作，上一个任务的产出会被接力喂给下一个——这就是 CrewAI 里「协作」最朴素的样子。
+        这一章我们把一个真实可跑的双 Agent 协作脚本逐行拆开：一个「研究员」先梳理要点，一个「撰稿人」接力写成科普短文，全程接百炼的 qwen-plus。看懂它，你就掌握了 CrewAI 最常用的 sequential 协作模式，并能进一步扩展到工具、hierarchical 与 Flow。
       </Lead>
 
       <h2>安装与环境</h2>
       <p>
-        装好 crewai，并把百炼的 API Key 放进环境变量。代码里会用 <code>os.environ</code> 去读它，不要把 Key 硬编码进源码。
+        CrewAI 支持 Python 3.10–3.13。安装后只需一个环境变量 <code>DASHSCOPE_API_KEY</code> 即可接通百炼。
       </p>
-      <CodeBlock lang="bash">{installCode}</CodeBlock>
+      <CodeBlock lang="bash" title="安装与环境" code={installSnippet} />
 
       <h2>完整代码</h2>
-      <CodeBlock
-        lang="python"
-        title="examples/agent-frameworks/05-crewai/research_write_crew.py"
-      >
-        {crewCode}
-      </CodeBlock>
+      <CodeBlock lang="python" title="examples/agent-frameworks/05-crewai/research_write_crew.py" code={fullCode} />
 
-      <h2>逐段拆解</h2>
+      <h2>逐段讲解</h2>
 
-      <h3>1. 接百炼的 LLM</h3>
+      <h3>1. 配置 LLM：openai/ 前缀是关键</h3>
       <p>
-        <code>model="openai/qwen-plus"</code> 里的 <code>openai/</code> 前缀是重点：它告诉 CrewAI「用 OpenAI 兼容协议去访问这个模型」。百炼提供了 OpenAI 兼容接口，所以我们再配上 <code>base_url</code> 指向百炼的兼容端点、用 <code>DASHSCOPE_API_KEY</code> 作为密钥，CrewAI 就能像调 OpenAI 一样调 Qwen。缺了 <code>openai/</code> 前缀，框架就不知道该走兼容协议，连接会失败。
+        百炼提供 OpenAI 兼容端点，所以我们用 CrewAI 的 <code>LLM</code> 包一层。<code>model</code> 里的 <code>openai/</code> 前缀<strong>不能省</strong>——它告诉 CrewAI「按 OpenAI 协议去请求」，后半段 <code>qwen-plus</code> 才是真正的模型名。<code>base_url</code> 指向百炼的兼容端点，<code>api_key</code> 从环境变量读取。
+      </p>
+      <CodeBlock lang="python" title="LLM 配置" code={llmSnippet} />
+
+      <h3>2. 定义两个角色：用人设塑造行为</h3>
+      <p>
+        researcher 和 writer 的差异完全由 role / goal / backstory 决定。研究员的 backstory 强调「抓核心、条理清晰」，于是它倾向输出结构化要点；撰稿人的 backstory 强调「讲得清楚有趣」，于是它倾向写流畅的科普文字。两者共用同一个 <code>llm</code>，但因为人设不同，行为也不同。<code>verbose=True</code> 会把它们的思考过程打印出来，调试时非常有用。
       </p>
 
-      <h3>2. 两个 Agent 的人设</h3>
+      <h3>3. 定义两个任务：context 实现接力</h3>
       <p>
-        <strong>researcher</strong>（技术研究员）和 <strong>writer</strong>（技术撰稿人）各有一套 <code>role</code> / <code>goal</code> / <code>backstory</code>。role 定身份、goal 定目标、backstory 给出背景与气质——这三件套合起来塑造出角色的行为风格：一个负责抓要点、条理清晰，一个负责把要点讲得生动易懂。两个 Agent 都挂上同一个 <code>llm</code>。
+        research_task 的 description 里有 <code>{'{topic}'}</code> 占位符，会在 kickoff 时被 inputs 填充。write_task 的 <code>context=[research_task]</code> 是这段代码的灵魂——它把研究员的产出作为上下文喂给撰稿人，于是撰稿人「看到」了要点再动笔。没有这一行，两个 Agent 就各干各的、互不相关。
+      </p>
+      <CodeBlock lang="python" title="context 接力" code={contextSnippet} />
+
+      <h3>4. 组队并启动：Process.sequential + kickoff</h3>
+      <p>
+        Crew 把两个 Agent、两个 Task 聚合起来，<code>process=Process.sequential</code> 表示按 tasks 列表顺序执行：先 research_task，再 write_task。<code>kickoff()</code> 启动整支团队，inputs 里的 <code>topic</code> 会填进 research_task 的占位符 <code>{'{topic}'}</code>。返回值是最后一个 Task 的产出，也就是那篇短文。
       </p>
 
-      <h3>3. 两个 Task</h3>
-      <p>
-        每个 Task 用 <code>description</code> 说清要做什么、用 <code>expected_output</code> 给出交付标准，并通过 <code>agent=</code> 指派给对应角色。研究任务的描述里带了一个主题占位符，运行时会被填上具体主题。
-      </p>
-
-      <h3>4. 接力的关键：context</h3>
-      <p>
-        <code>write_task</code> 里的 <code>context=[research_task]</code> 是整个协作的接力棒——它把研究任务的产出作为上下文传给写作任务。撰稿人因此能拿到研究员刚整理好的要点，再据此动笔。这就是「协作」具体发生的地方。
-      </p>
-
-      <h3>5. Crew 与启动</h3>
-      <p>
-        <code>Crew</code> 把两个 agents、两个 tasks 装在一起，<code>process=Process.sequential</code> 让它们按顺序执行：先研究、后写作。最后 <code>crew.kickoff(inputs={'{...}'})</code> 把主题占位符填上真实值并启动整支团队，返回最终产出。
-      </p>
-
-      <Example title="协作是怎么发生的">
-        <p>
-          运行时的接力过程大致是这样：
-        </p>
+      <h2>运行时它们怎么协作</h2>
+      <Example title="一次 kickoff 的内部时序">
         <ul>
-          <li>研究员被填入主题「什么是 AI Agent」，产出一份 3-5 条的关键要点列表。</li>
-          <li>撰稿人通过 context 拿到这份要点，不必自己从头研究，直接据此写成一篇约 300 字的短文。</li>
-          <li>Crew 返回最终的文章作为整体产出。</li>
+          <li><strong>① 填充</strong>：inputs 里的 topic = "什么是 AI Agent" 填进 research_task 的 description。</li>
+          <li><strong>② 研究员上场</strong>：researcher 执行 research_task，按人设产出 3-5 条要点。</li>
+          <li><strong>③ 接力</strong>：因为 write_task 声明了 <code>context=[research_task]</code>，研究员的要点被注入撰稿人的上下文。</li>
+          <li><strong>④ 撰稿人上场</strong>：writer 基于要点写出约 300 字短文。</li>
+          <li><strong>⑤ 汇总返回</strong>：sequential 模式下，kickoff 返回最后一个 Task（write_task）的产出并打印。</li>
         </ul>
-        <p>
-          对比单 Agent 一口气「又研究又写作」：分工让每个角色只专注一件事——研究员专注抓全要点，撰稿人专注组织语言。各司其职，产出往往比一个角色硬扛更全面、更顺畅。
-        </p>
       </Example>
+      <KeyIdea>
+        sequential 模式 = 一条流水线：Task 按顺序跑，context 决定哪些产出向下游接力。把它想成「研究员把笔记递给撰稿人」就对了。
+      </KeyIdea>
 
-      <h2>进阶玩法</h2>
-      <Callout variant="tip">
-        这个骨架可以继续长大：给研究员<strong>加工具</strong>（比如搜索，让要点基于真实资料）；把 <code>Process</code> 换成 <code>hierarchical</code>，<strong>加一个 manager</strong> 来协调和委派；或者用 <strong>Flows</strong> 把整个 Crew 包成一个事件驱动流程，在确定性骨架里调用这段协作。
-      </Callout>
-      <Callout variant="note">
-        CrewAI 新版里 LiteLLM 已经<strong>不再是必需依赖</strong>，框架提供了原生集成。接百炼也可以不写 <code>base_url</code>，改用环境变量来配置兼容端点；但在示例里显式写出 <code>base_url</code> 最直观、最不容易踩坑，推荐入门时这么做。
+      <h2>扩展一：给 Agent 加一个工具</h2>
+      <p>
+        现在两个 Agent 只会「想」，不会「做」。给研究员挂一个工具，它就能在推理过程中调用外部能力。用 <code>{'@tool'}</code> 装饰一个普通函数即可，函数的 docstring 会作为工具说明被模型读取。
+      </p>
+      <CodeBlock lang="python" title="自定义工具并挂到 Agent" code={toolSnippet} />
+      <p>
+        实际项目里更常见的是搜索工具、读文件工具或调内部 API 的工具——挂上去之后，研究员就能先检索再总结，而不只是凭模型记忆作答。
+      </p>
+
+      <h2>扩展二：换成 hierarchical 模式</h2>
+      <p>
+        如果任务分配不固定、需要一个「经理」临场调度，把 process 换成 <code>Process.hierarchical</code>。此时<strong>必须</strong>提供 <code>manager_llm</code>，由它来决定把哪个任务交给哪个 Agent 并整合结果。
+      </p>
+      <CodeBlock lang="python" title="hierarchical 变体" code={hierVariant} />
+      <Callout variant="warn" title="易踩坑">
+        切到 hierarchical 却忘了 <code>manager_llm</code>，会直接报错。sequential 不需要它，hierarchical 必须有。
       </Callout>
 
-      <Summary
-        points={[
-          '两角色顺序协作 Crew：研究员抓要点，撰稿人据此成文。',
-          '接百炼的关键是 model 带 openai/ 前缀走兼容协议，再配 base_url 与 DASHSCOPE_API_KEY。',
-          'role/goal/backstory 塑造角色人设；description/expected_output 定义任务与交付标准。',
-          'write_task 的 context=[research_task] 是协作的接力棒，把上一任务产出喂给下一任务。',
-          'Process.sequential 顺序执行，kickoff(inputs=...) 填入主题并启动整支团队。',
-          '进阶可加工具、换 hierarchical 加 manager，或用 Flows 包裹整个 Crew。',
-        ]}
-      />
+      <h2>扩展三：用 Flow 把 Crew 包起来</h2>
+      <p>
+        当你需要确定性的流程骨架（先选主题、再跑团队、最后落库或发送），就用 Flow 包住 Crew。<code>{'@start'}</code> 标记入口，<code>{'@listen'}</code> 监听上一步完成后触发，state 在步骤间共享。创造性的活儿仍然交给自治的 Crew。
+      </p>
+      <CodeBlock lang="python" title="Flow 包裹 Crew 的最小骨架" code={flowWrap} />
+
+      <h2>常见报错与调试</h2>
+      <ul>
+        <li><strong>模型名忘了 openai/ 前缀</strong>：CrewAI 不知道走哪种协议，会报 provider/路由相关错误。改成 <code>openai/qwen-plus</code> 即可。</li>
+        <li><strong>base_url 写错或漏写</strong>：请求会打到默认端点导致 401/连接失败。确认是 <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code>，注意结尾的 <code>/v1</code>。</li>
+        <li><strong>API Key 没设</strong>：<code>os.environ["DASHSCOPE_API_KEY"]</code> 取不到会直接 KeyError。先 export 再运行。</li>
+        <li><strong>context 没串上</strong>：撰稿人写出来的东西和研究要点没关系，多半是漏了 <code>context=[research_task]</code>，或写成了别的 Task。</li>
+        <li><strong>hierarchical 缺 manager_llm</strong>：层级模式必须显式提供经理模型，否则启动即报错。</li>
+        <li><strong>看不懂中间发生了什么</strong>：给 Agent 加 <code>verbose=True</code>，把思考与工具调用全打出来再排查。</li>
+      </ul>
+
+      <Summary points={[
+        'LLM 里 model 用 openai/qwen-plus（前缀必留）+ 百炼 base_url + 环境变量 key，即可接通国产模型。',
+        '两个 Agent 的差异完全来自 role/goal/backstory 人设，共用同一 llm 也能表现不同。',
+        'context=[research_task] 是接力的灵魂，决定上游产出是否流向下游。',
+        'Process.sequential 顺序执行并返回最后一个 Task 的产出；kickoff 的 inputs 填充 description 占位符。',
+        '扩展路径：@tool 给 Agent 加能力 → hierarchical + manager_llm 动态委派 → Flow 包裹 Crew 控制确定性流程。',
+        '高频报错集中在 openai/ 前缀、base_url、context 串联、hierarchical 缺 manager_llm。',
+      ]} />
     </article>
   )
 }
