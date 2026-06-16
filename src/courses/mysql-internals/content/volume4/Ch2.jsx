@@ -55,6 +55,37 @@ SELECT money FROM account WHERE id = 1 FOR UPDATE; -- 当前读 → 读到最新
 -- 同一个事务、同一行：快照读看不到 T2 的修改，当前读却看得到
 COMMIT;`
 
+const realPhantomSql = `-- RR 下真正会暴露幻读的场景：先快照读建视图，再当前读/写「区间」
+SET SESSION transaction_isolation = 'REPEATABLE-READ';
+-- 表 t(id INT PRIMARY KEY), 现有 (1),(5),(10)
+
+-- ===== 会话 A =====
+START TRANSACTION;
+SELECT * FROM t WHERE id BETWEEN 1 AND 10;   -- 快照读：看到 1,5,10，建 ReadView
+
+-- ===== 会话 B =====
+START TRANSACTION;
+INSERT INTO t VALUES (7);   -- 往区间里插一行
+COMMIT;
+
+-- ===== 回到 A =====
+SELECT * FROM t WHERE id BETWEEN 1 AND 10;             -- 快照读：仍是 1,5,10（MVCC 挡住）
+SELECT * FROM t WHERE id BETWEEN 1 AND 10 FOR UPDATE;  -- 当前读：1,5,7,10！7 冒出来了
+-- 若 A 一开始就用 FOR UPDATE，Next-Key Lock 会锁住 [1,10] 区间，
+-- B 的 INSERT 7 会被阻塞，幻读才真正被挡住
+COMMIT;`
+
+const semiConsistentSql = `-- RC 下的“半一致读”：UPDATE 扫到不满足条件的行会跳过、不加锁，提升并发
+-- （仅 RC + 特定条件下，了解即可）
+SET SESSION transaction_isolation = 'READ-COMMITTED';
+
+-- 秒杀式扣减库存：原子更新 + 条件判断，天然防超卖，且不需要先 SELECT
+UPDATE stock SET num = num - 1
+WHERE sku_id = 1001 AND num > 0;   -- 影响行数=0 即代表已售罄
+
+-- 用受影响行数判断成败，比“先查再扣”少一次往返、也没有先读后写的丢失更新风险
+SELECT ROW_COUNT();   -- 1=扣成功，0=没库存了`
+
 export default function Ch2() {
   return (
     <>
@@ -138,6 +169,22 @@ export default function Ch2() {
         缺了任何一手，幻读都会在对应的读方式下重新冒出来。
       </p>
 
+      <h3>幻读真正暴露的那一刻：区间当前读</h3>
+      <p>
+        上面说“RR 两手防幻读”，但要看清它<strong>什么时候防住、什么时候防不住</strong>。关键在于：
+        如果一个事务先用快照读建了 ReadView，中途别人往区间里插了行并提交，那么：
+      </p>
+      <ul>
+        <li>这个事务再做<strong>快照读</strong>，MVCC 让它看不到新行，行数不变——幻读被“看不到”掩盖了。</li>
+        <li>但它一旦做<strong>区间当前读</strong>（<code>SELECT ... FOR UPDATE</code> 或 <code>UPDATE ... WHERE 区间</code>），就读到了最新数据，新插的行赫然在列——<strong>幻读暴露</strong>。</li>
+      </ul>
+      <p>
+        真正<strong>从源头挡住</strong>幻读的，是事务<strong>一开始就用当前读</strong>：第一条 <code>SELECT ... FOR UPDATE BETWEEN 1 AND 10</code>
+        会对整个区间加 Next-Key Lock，别人的 <code>INSERT 7</code> 直接被阻塞，新行根本插不进来。这就是“防幻读靠的是当前读 + Next-Key Lock，
+        而不是快照读”的精确含义。
+      </p>
+      <CodeBlock lang="sql" title="real_phantom.sql" code={realPhantomSql} />
+
       <Example title="经典现象：快照读看不到，当前读却能更新到">
         <p>
           在 RR 下，一个事务里可能出现这样看似矛盾的一幕：
@@ -169,6 +216,25 @@ export default function Ch2() {
             <strong>当前读</strong>层面，要靠 Next-Key Lock 才防得住；如果你的查询走不到合适的索引导致退化为表锁/全扫，
             或者隔离级别被改成 RC，幻读就可能卷土重来。把它当成「自动且无条件成立」的保证，迟早踩坑。
           </li>
+        </ul>
+      </Callout>
+
+      <Callout variant="tip" title="扣库存的正确姿势：能用原子更新就别先查后改">
+        <p>
+          “先 <code>SELECT</code> 查库存，应用层判断够不够，再 <code>UPDATE</code> 扣减”是新手最常见的超卖写法——两个请求同时读到
+          库存 1，各自判断“够”，于是都扣，库存变成 -1。即便用 <code>FOR UPDATE</code> 锁住能解决，但更优雅的做法是
+          <strong>把判断塞进 UPDATE 本身</strong>：<code>UPDATE stock SET num=num-1 WHERE sku_id=? AND num{'>'}0</code>，
+          靠受影响行数（0 即售罄）判断成败。它是单条原子语句，没有“先读后写”的窗口，天然防超卖、还少一次往返。
+        </p>
+        <CodeBlock lang="sql" title="semi_consistent.sql" code={semiConsistentSql} />
+      </Callout>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“快照读和当前读的区别？”</strong>——快照读走 MVCC 读历史版本不加锁；当前读读最新已提交版本并加锁（X 或 S），<code>UPDATE/DELETE/SELECT...FOR UPDATE</code> 都是当前读。</li>
+          <li><strong>“RR 真的解决幻读了吗？”</strong>——分两半：快照读靠 MVCC“看不到”，当前读靠 Next-Key Lock“锁住区间”；只用快照读时幻行其实已存在，当前读会暴露它。不能笼统说“RR 完全解决”。</li>
+          <li><strong>“RC 和 RR 在 MVCC 上唯一的区别？”</strong>——ReadView 创建时机：RC 每次快照读都新建，RR 事务首次快照读建一次后复用。</li>
+          <li><strong>“为什么 UPDATE 也算当前读？”</strong>——要改一行得先拿到它“此刻最新且可安全修改”的版本并加锁，否则两个事务基于旧值各改各的会丢失更新。</li>
         </ul>
       </Callout>
 

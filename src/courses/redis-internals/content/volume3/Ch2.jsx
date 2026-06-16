@@ -22,6 +22,10 @@ const mutexCode = `def get_product(product_id):
 
     if got_lock:
         try:
+            # 双重检查：抢到锁后再查一次缓存，可能别人刚重建好(避免重复回源)
+            val = redis.get(key)
+            if val is not None:
+                return deserialize(val)
             # 抢到锁的线程：去数据库重建缓存
             product = db.query_product(product_id)
             redis.set(key, serialize(product), ex=3600)
@@ -49,6 +53,17 @@ def get_product(product_id):
         submit_async(lambda: rebuild_and_release(product_id, lock_key))
 
     return obj["data"]              # 不阻塞：所有请求都先拿到旧数据`
+
+const rebuildCode = `# 异步重建任务：查库 → 写回新数据(带新的逻辑过期时间) → 释放锁
+def rebuild_and_release(product_id, lock_key):
+    key = "product:" + str(product_id)
+    try:
+        product = db.query_product(product_id)
+        obj = {"data": serialize(product),
+               "logical_expire_at": now() + 3600}   # 新的逻辑过期时间
+        redis.set(key, json.dumps(obj))             # 注意：不设物理 TTL
+    finally:
+        redis.delete(lock_key)`
 
 export default function Ch2() {
   return (
@@ -103,6 +118,11 @@ export default function Ch2() {
         抢到锁的线程才去查数据库、重建缓存；没抢到的线程则<strong>稍等片刻再重试</strong>，等它们重试时，
         缓存往往已经被重建好了，直接命中返回。这样落到数据库的，从几万个降到了<strong>仅仅一个</strong>。
       </p>
+      <p>
+        实现里有个易漏的细节：抢到锁后<strong>要再查一次缓存（双重检查）</strong>。因为可能在你抢锁的间隙，
+        前一个持锁线程刚把缓存重建好了，再查一次就能直接命中、省掉一次回源。另外锁一定要设过期时间防死锁，
+        重建逻辑要放在 <code>finally</code> 里释放锁。
+      </p>
 
       <h3>方案二：逻辑过期（logical expire）</h3>
       <p>
@@ -111,6 +131,7 @@ export default function Ch2() {
         逻辑上过期了，就抢锁开一个<strong>异步任务</strong>去后台重建，而当前请求<strong>先返回旧数据</strong>，不阻塞。
         于是任何请求都不会卡住，也不会有「缓存为空」的空窗。
       </p>
+      <CodeBlock lang="python" title="rebuild_async.py（异步重建任务）" code={rebuildCode} />
 
       <KeyIdea title="互斥锁 vs 逻辑过期：怎么权衡">
         <p>
@@ -119,15 +140,34 @@ export default function Ch2() {
         </p>
         <p>
           <strong>逻辑过期</strong>：所有请求<strong>永不阻塞</strong>、吞吐和响应最稳；代价是逻辑过期到异步重建完成之间，
-          会有请求读到<strong>旧数据</strong>（牺牲一点一致性换可用性），且实现更复杂、需要常驻内存。
+          会有请求读到<strong>旧数据</strong>（牺牲一点一致性换可用性），且实现更复杂、需要常驻内存（key 不会自己消失）。
           一句话：要数据新就用互斥锁，要高可用、能容忍短暂旧值就用逻辑过期。
         </p>
       </KeyIdea>
 
+      <Callout variant="info" title="第三招：热点 key 干脆不过期 + 后台主动更新">
+        <p>
+          对于「永远的热点」（如首页配置、热门榜单），可以从根上避免击穿：<strong>不给它设过期时间</strong>，
+          改由一个后台定时任务<strong>主动刷新</strong>缓存。这样读请求永远命中、永远不空窗，重建完全脱离用户请求路径。
+          逻辑过期其实就是这个思路的「按需触发」版本。代价同样是会有短暂旧值、且要保证后台任务别挂。
+        </p>
+      </Callout>
+
+      <table>
+        <thead>
+          <tr><th>方案</th><th>是否阻塞</th><th>数据新鲜度</th><th>实现复杂度</th><th>适合</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>互斥锁</td><td>未抢到锁的要等</td><td>最新</td><td>低</td><td>一致性优先</td></tr>
+          <tr><td>逻辑过期</td><td>不阻塞</td><td>可能旧值</td><td>较高</td><td>可用性优先</td></tr>
+          <tr><td>不过期+后台更新</td><td>不阻塞</td><td>可能旧值</td><td>中</td><td>永久热点</td></tr>
+        </tbody>
+      </table>
+
       <h2>面试怎么答</h2>
       <p>
         先<strong>定义清楚并强调与穿透的区别</strong>：击穿是单个高并发热点 key 过期瞬间被大量请求打穿，而 key 本身是存在的。
-        再给两种方案：<strong>互斥锁</strong>（只放一个线程重建，其余等待，保证新数据但响应变慢）和
+        再给两种方案：<strong>互斥锁</strong>（只放一个线程重建，其余等待，保证新数据但响应变慢，记得双重检查 + finally 释放锁）和
         <strong>逻辑过期</strong>（不设真实 TTL，value 存逻辑过期时间，过期后异步重建、先返回旧值，不阻塞但有短暂旧数据）。
         最后用一句「一致性优先选互斥锁，可用性优先选逻辑过期」收尾，再补一句「对永远的热点 key 也可以干脆不设过期、靠后台定时更新」。
       </p>
@@ -135,7 +175,7 @@ export default function Ch2() {
       <Practice title="用互斥锁重建热点缓存">
         <p>
           核心是用 <code>SET lock NX EX</code> 抢锁：抢到的线程去重建，没抢到的稍等后重试。注意重建完一定要在
-          <code>finally</code> 里释放锁，并给锁设过期时间防止死锁。
+          <code>finally</code> 里释放锁，并给锁设过期时间防止死锁，抢到锁后还要<strong>双重检查</strong>缓存。
         </p>
         <CodeBlock lang="python" title="mutex_rebuild.py" code={mutexCode} />
         <p>
@@ -152,7 +192,7 @@ export default function Ch2() {
         points={[
           '缓存击穿：单个超高并发的热点 key 过期瞬间，大量请求同时未命中并冲向数据库。',
           '与穿透的关键区别：击穿的 key 是真实存在的，只是过期了；穿透的数据压根不存在。',
-          '防护一是互斥锁/分布式锁：只放一个线程去重建缓存，其余线程等待后重试，落库请求降到一个。',
+          '防护一是互斥锁/分布式锁：只放一个线程去重建缓存，其余线程等待后重试，落库请求降到一个；抢到锁要双重检查、finally 释放、锁要带过期。',
           '防护二是逻辑过期：不设真实 TTL，value 里存逻辑过期时间，过期后异步重建并先返回旧数据。',
           '互斥锁保证拿到最新数据但重建期响应变慢；逻辑过期永不阻塞但会读到短暂旧值。',
           '选择原则：一致性优先用互斥锁，可用性优先用逻辑过期；永久热点可直接不过期靠后台更新。',
