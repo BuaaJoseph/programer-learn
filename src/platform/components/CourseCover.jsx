@@ -41,6 +41,8 @@ export default function CourseCover({ course }) {
         <BPlusTreeScene />
       ) : coverScene === 'kvgrid' ? (
         <KvGridScene />
+      ) : coverScene === 'layers' ? (
+        <LayersScene />
       ) : (
         <AttentionScene />
       )}
@@ -137,6 +139,30 @@ function KvGridScene() {
         )
       })}
       <text x="40" y="168" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">in-memory · key → value</text>
+    </g>
+  )
+}
+
+function LayersScene() {
+  // 三层渐进式加载：元数据 / 正文 / 引用资源，叠成立体的「按需展开」卡片
+  const layers = [
+    { y: 44, w: 300, label: '元数据 · 始终加载', op: 0.3 },
+    { y: 78, w: 300, label: 'SKILL.md 正文 · 触发时', op: 0.2 },
+    { y: 112, w: 300, label: 'reference / scripts · 按需', op: 0.12 },
+  ]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.08" fill="none" strokeWidth="2">
+        <circle cx="360" cy="40" r="56" />
+        <circle cx="360" cy="40" r="88" />
+      </g>
+      {layers.map((l, i) => (
+        <g key={i}>
+          <rect x={50 + i * 16} y={l.y} width={l.w} height="30" rx="8" fill="#ffffff" fillOpacity={l.op} stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.2" />
+          <text x={64 + i * 16} y={l.y + 20} fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">{l.label}</text>
+        </g>
+      ))}
+      <text x="50" y="170" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">progressive disclosure</text>
     </g>
   )
 }

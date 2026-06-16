@@ -3,8 +3,9 @@
 import llmHandbook from '../courses/llm-handbook/index.js'
 import mysqlInternals from '../courses/mysql-internals/index.js'
 import redisInternals from '../courses/redis-internals/index.js'
+import claudeSkills from '../courses/claude-skills/index.js'
 
-export const COURSES = [llmHandbook, mysqlInternals, redisInternals]
+export const COURSES = [llmHandbook, claudeSkills, mysqlInternals, redisInternals]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null
