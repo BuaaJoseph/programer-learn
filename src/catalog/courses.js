@@ -6,8 +6,23 @@ import redisInternals from '../courses/redis-internals/index.js'
 import claudeSkills from '../courses/claude-skills/index.js'
 import rabbitmq from '../courses/rabbitmq/index.js'
 import dubboRpc from '../courses/dubbo-rpc/index.js'
+import kafka from '../courses/kafka/index.js'
+import zookeeper from '../courses/zookeeper/index.js'
+import nginx from '../courses/nginx/index.js'
+import elasticsearch from '../courses/elasticsearch/index.js'
 
-export const COURSES = [llmHandbook, claudeSkills, mysqlInternals, redisInternals, rabbitmq, dubboRpc]
+export const COURSES = [
+  llmHandbook,
+  claudeSkills,
+  mysqlInternals,
+  redisInternals,
+  rabbitmq,
+  dubboRpc,
+  kafka,
+  zookeeper,
+  nginx,
+  elasticsearch,
+]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null

@@ -49,6 +49,14 @@ export default function CourseCover({ course }) {
         <MqFlowScene />
       ) : coverScene === 'rpccall' ? (
         <RpcCallScene />
+      ) : coverScene === 'partition' ? (
+        <PartitionScene />
+      ) : coverScene === 'znodes' ? (
+        <ZnodesScene />
+      ) : coverScene === 'proxy' ? (
+        <ProxyScene />
+      ) : coverScene === 'invindex' ? (
+        <InvIndexScene />
       ) : (
         <AttentionScene />
       )}
@@ -258,6 +266,86 @@ function RpcCallScene() {
       <text x="200" y="124" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.7">response</text>
       <defs><marker id="rc-a" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#ffffff" fillOpacity="0.7" /></marker></defs>
       <text x="28" y="170" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">call remote like local</text>
+    </g>
+  )
+}
+
+function PartitionScene() {
+  // Topic 分成多个 partition，每个是只追加的日志段
+  return (
+    <g>
+      <text x="40" y="44" fontFamily="var(--mono)" fontSize="12" fontWeight="700" fill="#ffffff" fillOpacity="0.9">Topic</text>
+      {[0, 1, 2].map((p) => (
+        <g key={p} transform={`translate(40 ${56 + p * 36})`}>
+          <text x="0" y="16" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.7">P{p}</text>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <rect key={i} x={28 + i * 36} y="2" width="32" height="20" rx="3" fill="#ffffff" fillOpacity={0.1 + (i < 6 ? 0.12 : 0)} stroke="#ffffff" strokeOpacity="0.4" />
+          ))}
+          <text x={28 + 8 * 36 + 6} y="16" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.6">→</text>
+        </g>
+      ))}
+      <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">append-only log · offset →</text>
+    </g>
+  )
+}
+
+function ZnodesScene() {
+  // znode 树
+  const edges = [[200, 40, 110, 96], [200, 40, 200, 96], [200, 40, 300, 96], [110, 120, 70, 160], [110, 120, 150, 160]]
+  const nodes = [[200, 40], [110, 108], [200, 108], [300, 108], [70, 160], [150, 160]]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.4">
+        {edges.map(([x1, y1, x2, y2], i) => <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />)}
+      </g>
+      {nodes.map(([cx, cy], i) => (
+        <g key={i}>
+          <circle cx={cx} cy={cy} r="13" fill="#ffffff" fillOpacity={i === 0 ? 0.28 : 0.16} stroke="#ffffff" strokeOpacity="0.55" />
+          <text x={cx} y={cy + 4} textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff">/{i === 0 ? '' : i}</text>
+        </g>
+      ))}
+      <text x="40" y="186" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">znode tree · watch</text>
+    </g>
+  )
+}
+
+function ProxyScene() {
+  // client → nginx → 多后端
+  return (
+    <g>
+      <rect x="24" y="84" width="64" height="34" rx="8" fill="#ffffff" fillOpacity="0.18" stroke="#ffffff" strokeOpacity="0.5" />
+      <text x="56" y="105" textAnchor="middle" fontFamily="var(--mono)" fontSize="10" fontWeight="700" fill="#ffffff">client</text>
+      <rect x="150" y="80" width="70" height="42" rx="9" fill="#ffffff" fillOpacity="0.26" stroke="#ffffff" strokeOpacity="0.6" />
+      <text x="185" y="105" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">NGINX</text>
+      <line x1="88" y1="101" x2="150" y2="101" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.5" />
+      {[60, 101, 142].map((y, i) => (
+        <g key={i}>
+          <line x1="220" y1="101" x2="300" y2={y + 13} stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.3" />
+          <rect x="300" y={y} width="96" height="26" rx="5" fill="#ffffff" fillOpacity="0.15" stroke="#ffffff" strokeOpacity="0.45" />
+          <text x="348" y={y + 17} textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff">server {i + 1}</text>
+        </g>
+      ))}
+      <text x="24" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">reverse proxy · load balance</text>
+    </g>
+  )
+}
+
+function InvIndexScene() {
+  // 倒排：词 → 文档列表
+  const rows = [['搜索', '1, 3, 7'], ['引擎', '3, 5'], ['倒排', '1, 5, 9']]
+  return (
+    <g>
+      <text x="40" y="44" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">term → doc ids</text>
+      {rows.map(([term, ids], i) => (
+        <g key={i} transform={`translate(40 ${56 + i * 34})`}>
+          <rect x="0" y="0" width="90" height="26" rx="5" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.5" />
+          <text x="45" y="17" textAnchor="middle" fontFamily="var(--display)" fontSize="13" fontWeight="700" fill="#ffffff">{term}</text>
+          <text x="104" y="17" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.6">→</text>
+          <rect x="126" y="0" width="150" height="26" rx="5" fill="#ffffff" fillOpacity="0.12" stroke="#ffffff" strokeOpacity="0.4" />
+          <text x="138" y="17" fontFamily="var(--mono)" fontSize="11" fill="#ffffff">[{ids}]</text>
+        </g>
+      ))}
+      <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">inverted index</text>
     </g>
   )
 }
