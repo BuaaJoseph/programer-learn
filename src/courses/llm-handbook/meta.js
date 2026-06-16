@@ -9,7 +9,7 @@ export const meta = {
   subCategoryId: 'agent',
   level: '进阶',
   cover: '🤖',
-  coverMotif: 'ai',
+  coverScene: 'attention',
   accent: '#4f46e5',
   pricing: 'free', // free | paid，付费逻辑后续接入
   description:

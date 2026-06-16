@@ -7,7 +7,7 @@ export const meta = {
   subCategoryId: 'database',
   level: '进阶',
   cover: '🐬',
-  coverMotif: 'db',
+  coverScene: 'bptree',
   accent: '#0e7490',
   pricing: 'free',
   description:

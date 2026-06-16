@@ -1,62 +1,152 @@
-// 课程封面图：用 SVG 根据课程 meta（主色、图标、motif）生成一张有辨识度的封面。
-// motif 决定装饰图案：'db' 画堆叠的数据库圆柱，'ai' 画连线的神经网络节点。
+import { useId } from 'react'
+
+// 课程封面：按课程主题手绘的 SVG 构图。
+// scene='bptree' 画一棵 B+Tree（MySQL）；scene='attention' 画 token 序列 + 注意力弧线（大模型）。
+// 设计要点：主色对角渐变 + 左上柔光 + 网点纹理 + 居中主体（卡片/详情页两种裁剪都保持视觉重心）。
 export default function CourseCover({ course }) {
-  const { slug, accent = '#4f46e5', cover = '📘', coverMotif, subtitle } = course.meta
-  const gid = `cov-${slug}`
+  const { slug, accent = '#4f46e5', coverScene } = course.meta
+  const uid = useId().replace(/:/g, '')
+  const g = `${uid}-g`
+  const glow = `${uid}-glow`
+  const dots = `${uid}-dots`
 
   return (
     <svg
       className="course-cover-svg"
-      viewBox="0 0 320 150"
+      viewBox="0 0 400 200"
       preserveAspectRatio="xMidYMid slice"
       role="img"
       aria-label={`${course.meta.shortTitle || course.meta.title} 封面`}
     >
       <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={g} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor={accent} />
-          <stop offset="100%" stopColor="#0f1320" stopOpacity="0.92" />
+          <stop offset="55%" stopColor={accent} />
+          <stop offset="100%" stopColor="#0f1320" />
         </linearGradient>
+        <radialGradient id={glow} cx="0.24" cy="0.18" r="0.9">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+        <pattern id={dots} width="20" height="20" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1.1" fill="#ffffff" fillOpacity="0.07" />
+        </pattern>
       </defs>
-      <rect width="320" height="150" fill={`url(#${gid})`} />
 
-      {/* 装饰 motif（半透明白） */}
-      <g opacity="0.16" fill="none" stroke="#ffffff" strokeWidth="2">
-        {coverMotif === 'db' && (
-          <g transform="translate(212 30)">
-            {[0, 26, 52].map((dy) => (
-              <g key={dy} transform={`translate(0 ${dy})`}>
-                <ellipse cx="44" cy="10" rx="40" ry="12" />
-                <path d="M4 10 V34 A40 12 0 0 0 84 34 V10" />
-              </g>
-            ))}
-          </g>
-        )}
-        {coverMotif === 'ai' && (
-          <g transform="translate(206 18)">
-            <line x1="20" y1="20" x2="70" y2="55" />
-            <line x1="20" y1="20" x2="60" y2="100" />
-            <line x1="70" y1="55" x2="60" y2="100" />
-            <line x1="70" y1="55" x2="100" y2="30" />
-            <line x1="60" y1="100" x2="100" y2="95" />
-            <line x1="100" y1="30" x2="100" y2="95" />
-            {[
-              [20, 20], [70, 55], [60, 100], [100, 30], [100, 95],
-            ].map(([cx, cy], i) => (
-              <circle key={i} cx={cx} cy={cy} r="7" fill="#ffffff" />
-            ))}
-          </g>
-        )}
+      <rect width="400" height="200" fill={`url(#${g})`} />
+      <rect width="400" height="200" fill={`url(#${dots})`} />
+      <rect width="400" height="200" fill={`url(#${glow})`} />
+
+      {coverScene === 'bptree' ? <BPlusTreeScene /> : <AttentionScene />}
+    </svg>
+  )
+}
+
+// 玻璃质感节点
+function GlassRect({ x, y, w, h, bright = 0.16, children }) {
+  return (
+    <g>
+      <rect x={x} y={y} width={w} height={h} rx="7" fill="#ffffff" fillOpacity={bright} stroke="#ffffff" strokeOpacity="0.55" strokeWidth="1.2" />
+      {children}
+    </g>
+  )
+}
+
+function BPlusTreeScene() {
+  // 连线坐标
+  const lines = [
+    [200, 78, 136, 96], [200, 78, 264, 96], // root → internal
+    [136, 120, 76, 136], [136, 120, 152, 136], // internalL → leaves
+    [264, 120, 244, 136], [264, 120, 320, 136], // internalR → leaves
+  ]
+  const leaves = [44, 120, 212, 288]
+  return (
+    <g>
+      {/* 右下角光晕弧线，增加层次 */}
+      <g stroke="#ffffff" strokeOpacity="0.08" fill="none" strokeWidth="2">
+        <circle cx="370" cy="180" r="60" />
+        <circle cx="370" cy="180" r="92" />
       </g>
 
-      {/* 主图标徽章 */}
-      <rect x="22" y="38" width="56" height="56" rx="14" fill="#ffffff" fillOpacity="0.16" />
-      <text x="50" y="80" textAnchor="middle" fontSize="34">{cover}</text>
+      {/* 连线 */}
+      <g stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1.4">
+        {lines.map(([x1, y1, x2, y2], i) => (
+          <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />
+        ))}
+      </g>
 
-      {/* 副标题 */}
-      <text x="24" y="124" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.85" letterSpacing="0.5">
-        {subtitle}
-      </text>
-    </svg>
+      {/* 根节点 */}
+      <GlassRect x={160} y={52} w={80} h={26} bright={0.26}>
+        <text x="200" y="69" textAnchor="middle" fontFamily="var(--mono)" fontSize="12" fontWeight="700" fill="#ffffff">30 · 60</text>
+      </GlassRect>
+
+      {/* 内部节点 */}
+      <GlassRect x={100} y={96} w={72} h={24} bright={0.18}>
+        <text x="136" y="112" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff">10 · 20</text>
+      </GlassRect>
+      <GlassRect x={228} y={96} w={72} h={24} bright={0.18}>
+        <text x="264" y="112" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff">70 · 90</text>
+      </GlassRect>
+
+      {/* 叶子节点（含数据行）+ 链表 */}
+      <line x1="44" y1="149" x2="352" y2="149" stroke="#ffffff" strokeOpacity="0.3" strokeWidth="1.2" strokeDasharray="3 3" />
+      {leaves.map((lx, i) => (
+        <GlassRect key={i} x={lx} y={136} w={64} h={30} bright={0.13}>
+          {[0, 1].map((r) => (
+            <rect key={r} x={lx + 8} y={143 + r * 8} width={48 - r * 16} height="3" rx="1.5" fill="#ffffff" fillOpacity="0.55" />
+          ))}
+        </GlassRect>
+      ))}
+    </g>
+  )
+}
+
+function AttentionScene() {
+  const tokens = ['床', '前', '明', '月', '光']
+  const tx = (i) => 48 + i * 64
+  const ty = 138
+  // 注意力弧线：从「光」回看前面的字
+  const arcs = [
+    [4, 0], [4, 2], [3, 0], [2, 0],
+  ]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.08" fill="none" strokeWidth="2">
+        <circle cx="360" cy="34" r="54" />
+        <circle cx="360" cy="34" r="84" />
+      </g>
+
+      {/* 注意力弧线 */}
+      <g stroke="#ffffff" fill="none">
+        {arcs.map(([a, b], i) => {
+          const x1 = tx(a) + 20
+          const x2 = tx(b) + 20
+          const mx = (x1 + x2) / 2
+          const lift = 40 + Math.abs(a - b) * 14
+          return (
+            <path key={i} d={`M ${x1} ${ty - 6} Q ${mx} ${ty - lift} ${x2} ${ty - 6}`}
+              strokeOpacity={0.25 + 0.12 * i} strokeWidth={1 + 0.6 * i} />
+          )
+        })}
+      </g>
+
+      {/* 概率条（下一个 token 分布） */}
+      <g>
+        {[0.62, 0.22, 0.1].map((p, i) => (
+          <g key={i}>
+            <rect x="300" y={150 + i * 14} width="74" height="8" rx="4" fill="#ffffff" fillOpacity="0.16" />
+            <rect x="300" y={150 + i * 14} width={74 * p} height="8" rx="4" fill="#ffffff" fillOpacity={0.85 - i * 0.18} />
+          </g>
+        ))}
+      </g>
+
+      {/* token 芯片 */}
+      {tokens.map((t, i) => (
+        <GlassRect key={i} x={tx(i)} y={ty - 18} w={40} h={36} bright={i === 4 ? 0.28 : 0.15}>
+          <text x={tx(i) + 20} y={ty + 6} textAnchor="middle" fontFamily="var(--display)" fontSize="18" fontWeight="700" fill="#ffffff">{t}</text>
+        </GlassRect>
+      ))}
+      <text x="48" y={ty - 96} fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">next-token · attention</text>
+    </g>
   )
 }
