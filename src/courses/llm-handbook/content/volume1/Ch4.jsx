@@ -58,6 +58,22 @@ export default function Ch4() {
         </p>
       </Lead>
 
+      <h2>采样在整条管线里的位置</h2>
+      <p>
+        先把全局理清。模型每一步吐出 logits 后，到选出一个词，中间经过一条<strong>有顺序</strong>的处理管线：
+      </p>
+      <ol>
+        <li><strong>惩罚项</strong>：repetition / frequency / presence penalty 先在 logits 上做加减（治复读）。</li>
+        <li><strong>温度缩放</strong>：logits 除以 T，调整分布尖平。</li>
+        <li><strong>softmax</strong>：变成概率分布。</li>
+        <li><strong>截断</strong>：top-k / top-p / min-p 砍掉不够格的候选，剩下的重新归一化。</li>
+        <li><strong>抽样</strong>：在保留集合里按概率随机抽一个，得到这一步的词。</li>
+      </ol>
+      <p>
+        本章后面所有参数，都是在这条管线的某一环上动手脚。记住这个顺序，你就不会再混淆「温度和 top-p 谁先谁后」「惩罚到底加在哪」
+        这类问题——它们各管一段，互不替代。下面逐个拆开讲。
+      </p>
+
       <h2>温度：调节分布的「尖」与「平」</h2>
       <p>
         回忆第 1 章，logits 经 softmax 变成概率。<em>temperature</em>（温度，记作 T）就是在 softmax <strong>之前</strong>
@@ -73,6 +89,19 @@ export default function Ch4() {
         T 趋近无穷大时，分布趋近均匀分布，等于瞎猜。实践中，事实问答、代码生成常用 0 到 0.3；
         头脑风暴、文案创作常用 0.7 到 1.0。
       </p>
+      <p>
+        为什么是「除以 T」而不是「乘以 T」？因为 softmax 看的是 logits 之间的<strong>差距</strong>。除以一个小于 1 的 T，
+        等于把所有 logit 的差距放大，差距越大 softmax 越尖；除以一个大于 1 的 T，差距被压缩，分布变平。
+        这个名字来自统计物理的玻尔兹曼分布——高温下粒子能量分布更均匀（更随机），低温下集中在低能态（更确定）。
+        借这个物理直觉记：<strong>高温 = 乱，低温 = 稳</strong>。
+      </p>
+      <Callout variant="info" title="T=0 在数学上是个「除以零」">
+        <p>
+          严格说 <code>logits / 0</code> 没法算，所以 T=0 是一个<strong>特例约定</strong>：实现里直接跳过 softmax，
+          用 <code>argmax</code> 取概率最高的词（看本章 Practice 代码里 <code>if temperature &lt;= 0</code> 那个分支）。
+          理解这点能帮你看懂为什么有些 API 文档把 temperature 的下限标成一个很小的正数而不是 0——它们没专门处理这个特例。
+        </p>
+      </Callout>
 
       <FateDice />
 
@@ -92,6 +121,18 @@ export default function Ch4() {
         保留累计概率刚好达到阈值 p（比如 0.9）的<strong>最小集合</strong>，其余丢弃。这样候选集大小会<strong>自适应</strong>：
         分布尖时可能只留几个，分布平时自动多留一些。top-p 是目前最常用的策略，常和温度一起用。
       </p>
+      <p>
+        「nucleus（核）」这个名字很贴切：一个分布里，真正靠谱的词集中在一小撮高概率词组成的「核心」里，剩下的是一条又长又稀的尾巴。
+        top-p 做的就是只保留这个核心、砍掉尾巴。它比 top-k 强在哪？top-k 用「数量」一刀切，不管分布形状；top-p 用「累计概率」切，
+        天然贴合分布形状。所以下面这条经验值得记：<strong>大多数场景默认用 top-p，需要更死板地限制候选时再叠 top-k</strong>。
+      </p>
+      <Callout variant="info" title="温度和 top-p：先后顺序与「别同时乱拧」">
+        <p>
+          两者作用在采样管线的不同阶段：温度<strong>先</strong>改变整个分布的尖平，top-p <strong>再</strong>在改完的分布上做截断。
+          所以它们不是冗余，而是配合——但也正因为都在调「随机性」，新手最好<strong>一次只主调一个</strong>：固定 top-p（如 0.9），
+          只动温度，否则两个旋钮互相干扰，你分不清是谁带来的变化。生产里常见的稳妥组合是「温度 0.7 + top-p 0.9」。
+        </p>
+      </Callout>
 
       <Example title="同样的分布，top-p 怎么截">
         <p>
@@ -161,6 +202,17 @@ export default function Ch4() {
         但开放式聊天里很少用 beam search，原因是：它倾向于产出<strong>高概率但乏味、安全、重复</strong>的句子
         （最可能的续写往往最平庸）；计算成本是单路解码的 b 倍；而且它和「多样、有人味」的对话目标相反。
         所以聊天模型几乎都用「温度 + top-p + 惩罚」的随机采样，而不是 beam search。
+      </p>
+
+      <h2>min-p 与其它新策略</h2>
+      <p>
+        采样策略还在演进。一个近年流行的是 <em>min-p</em>：它不设绝对阈值，而是按「最高概率词的某个比例」来定门槛——
+        比如 min-p=0.1，就保留概率不低于「最高词概率 × 0.1」的所有词。它的好处是<strong>自适应分布的尖锐度</strong>：
+        分布很尖（模型很确定）时门槛自动抬高，几乎只留最优词；分布平时门槛降低，给更多词机会。比起 top-p，它在高温下更不容易蹦垃圾词。
+      </p>
+      <p>
+        还有 <em>typical sampling</em>（典型采样，按信息量而非概率选词）等。不必都记住，记住一个框架即可：<strong>这些策略都在做同一件事——
+        在采样前，决定「哪些词有资格被抽中」</strong>。它们只是用不同的规则划这条资格线。理解了这个共性，遇到新策略你也能秒懂它在干嘛。
       </p>
 
       <KeyIdea title="随机性是“配置出来的”，不是模型的本性">

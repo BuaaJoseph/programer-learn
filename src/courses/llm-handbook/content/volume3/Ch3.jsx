@@ -64,6 +64,32 @@ model = get_peft_model(base, config)
 model.print_trainable_parameters()
 # 这样一张消费级显卡就能微调 7B 模型`
 
+const mergeCode = `# 训练完，把 LoRA 旁路 merge 回基座，得到一个「普通」模型
+from peft import PeftModel
+from transformers import AutoModelForCausalLM
+
+base = AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-0.5B-Instruct')
+model = PeftModel.from_pretrained(base, 'out/my-lora-adapter')
+
+# merge：实地算出 W_new = W + (alpha/r) * B @ A，写回权重
+merged = model.merge_and_unload()
+merged.save_pretrained('out/merged-model')   # 之后当普通模型部署即可
+
+# 注意：merge 是「不可逆固化」。想保留多适配器切换能力，就别 merge，
+# 推理时用 base + 动态挂载 adapter 的方式，代价是每次多一点旁路计算。`
+
+const multiLoraCode = `# 一份基座，多个适配器，按请求动态切换 —— LoRA 最香的部署形态
+base = AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-7B-Instruct')
+model = PeftModel.from_pretrained(base, 'adapters/legal', adapter_name='legal')
+model.load_adapter('adapters/medical', adapter_name='medical')
+model.load_adapter('adapters/finance', adapter_name='finance')
+
+def answer(question, domain):
+    model.set_adapter(domain)        # 切到对应领域的旁路，基座始终共享
+    return generate(model, question)
+
+# 三个领域模型，显存里只躺着一份 7B 基座 + 三个几十 MB 的适配器`
+
 export default function Ch3_3() {
   return (
     <>
@@ -91,6 +117,18 @@ export default function Ch3_3() {
         这里 <code>r</code> 叫<em>秩</em>（rank），是一个很小的数（比如 8、16）；<code>d</code> 是原权重的维度（可能上千）。
         训练时<strong>冻住 W 不动</strong>，只训练 <code>A</code> 和 <code>B</code> 这两个小矩阵。
       </p>
+      <p>
+        为什么相信 <code>ΔW</code> 真的能用低秩近似？这背后有一个被反复验证的经验观察：把一个预训练模型适配到某个下游任务，
+        所需的权重改动是「内在低维」的——也就是说，真正起作用的方向远没有参数维度那么多，大部分维度上的改动几乎为零。
+        线性代数告诉我们，一个低秩矩阵恰好就是「只有少数几个方向上有能量」的矩阵。所以用秩为 <code>r</code> 的 <code>B·A</code>
+        去拟合 <code>ΔW</code>，并不是粗暴的偷工减料，而是<strong>恰好匹配了改动本身的结构</strong>。这也解释了一个常让新手意外的现象：
+        <code>r</code> 从 8 加到 64，效果往往只微涨甚至持平——因为再大的秩也只是去拟合本就不存在的高维改动，纯属浪费。
+      </p>
+      <p>
+        还有一个实现细节值得知道：<code>A</code> 用随机小值初始化，<code>B</code> 初始化为<strong>全零</strong>。这样训练刚开始时
+        <code>B·A = 0</code>，旁路对模型毫无影响，模型从「完全等于原基座」这个安全起点出发，再慢慢学出偏移。
+        如果两个矩阵都随机初始化，训练第一步就会给模型注入一团随机噪声，反而破坏原有能力。
+      </p>
 
       <h3>为什么能砍掉约 99% 的参数</h3>
       <p>
@@ -115,6 +153,13 @@ export default function Ch3_3() {
         </p>
       </KeyIdea>
 
+      <CodeBlock lang="python" title="merge_lora.py" code={mergeCode} />
+      <p>
+        要不要 merge，是个权衡。merge 后零延迟、部署简单，但你就失去了「一份基座挂多个适配器」的灵活性，而且 merge 是
+        <strong>固化操作</strong>——它把偏移永久焊进权重。如果你要同时服务多个领域，更划算的反而是<em>不 merge</em>，
+        让基座常驻显存、按请求动态切换适配器，用一点点旁路计算换巨大的存储和显存节省。
+      </p>
+
       <h2>三个关键超参</h2>
       <ul>
         <li>
@@ -130,6 +175,22 @@ export default function Ch3_3() {
           想要更强可以把 <code>k_proj</code>、<code>o_proj</code> 乃至 MLP 层也加上，参数和效果一起涨。
         </li>
       </ul>
+      <p>
+        关于 <code>alpha</code> 有个常见误解：以为它越大越好。实际上 <code>alpha/r</code> 这个缩放因子和学习率是<strong>耦合</strong>的——
+        把 alpha 调大，等价于变相放大了旁路的有效学习率，太大同样会让训练震荡。一个稳妥的起手式是固定 <code>alpha = 2r</code>，
+        然后只调学习率，避免两个旋钮互相干扰。另外，当你加大 <code>r</code> 时记得同步调 alpha 维持比例，否则旁路强度会被动改变，
+        让你误以为是「秩变大带来的提升」。
+      </p>
+      <table>
+        <thead>
+          <tr><th>方法</th><th>训练参数量</th><th>显存占用</th><th>微调 7B 所需卡</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>全量微调</td><td>100%</td><td>极高（参数+梯度+优化器状态）</td><td>多张 A100/H100</td></tr>
+          <tr><td>LoRA</td><td>{'<1%'}</td><td>中（基座仍需全精度常驻）</td><td>单张高端卡</td></tr>
+          <tr><td>QLoRA</td><td>{'<1%'}</td><td>低（基座 4bit）</td><td>单张 24GB 消费卡</td></tr>
+        </tbody>
+      </table>
 
       <Callout variant="tip" title="QLoRA：再省一个数量级的显存">
         <p>
@@ -147,6 +208,16 @@ export default function Ch3_3() {
         这让「为每个场景定制一个模型」从奢侈变得廉价。再加上 QLoRA 把训练门槛压到一张显卡，微调不再是大厂专属，
         小团队也能快速迭代自己的专用模型。
       </p>
+      <CodeBlock lang="python" title="multi_adapter_serving.py" code={multiLoraCode} />
+
+      <Example title="边界：LoRA 不是万能的">
+        <p>
+          LoRA 擅长的是「在原能力基础上做风格/格式/领域偏移」这类<strong>低秩</strong>改动。但如果你想做的改动本身就是「高秩」的——
+          比如让一个只懂英文的模型扎实地学会一门全新语言、或灌入大量新领域知识——这种改动需要的不是几个方向的微调，
+          而是几乎重写一遍权重，低秩近似就力不从心了。这种场景要么换全量微调（甚至继续预训练），要么干脆换个本来就支持该语言的基座。
+          记住判断口诀：<strong>偏移用 LoRA，重塑用全量，补知识用 RAG。</strong>
+        </p>
+      </Example>
 
       <Practice title="给模型挂上 LoRA，看看省了多少">
         <p>

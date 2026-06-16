@@ -21,6 +21,27 @@ sysctl net.ipv4.tcp_congestion_control
 # 临时切换为 bbr（需要内核支持）
 sudo sysctl -w net.ipv4.tcp_congestion_control=bbr`
 
+const aimdCode = `# AIMD：加性增、乘性减（拥塞避免阶段的核心规律）
+正常时：每个 RTT，cwnd += 1          # 加性增（慢慢试探，线性）
+丢包时：cwnd = cwnd * 0.5            # 乘性减（一下砍半，激进收缩）
+
+# 为什么是「加性增、乘性减」而不是反过来？
+# 慢增长：避免一拥而上把网络冲爆，公平地探测可用带宽
+# 快收缩：拥塞一旦发生要迅速让路，否则丢包会雪崩
+# AIMD 在多条连接竞争同一链路时能收敛到公平、稳定的分配`
+
+const bbrCode = `# 传统算法（reno/cubic）：把「丢包」当作拥塞信号 —— loss-based
+# 问题：在有随机丢包的无线/跨国链路上，会误判为拥塞而过度降速
+
+# BBR：直接建模「瓶颈带宽 + 最小 RTT」—— 不靠丢包，靠测量
+# 持续估算 BtlBw（瓶颈带宽）和 RTprop（最小往返），把发送速率
+# 控制在「刚好填满管道、又不让队列堆积」的点上
+# 优势：高带宽长肥管道、有随机丢包的链路上吞吐明显更好
+
+# 开启 BBR 通常还要把队列规则换成 fq
+sudo sysctl -w net.core.default_qdisc=fq
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr`
+
 export default function Ch3() {
   return (
     <>
@@ -89,6 +110,31 @@ export default function Ch3() {
 
       <Congestion />
 
+      <h2>为什么是「加性增、乘性减」（AIMD）</h2>
+      <p>
+        拥塞避免阶段那条不紧不慢的爬升 + 突然砍半的曲线，背后是一条很优雅的原理：<strong>加性增、乘性减</strong>
+        （Additive Increase, Multiplicative Decrease）。增长用「加」（慢，每 RTT 加 1），收缩用「乘」（快，直接砍半）。
+        为什么不反过来？因为网络拥塞的代价是<strong>非对称</strong>的：探测带宽可以慢慢来，但一旦堵了必须迅速让路，
+        否则队列堆积、丢包会像踩踏一样雪崩。AIMD 还有一个漂亮的性质——当多条连接竞争同一条链路时，它能让大家
+        <strong>收敛到公平的带宽分配</strong>，不会有人长期独占。这是拥塞控制能让整个互联网「不崩」的数学基础。
+      </p>
+      <CodeBlock lang="text" title="AIMD：加性增、乘性减" code={aimdCode} />
+
+      <h2>从 Reno 到 CUBIC 到 BBR：算法的演进</h2>
+      <p>
+        经典的慢启动 + 拥塞避免 + 快恢复属于 <em>Reno/NewReno</em> 一系，它们都<strong>把丢包当作唯一的拥塞信号</strong>。
+        这在早期有线网络没问题，但在两类场景下会吃亏：一是<em>长肥管道</em>（高带宽 × 长 RTT），线性增长爬得太慢，
+        带宽长期吃不满——<code>CUBIC</code> 用一条三次函数曲线改进了增长方式，在远离上次丢包点时增长更快、靠近时更谨慎，
+        成了 Linux 默认算法。二是<em>有随机丢包的链路</em>（无线、跨国），偶发丢包根本不代表拥塞，
+        loss-based 算法却会误判降速。
+      </p>
+      <p>
+        Google 的 <code>BBR</code> 换了思路：不再靠丢包，而是<strong>直接测量瓶颈带宽和最小 RTT</strong>，
+        把发送速率控制在「刚好填满管道、又不让中间队列堆积」的最优点。它在弱网和长肥管道上吞吐显著更好，
+        是 YouTube、跨国 CDN 大量使用的算法。理解「loss-based vs 测量驱动」这条主线，比记住每个算法的细节更重要。
+      </p>
+      <CodeBlock lang="text" title="loss-based vs BBR" code={bbrCode} />
+
       <KeyIdea title="一句话区分两者">
         <p>
           流量控制是<strong>接收方</strong>对<strong>发送方</strong>的约束，靠 <code>rwnd</code> 通告，
@@ -97,6 +143,27 @@ export default function Ch3() {
           二者<strong>对象不同</strong>，但都落在「调窗口」上，最终发送窗口取 <code>min(rwnd, cwnd)</code>。
         </p>
       </KeyIdea>
+
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为慢启动「慢」。</strong>慢启动其实是<em>指数</em>增长，涨得很快；「慢」是相对于一上来就满速，
+            指它从 1 个 MSS 这么小的起点开始试探。
+          </li>
+          <li>
+            <strong>追问：为什么超时要把 cwnd 砸回 1，而 3 个重复 ACK 只减半？</strong>因为超时意味着可能整段网络都堵死了
+            （连重复 ACK 都收不到），形势严峻；而能收到重复 ACK 说明链路还通、只丢了个别段，没必要反应那么激烈。
+          </li>
+          <li>
+            <strong>追问：BBR 一定比 CUBIC 好吗？</strong>不一定。BBR 在弱网/长肥管道占优，但在某些场景会对
+            loss-based 的连接「不够礼让」，公平性有争议；选哪个要看实际链路特征。
+          </li>
+          <li>
+            <strong>追问：拥塞控制是端到端还是逐跳？</strong>它是<em>端到端</em>的——发送方根据端到端的反馈（丢包、RTT）
+            自我约束，中间路由器并不直接参与（除非用 ECN 显式拥塞通知打标记）。
+          </li>
+        </ul>
+      </Callout>
 
       <h2>实战 / 面试怎么答</h2>
       <p>
@@ -117,6 +184,19 @@ export default function Ch3() {
           实操：查看你机器上的拥塞控制算法。现代系统默认多为 <code>cubic</code>（按时间三次函数增长、对高带宽长肥管道更友好），
           也可切到 Google 的 <code>bbr</code>（基于带宽和 RTT 建模、而非单纯靠丢包判断拥塞）。
         </p>
+        <p>
+          进阶：在弱网下对比 cubic 和 bbr 的吞吐。用 <code>tc</code> 给网卡人为注入丢包和延迟模拟跨国链路，
+          再分别用两种算法跑 <code>iperf3</code> 看吞吐差异，你会直观感受到「靠丢包判断拥塞」在随机丢包链路上有多吃亏：
+        </p>
+        <CodeBlock lang="bash" title="弱网下对比拥塞算法" code={`# 给本地回环/网卡加 1% 丢包 + 100ms 延迟
+sudo tc qdisc add dev eth0 root netem loss 1% delay 100ms
+
+# 分别切到 cubic / bbr，各跑一次 iperf3 对比吞吐
+sudo sysctl -w net.ipv4.tcp_congestion_control=cubic
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+
+# 实验完清理
+sudo tc qdisc del dev eth0 root`} />
       </Practice>
 
       <Summary
@@ -126,6 +206,8 @@ export default function Ch3() {
           '拥塞控制靠发送方维护 cwnd，防止压垮中间网络；发送窗口取 min(rwnd, cwnd)。',
           '拥塞控制四步：慢启动指数增长到 ssthresh、拥塞避免线性增长、快重传、快恢复。',
           '超时反应激烈（cwnd 归 1 重新慢启动），三个重复 ACK 反应温和（窗口减半进入快恢复），呈 AIMD 锯齿曲线。',
+          'AIMD「加性增、乘性减」之所以这样设计：探测带宽可慢、拥塞要快速让路，且能让多连接收敛到公平分配。',
+          '算法演进主线：Reno/NewReno（loss-based）→ CUBIC（三次曲线、长肥管道更优、Linux 默认）→ BBR（测量带宽与 RTT、弱网更强）。',
           '两者对象不同（接收方 vs 网络），但都落在调窗口上；常见算法有 cubic 与 bbr。',
         ]}
       />

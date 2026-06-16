@@ -135,6 +135,55 @@ export default function Ch7_3() {
         </p>
       </Callout>
 
+      <h2>三种机制怎么权衡</h2>
+      <p>
+        选机制本质是在<strong>耦合度</strong>和<strong>可控性</strong>之间做交换。下面这张表帮你快速对号：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>机制</th>
+            <th>耦合度</th>
+            <th>控制流</th>
+            <th>适合规模</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>agent-as-tool</td>
+            <td>紧（直接调用）</td>
+            <td>同步、清晰可追</td>
+            <td>2~5 个、层级分明</td>
+          </tr>
+          <tr>
+            <td>blackboard</td>
+            <td>中（共享状态）</td>
+            <td>松散、需自行协调</td>
+            <td>需互看中间成果</td>
+          </tr>
+          <tr>
+            <td>message bus</td>
+            <td>松（发布订阅）</td>
+            <td>异步、需跨消息追踪</td>
+            <td>多、动态、要扩展</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        共享黑板最容易被低估的坑是<strong>并发写</strong>——两个 Agent 同时改同一个 key，后写的悄悄盖掉前者。
+        所以黑板至少要做两件事：<strong>留痕</strong>（谁改了什么）和<strong>快照读</strong>（下游读到一致状态而非读一半）。
+        下面这段就是一个带版本号和审计日志的最小黑板：
+      </p>
+      <CodeBlock lang="python" title="blackboard.py" code={blackboardCode} />
+      <Callout variant="warn" title="message bus 的隐藏成本">
+        <p>
+          总线最诱人的是「解耦」，但解耦的另一面是<strong>失去了一条线性的因果链</strong>。
+          单 Agent 调试时你能顺着调用栈一路看下去；上了总线，一个请求会炸裂成十几条异步消息，
+          要拼出「到底发生了什么」得靠 trace id 跨服务串联。三个 Agent 别上总线——
+          这条成本只在 Agent 多到「直接互相引用会变成蜘蛛网」时才值得付。
+        </p>
+      </Callout>
+
       <h2>传什么，比传给谁更要命</h2>
       <p>
         机制只决定信息流动的<em>形状</em>，真正决定系统好坏的是流动的<em>内容</em>。这里有一条核心纪律：
@@ -176,6 +225,20 @@ export default function Ch7_3() {
           <strong>宁可响亮地失败，也不要安静地骗人。</strong>
         </p>
       </Callout>
+
+      <Example title="契约救命的一个真实场景">
+        <p>
+          一个三段 pipeline：检索 → 写作 → 审校。某天上线后摘要里频繁出现「资料不足，无法回答」这种半成品。
+          排查发现：检索专家在某些 query 下返回了空列表，但<strong>没报错</strong>，写作专家拿着空 docs 硬写，
+          于是编了一段「资料不足」的废话，审校专家也没拦住。
+        </p>
+        <p>
+          引入统一契约后，检索专家在空结果时显式返回 <code>{'success=false'}</code> 加
+          <code>reason='未命中'</code>；写作专家第一行就校验 <code>{'prev.success'}</code>，
+          上游失败直接向上传播，协调器在出口处统一降级成「正在为你转人工」。
+          同样一个 bug，现在<strong>三秒就能从日志里定位到是检索那一环</strong>，而不是整条链路重跑猜半天。
+        </p>
+      </Example>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

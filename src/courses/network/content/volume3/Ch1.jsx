@@ -43,6 +43,45 @@ If-Modified-Since: Wed, 21 Oct 2025 07:28:00 GMT
 # 没变，服务端回 304，不带正文：
 HTTP/1.1 304 Not Modified`
 
+const cookieCode = `# 服务器在响应里种 Cookie（无状态协议靠它「记住你」）
+HTTP/1.1 200 OK
+Set-Cookie: session_id=abc123; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400
+
+# 浏览器之后的每个请求都自动带上：
+GET /profile HTTP/1.1
+Cookie: session_id=abc123
+
+# 关键属性：
+# HttpOnly  -> JS 读不到，防 XSS 窃取
+# Secure    -> 只在 HTTPS 下发送
+# SameSite  -> Lax/Strict 限制跨站携带，防 CSRF
+# Domain/Path/Max-Age -> 作用范围与有效期`
+
+const corsCode = `# 跨域：浏览器同源策略拦截，非简单请求会先发 OPTIONS 预检
+# 预检请求（浏览器自动发）：
+OPTIONS /api/data HTTP/1.1
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type
+
+# 服务器允许跨域的响应头：
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Allow-Methods: GET, POST
+Access-Control-Allow-Headers: Content-Type
+Access-Control-Max-Age: 600        # 预检结果可缓存 600 秒`
+
+const rangeCode = `# 断点续传 / 分块下载：靠 Range 请求头
+# 客户端只要第 1024 字节之后的部分：
+GET /big.zip HTTP/1.1
+Range: bytes=1024-
+
+# 服务器用 206 部分内容响应：
+HTTP/1.1 206 Partial Content
+Content-Range: bytes 1024-2047/2048
+Accept-Ranges: bytes
+# 这是下载器断点续传、视频拖动进度条秒开的底层机制`
+
 export default function Ch1() {
   return (
     <>
@@ -127,6 +166,21 @@ export default function Ch1() {
         </p>
       </KeyIdea>
 
+      <h2>无状态怎么「装」出会话：Cookie 与 Session</h2>
+      <p>
+        HTTP 无状态，可登录态、购物车这些功能明明要「记住你」，怎么办？答案是 <strong>Cookie</strong>：
+        服务器在响应里用 <code>Set-Cookie</code> 给浏览器塞一小段标识，浏览器之后每个请求都自动把它带回来，
+        服务器一看就知道「哦是你」。常见做法是 <em>Session</em>：服务器把真正的用户数据存在自己那边
+        （内存/Redis），只发给浏览器一个 <code>session_id</code>，用它去查。
+      </p>
+      <p>
+        Cookie 的几个属性是安全考点：<code>HttpOnly</code> 让 JavaScript 读不到它（防 XSS 窃取）、
+        <code>Secure</code> 限制只在 HTTPS 下发送、<code>SameSite</code> 限制跨站请求是否携带（防 CSRF）。
+        近年还流行用 <em>Token</em>（如 JWT）放在 <code>Authorization</code> 头里替代 Session，
+        好处是服务端无状态、天然适合分布式，坏处是难以主动失效。
+      </p>
+      <CodeBlock lang="http" title="Set-Cookie 与属性" code={cookieCode} />
+
       <h2>常见状态码：用首位数字分大类</h2>
       <p>
         状态码三位数，第一位定大类，记住大类再记几个高频的就够用了：
@@ -157,6 +211,27 @@ export default function Ch1() {
           403 是「我知道你是谁，但这事你没资格做」（别白费劲登录了）。
         </p>
       </Callout>
+
+      <h2>跨域与同源策略</h2>
+      <p>
+        浏览器有个安全机制叫<strong>同源策略</strong>：协议、域名、端口三者全相同才算「同源」，否则脚本不能随意访问对方资源，
+        防止恶意网站偷读你在别的站点的数据。但前后端分离、调第三方 API 时经常要跨域，于是有了 <em>CORS</em>
+        （跨域资源共享）：由<strong>服务器</strong>通过 <code>Access-Control-Allow-Origin</code> 等响应头声明「我允许哪些源来访问」。
+      </p>
+      <p>
+        对会改数据的「非简单请求」（比如带自定义头的 POST），浏览器会先自动发一个 <code>OPTIONS</code>
+        <strong>预检请求</strong>问服务器允不允许，得到肯定答复才发真正的请求。这就是为什么调试跨域时常看到一个多出来的
+        OPTIONS——它不是你写的，是浏览器替你发的。
+      </p>
+      <CodeBlock lang="http" title="CORS 预检与允许头" code={corsCode} />
+
+      <h2>断点续传：Range 与 206</h2>
+      <p>
+        下载大文件断了能续传、视频拖进度条能秒开，靠的是 HTTP 的 <strong>Range 请求</strong>：客户端用
+        <code>Range: bytes=1024-</code> 告诉服务器「我只要这一段」，服务器用 <code>206 Partial Content</code>
+        和 <code>Content-Range</code> 返回指定区间。这把「整块下载」拆成了「按需取片」，是下载器和流媒体的基础能力。
+      </p>
+      <CodeBlock lang="http" title="Range 请求与 206 响应" code={rangeCode} />
 
       <h2>连接复用：keep-alive</h2>
       <p>
@@ -217,6 +292,31 @@ export default function Ch1() {
         </p>
       </Example>
 
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为 POST 比 GET 安全。</strong>POST 参数在 body 只是不显示在 URL 里，明文照样能抓包；
+            真正的安全要靠 HTTPS 加密，和用哪个方法无关。
+          </li>
+          <li>
+            <strong>误区：以为 HTTP/2 彻底解决了队头阻塞。</strong>它解决的是<em>应用层</em>的队头阻塞（多路复用），
+            但底层还是 TCP，一旦 TCP 丢包，所有流都得等重传——队头阻塞下沉到了传输层，这正是 HTTP/3 用 QUIC 要解决的。
+          </li>
+          <li>
+            <strong>追问：301 和 308、302 和 307 的区别？</strong>301/302 在重定向时可能把 POST 改成 GET，
+            而 308/307 保证<em>方法不变</em>，更严谨；新接口建议用后者。
+          </li>
+          <li>
+            <strong>追问：强缓存命中时 Network 面板显示什么？</strong>显示 <code>from disk cache</code> 或
+            <code>from memory cache</code>，状态码 200 但根本没发请求；协商缓存命中才是真发了请求、返回 304。
+          </li>
+          <li>
+            <strong>追问：Cookie 和 Session 谁存在哪？</strong>Cookie 存在浏览器、随请求带回；
+            Session 数据存在服务端，Cookie 里只放一个 session_id 指针。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「在浏览器输入 URL 到看到页面经历了什么」，HTTP 这一段可以这样串：DNS 解析拿到 IP →
@@ -246,6 +346,9 @@ export default function Ch1() {
           '状态码看首位：2xx 成功、3xx 重定向（301 永久 vs 302 临时）、4xx 客户端错（401 未认证 vs 403 没权限）、5xx 服务端错。',
           '版本主线：1.1 长连接 → 2.0 二进制分帧/多路复用/HPACK → 3.0 基于 QUIC/UDP 根除队头阻塞。',
           '缓存分强缓存（Cache-Control/Expires，不发请求）和协商缓存（ETag/Last-Modified，命中回 304）。',
+          '无状态靠 Cookie/Session 补出会话：Cookie 存浏览器并自动回传，Session 数据存服务端；HttpOnly/Secure/SameSite 是安全关键。',
+          '同源策略限制跨域，CORS 由服务器用 Access-Control-* 头放行，非简单请求会先发 OPTIONS 预检。',
+          '断点续传与视频拖动靠 Range 请求 + 206 Partial Content，把整块下载拆成按需取片。',
         ]}
       />
     </>

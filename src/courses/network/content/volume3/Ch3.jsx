@@ -39,6 +39,37 @@ Access-Control-Allow-Methods: GET, POST, PUT
 Access-Control-Allow-Headers: Authorization
 # 预检通过，浏览器才放行真正的 PUT 请求`
 
+const digTraceCode = `# 看完整的递归路径：根 -> 顶级域 -> 权威，理解 DNS 是怎么一级级问下来的
+dig +trace www.example.com
+
+# 直接看本地 DNS 缓存里某域名的 TTL（每查一次 TTL 会递减）
+dig www.example.com | grep -A1 'ANSWER SECTION'
+# www.example.com.  281  IN  A  93.184.216.34
+#                   ^TTL 还剩 281 秒，到 0 就要重新解析
+
+# 看 CNAME 链：很多大站的域名会先 CNAME 到 CDN 再解析出 IP
+dig img.example.com CNAME +short`
+
+const recordTypeCode = `; 常见 DNS 记录类型一览
+example.com.        A      93.184.216.34      ; IPv4
+example.com.        AAAA   2606:2800:220:1::  ; IPv6
+www.example.com.    CNAME  example.com.       ; 别名
+example.com.        MX  10 mail.example.com.  ; 邮件服务器（带优先级）
+example.com.        NS     ns1.example.com.   ; 权威域名服务器
+example.com.        TXT    "v=spf1 ..."       ; 文本，常用于域名所有权验证/反垃圾邮件`
+
+const csrfCode = `# CSRF 攻击：诱导你在已登录状态下，由恶意页面悄悄发请求
+# 恶意网站里藏一个自动提交的表单（浏览器会自动带上你的 Cookie）：
+<form action="https://bank.com/transfer" method="POST">
+  <input name="to" value="attacker"><input name="amount" value="10000">
+</form>
+<script>document.forms[0].submit()</script>
+
+# 防御：
+# 1) SameSite=Lax/Strict   -> 跨站请求不带 Cookie，从根上断掉
+# 2) CSRF Token            -> 表单里放一个服务端校验的随机 token
+# 3) 校验 Origin/Referer   -> 确认请求来自本站`
+
 export default function Ch3() {
   return (
     <>

@@ -57,6 +57,45 @@ async def chat(req: ChatRequest):
 
 # 启动:  uvicorn service:app --host 0.0.0.0 --port 8000 --workers 4`
 
+const resilienceCode = `import asyncio, random, time
+
+# 重试退避：临时失败重试几次，间隔指数级增大 + 抖动，别在下游过载时火上浇油
+async def call_with_retry(fn, *, retries=3, base=0.5):
+    for attempt in range(retries + 1):
+        try:
+            return await fn()
+        except (TimeoutError, ConnectionError) as e:
+            if attempt == retries:
+                raise                          # 重试用尽，显式失败
+            delay = base * (2 ** attempt) + random.uniform(0, 0.3)  # 指数 + 抖动
+            await asyncio.sleep(delay)
+
+
+# 熔断器：某依赖连续失败就「跳闸」，一段时间内直接走兜底，给它喘息
+class CircuitBreaker:
+    def __init__(self, fail_max=5, reset_after=30):
+        self.fail_max = fail_max
+        self.reset_after = reset_after
+        self.fails = 0
+        self.opened_at = None
+
+    def allow(self):
+        if self.opened_at is None:
+            return True                        # 闭合：正常放行
+        if time.time() - self.opened_at > self.reset_after:
+            self.opened_at = None              # 冷却够了，半开放行一次试探
+            self.fails = 0
+            return True
+        return False                           # 跳闸中：直接拒绝，走降级
+
+    def record(self, ok: bool):
+        if ok:
+            self.fails = 0
+        else:
+            self.fails += 1
+            if self.fails >= self.fail_max:
+                self.opened_at = time.time()   # 连续失败到阈值 -> 跳闸`
+
 export default function Ch8_3() {
   return (
     <>
@@ -121,6 +160,52 @@ export default function Ch8_3() {
         </li>
       </ul>
 
+      <p>
+        这几个档位常被混为一谈，其实它们针对的是<strong>不同形态的故障</strong>，搭配使用才完整：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>档位</th>
+            <th>防的是什么</th>
+            <th>触发时机</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>限流</td>
+            <td>突发流量 / 个别滥用</td>
+            <td>请求进来前</td>
+          </tr>
+          <tr>
+            <td>超时</td>
+            <td>单次调用挂死</td>
+            <td>调用进行中</td>
+          </tr>
+          <tr>
+            <td>重试退避</td>
+            <td>偶发抖动</td>
+            <td>单次失败后</td>
+          </tr>
+          <tr>
+            <td>熔断</td>
+            <td>依赖整体宕机</td>
+            <td>连续失败累积</td>
+          </tr>
+          <tr>
+            <td>优雅降级</td>
+            <td>用户体验崩坏</td>
+            <td>上面任一兜底时</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        重试和熔断是一对常被搞反的搭档：<strong>重试是「单次失败，再试试」，熔断是「老是失败，先别试了」</strong>。
+        只有重试没有熔断，下游一旦真宕机，你的重试反而成了 DDoS——把它彻底压死还自我放大。
+        下面这段把两者实现出来，注意退避里加了<strong>抖动</strong>，避免所有实例在同一时刻齐刷刷重试：
+      </p>
+      <CodeBlock lang="python" title="resilience.py" code={resilienceCode} />
+
       <Callout variant="warn" title="密钥管理红线">
         <p>
           <strong>API 密钥绝不能硬编码进代码，更不能提交进 git。</strong>这是工程纪律里最不能破的一条。
@@ -154,6 +239,16 @@ export default function Ch8_3() {
         </ul>
         <p>整条链路上每一步都有保险，任何一个依赖抖动都不会让用户看到白屏或堆栈。</p>
       </Example>
+
+      <Callout variant="tip" title="Agent 服务比普通后端更需要灰度">
+        <p>
+          普通后端改代码，行为是确定的，测试覆盖到就大体放心。Agent 不一样：你只是把系统提示改了一句话、
+          或把模型从一个版本换到下一个版本，整体行为就可能<strong>悄悄漂移</strong>——某类问题突然开始拒答、
+          某个工具突然不再被调用。这种漂移单测往往抓不到，只有真实流量才暴露。所以 Agent 系统的
+          <strong>灰度发布 + 盯 trace 指标 + 一键回滚</strong>不是锦上添花，是必需品。把「能不能 5 分钟回滚」
+          当成上线前的硬检查项。
+        </p>
+      </Callout>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

@@ -74,6 +74,46 @@ if __name__ == '__main__':
     print(f'原始 {len(raw)} -> 清洗后 {len(cleaned)}')
     print(f'train {len(train)} / val {len(val)}')`
 
+const dedupCode = `# 近似去重：完全相同的好查，难的是「换了个说法的同一条」。
+# 一个轻量办法：用 n-gram 集合的 Jaccard 相似度做粗筛。
+def char_ngrams(s, n=3):
+    s = s.replace(' ', '')
+    return {s[i:i+n] for i in range(max(0, len(s) - n + 1))}
+
+def jaccard(a, b):
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    return inter / (len(a) + len(b) - inter)
+
+def near_dedup(rows, threshold=0.9):
+    """两两比相似度，删掉高度重复的样本。
+    注意 O(n^2)，几万条以内能跑；更大规模要上 MinHash/LSH。"""
+    kept, kept_grams = [], []
+    for r in rows:
+        g = char_ngrams(r['q'] + r['a'])
+        if any(jaccard(g, kg) >= threshold for kg in kept_grams):
+            continue                  # 和已保留的某条太像，丢弃
+        kept.append(r)
+        kept_grams.append(g)
+    return kept`
+
+const statsCode = `from collections import Counter
+
+def profile(rows):
+    """造完数据先体检：长度分布、风格信号、类别均衡。
+    这一步能在训练前就抓出大半数据问题。"""
+    a_len = [len(r['a']) for r in rows]
+    a_len.sort()
+    p50 = a_len[len(a_len) // 2]
+    p95 = a_len[int(len(a_len) * 0.95)]
+    # 风格信号：有多少答案以「亲」开头 -> 风格是否混杂
+    qin = sum(1 for r in rows if r['a'].startswith('亲'))
+    print(f'样本数 {len(rows)}  答案长度 中位数 {p50} / p95 {p95}')
+    print(f'卖萌开头占比 {qin / len(rows):.1%}  (应接近 0% 或 100%，不该卡在中间)')
+
+profile(cleaned)`
+
 export default function Ch3_4() {
   return (
     <>
@@ -90,6 +130,17 @@ export default function Ch3_4() {
         模型没有判断力，它不会自动「纠正」你给的坏示范，只会忠实地模仿统计规律。如果训练集里 30% 的答案啰嗦冗长，
         模型就会学得啰嗦；如果一半样本用「您好」开头、一半用「嗨」，模型就会随机地两种都来。
         微调时你要时刻提醒自己：<strong>我现在喂进去的每一条，都是在告诉模型「以后就该这么答」</strong>。
+      </p>
+      <p>
+        这里有个比「数据量」重要得多、却常被忽视的概念：<strong>数据分布</strong>。模型学到的不是单条样本，而是整个数据集的
+        <em>统计画像</em>——答案的平均长度、最常见的开头、各类问题的占比。如果你的训练集里 80% 是退款类问题，模型上线后
+        就会对退款异常擅长、对其它问题平庸，因为它把「大概率遇到退款问题」也一起学了进去。所以造数据不只是「攒够数量」，
+        更是<strong>刻意设计一个你希望模型表现出来的分布</strong>：你想让它在哪些场景强，就让那些场景在数据里占合适的比例。
+      </p>
+      <p>
+        还有一个反直觉的点：<strong>少而精，远胜多而杂</strong>。1000 条人工精修、风格统一的样本，通常比 10000 条从日志里
+        随手捞的样本训出的模型好得多。原因在上一段——脏的、矛盾的样本不是「没用」，而是会主动把模型往坏处带，是负资产。
+        宁可砍掉一半存疑的数据，也别让它们污染分布。
       </p>
 
       <h2>chat 格式与 jsonl</h2>
@@ -132,6 +183,23 @@ export default function Ch3_4() {
         </p>
       </Example>
 
+      <h3>近似去重：比你想的更难</h3>
+      <p>
+        完全相同的样本好删，一个哈希就搞定。真正麻烦的是<strong>近似重复</strong>——同一个问题换了个说法、同一段文档的不同切片。
+        它们在数据里反复出现，会让模型对这部分内容过度自信，相当于变相加大了它们在分布里的权重，还会让验证集泄漏（见下文）。
+        一个轻量做法是用字符 n-gram 的 Jaccard 相似度做粗筛；几万条以内可以两两比，更大规模就得上 MinHash/LSH 这类近邻算法。
+      </p>
+      <CodeBlock lang="python" title="near_dedup.py" code={dedupCode} />
+
+      <Callout variant="info" title="先体检，再训练">
+        <p>
+          造完数据别急着喂进去。花十分钟跑一遍<strong>数据画像</strong>：答案长度的中位数和 p95（揪出超长/超短的异常样本）、
+          风格信号的占比（比如「卖萌开头」的比例应该接近 0% 或 100%，卡在 30% 就说明风格混杂）、各类别的数量是否均衡。
+          这一步几乎零成本，却能在训练前就抓出大半数据问题，省下白训一轮的时间和算力。
+        </p>
+        <CodeBlock lang="python" title="profile.py" code={statsCode} />
+      </Callout>
+
       <h2>train / val 切分与数据泄漏</h2>
       <p>
         造好数据后要切出一小份做<em>验证集</em>（val），它不参与训练，只用来在训练中观察模型在「没见过的数据」上表现如何，
@@ -152,6 +220,12 @@ export default function Ch3_4() {
         数据集不是一次性产物，而是要<strong>版本化、可复现</strong>的工程资产。把「原始数据 → 清洗 → 转格式 → 切分」写成一个脚本、
         固定随机种子、记录每一步的样本数变化，比手工攒一堆 JSON 文件靠谱得多。当模型效果出问题，你第一个该回去查的就是数据：
         是不是有脏样本？是不是风格不一致？是不是 val 泄漏了？把造数据当成正经的数据管线来做，微调的迭代才稳。
+      </p>
+      <p>
+        在 Agent 场景里还有一类特别值钱的数据来源：<strong>线上失败案例</strong>。当 Agent 调错了工具、答错了问题，
+        把这些 case 收集起来、人工修正成「正确的示范」，再加进训练集，模型就会针对性地补上这些短板。这是一条良性飞轮——
+        但前提是上一章强调过的：必须经过人工确认，绝不能把模型自己的错误输出直接回灌。区分「修正后的失败案例」（金子）和
+        「未清洗的原始日志」（噪声），是数据飞轮能转起来还是越转越偏的分水岭。
       </p>
 
       <Practice title="写一个完整的数据构建脚本">

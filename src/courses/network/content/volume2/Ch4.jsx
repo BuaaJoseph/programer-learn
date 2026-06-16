@@ -38,6 +38,31 @@ def recv_exactly(sock, n):
         buf += chunk
     return buf`
 
+const headerCode = `# TCP 与 UDP 首部对比（字段越多，能力越强，开销也越大）
+
+# UDP 首部：固定 8 字节，简单到极致
++--------+--------+--------+--------+
+| 源端口          | 目的端口        |
+| 长度            | 校验和          |
++--------+--------+--------+--------+
+
+# TCP 首部：至少 20 字节，多出来的字段正对应它的各种能力
+| 源端口 | 目的端口 |
+| 序号 seq            |   <- 可靠/有序
+| 确认号 ack          |   <- 确认机制
+| 数据偏移 | 标志位 | 窗口大小 |   <- 标志位含 SYN/ACK/FIN/RST，窗口=流量控制
+| 校验和  | 紧急指针 |
+| 选项（MSS/窗口缩放/SACK/时间戳...）|  <- 协商能力`
+
+const nodelayCode = `# Nagle 算法 + 延迟 ACK 可能导致小包延迟，交互式场景常关掉 Nagle
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # 禁用 Nagle，立刻发
+
+# Nagle 的本意：把多个小包攒成一个大包发，减少「一个字节一个包」的浪费
+# 副作用：和延迟 ACK 撞上时，交互延迟可能高达几十到几百毫秒
+# 所以 SSH、游戏、RPC 这类对延迟敏感的小包场景，通常 TCP_NODELAY=1`
+
 export default function Ch4() {
   return (
     <>
@@ -71,6 +96,15 @@ export default function Ch4() {
           <strong>速度</strong>：UDP 没有握手、确认、拥塞控制的开销，时延更低、更快。
         </li>
       </ul>
+
+      <h2>从首部看能力差异</h2>
+      <p>
+        TCP 和 UDP 的能力差距，其实<strong>明明白白写在首部里</strong>。UDP 首部只有 8 字节（源端口、目的端口、长度、校验和），
+        除了「发到哪个进程」之外几乎什么都不管。而 TCP 首部至少 20 字节，多出来的每个字段都对应一项能力：
+        序号/确认号撑起可靠与有序，窗口字段实现流量控制，标志位（<code>SYN/ACK/FIN/RST</code>）驱动连接的建立与关闭，
+        选项区还能协商 MSS、窗口缩放、SACK。看懂首部，就看懂了「为什么 TCP 重、UDP 轻」。
+      </p>
+      <CodeBlock lang="text" title="TCP / UDP 首部对比" code={headerCode} />
 
       <h2>各自适合什么</h2>
       <ul>
@@ -130,6 +164,44 @@ export default function Ch4() {
         </li>
       </ul>
 
+      <h2>「粘包」这个词其实是误称</h2>
+      <p>
+        严格说，<strong>「粘包」是个被叫错的名字</strong>。TCP 从设计上就是字节流，它<em>从来没有「包」的概念</em>，
+        所以谈不上「粘」——是应用层错误地假设「一次 <code>recv</code> 就是一条完整消息」才产生了问题。
+        换个角度看：所谓粘包/拆包，根本不是 TCP 的 bug，而是<strong>应用层没有定义消息边界</strong>的后果。
+        理解这一点，面试时就不会被「TCP 为什么会粘包、要不要修复 TCP」带偏——要修的是应用层协议，不是 TCP。
+      </p>
+      <Callout variant="warn" title="Nagle 算法与延迟 ACK：被忽视的延迟元凶">
+        <p>
+          TCP 还有两个默认开启的优化，会在某些场景制造意外延迟。<strong>Nagle 算法</strong>会把多个小包攒一攒再一起发，
+          减少「一字节一个包」的浪费；<strong>延迟 ACK</strong>则让接收方稍等一会儿、看能不能把 ACK 和回包合并。
+          两者单独都合理，但<em>撞在一起</em>时，发送方在等 ACK 才发下一个小包、接收方又在延迟这个 ACK，
+          就可能凭空多出几十到几百毫秒延迟。所以 SSH、游戏、RPC 这类小包交互场景，常用
+          <code>TCP_NODELAY</code> 关掉 Nagle。
+        </p>
+        <CodeBlock lang="python" title="关闭 Nagle 降低交互延迟" code={nodelayCode} />
+      </Callout>
+
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为 UDP「不可靠」就等于「经常丢」。</strong>UDP 只是<em>不保证</em>可靠，
+            在质量好的网络里它照样几乎不丢；它省掉的是「保证」的机制开销。
+          </li>
+          <li>
+            <strong>追问：UDP 有粘包问题吗？</strong>没有。UDP 面向报文，一次 <code>recvfrom</code> 正好对应一个发出的数据报，
+            边界天然保留——但要注意单个 UDP 数据报过大会在 IP 层分片，任一片丢失整个报文作废。
+          </li>
+          <li>
+            <strong>追问：QUIC 凭什么比 TCP 好？</strong>它跑在 UDP 上、在用户态实现，避开了 TCP 的队头阻塞
+            （一条流丢包不阻塞其他流）、把 TLS 握手和传输握手合并（更少 RTT）、还支持连接迁移（换网不断连）。
+          </li>
+          <li>
+            <strong>追问：DNS 为什么用 UDP？</strong>查询小、要快、丢了重查代价低；但响应过大或区域传送时切 TCP。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「TCP 和 UDP 区别」，按「连接 / 可靠 / 有序 / 开销 / 通信方式 / 速度」六维对比，
@@ -159,6 +231,9 @@ export default function Ch4() {
           '想在 UDP 上要可靠，就在应用层自建序号/确认/重传，代表是 QUIC 和 KCP，灵活性优于改不动的 TCP。',
           'TCP 面向字节流没有消息边界，会出现粘包/拆包；UDP 面向报文不存在该问题。',
           '解决粘包三法：定长、分隔符、长度字段，其中长度字段最通用，配合 recv_exactly 循环读满。',
+          '能力差异写在首部里：UDP 固定 8 字节、TCP 至少 20 字节，多出的序号/确认/窗口/标志位/选项正对应可靠、有序、流控、连接管理。',
+          '“粘包”是误称——TCP 本就是字节流没有包边界，问题出在应用层没定义消息边界，要修的是应用协议而非 TCP。',
+          'Nagle 算法与延迟 ACK 撞上时会制造几十到几百毫秒延迟，交互式小包场景常用 TCP_NODELAY 关闭 Nagle。',
         ]}
       />
     </>
