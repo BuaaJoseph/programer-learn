@@ -71,6 +71,8 @@ export default function CourseCover({ course }) {
         <PatternsScene />
       ) : coverScene === 'agentloop' ? (
         <AgentLoopScene />
+      ) : coverScene === 'forge' ? (
+        <ForgeScene />
       ) : (
         <AttentionScene />
       )}
@@ -517,6 +519,45 @@ function AgentLoopScene() {
         </g>
       ))}
       <text x="40" y="178" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">model + harness · agentic loop</text>
+    </g>
+  )
+}
+
+function ForgeScene() {
+  // 从零打造一把 CLI：终端提示符 forge> + 一圈火花，呼应「锻造」与「构建」。
+  const sparks = [
+    { x: 300, y: 40 }, { x: 330, y: 70 }, { x: 285, y: 78 },
+    { x: 350, y: 50 }, { x: 318, y: 28 }, { x: 360, y: 92 },
+  ]
+  return (
+    <g>
+      {/* 终端窗口 */}
+      <rect x="40" y="56" width="230" height="100" rx="10" fill="#0b1020" fillOpacity="0.55" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.4" />
+      <g>
+        <circle cx="58" cy="72" r="3.5" fill="#ff6058" />
+        <circle cx="72" cy="72" r="3.5" fill="#ffbd2e" />
+        <circle cx="86" cy="72" r="3.5" fill="#28c940" />
+      </g>
+      <line x1="40" y1="84" x2="270" y2="84" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="1" />
+      <text x="58" y="108" fontFamily="var(--mono)" fontSize="14" fontWeight="700" fill="#ffffff">
+        <tspan fillOpacity="0.6">$ </tspan>forge
+      </text>
+      <text x="58" y="130" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.78">
+        <tspan fill="#7dd3fc">forge&gt;</tspan> 帮我重构这个项目
+      </text>
+      <rect x="200" y="121" width="8" height="13" fill="#7dd3fc" fillOpacity="0.85">
+        <animate attributeName="opacity" values="1;0;1" dur="1.1s" repeatCount="indefinite" />
+      </rect>
+      {/* 铁砧 */}
+      <g transform="translate(300 118)">
+        <path d="M-34 0 H34 L26 10 H10 L8 22 H-8 L-10 10 H-26 Z" fill="#ffffff" fillOpacity="0.2" stroke="#ffffff" strokeOpacity="0.55" strokeWidth="1.3" />
+        <rect x="-12" y="22" width="24" height="12" fill="#ffffff" fillOpacity="0.14" stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1" />
+      </g>
+      {/* 火花 */}
+      {sparks.map((s, i) => (
+        <circle key={i} cx={s.x} cy={s.y} r={1.5 + (i % 3)} fill="#ffd27a" fillOpacity={0.5 + (i % 2) * 0.3} />
+      ))}
+      <text x="40" y="178" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">node + typescript · build your own coding agent</text>
     </g>
   )
 }

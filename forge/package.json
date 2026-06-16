@@ -1,0 +1,40 @@
+{
+  "name": "@buaajoseph/forge",
+  "version": "0.1.0",
+  "description": "A production-grade coding agent CLI, built from scratch — the companion repo for the course 《从零构建生产级 Agent》.",
+  "type": "module",
+  "bin": {
+    "forge": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "coding-agent",
+    "claude",
+    "anthropic",
+    "llm"
+  ],
+  "author": "BuaaJoseph",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
