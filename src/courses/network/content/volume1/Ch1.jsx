@@ -24,6 +24,23 @@ ping example.com
 # 每一跳就是一台路由器，体现了网络层「逐跳转发」的工作方式
 traceroute example.com   # Windows 上是 tracert`
 
+const tcpdumpCode = `# 抓本机到 example.com 的包，按层观察头部
+sudo tcpdump -i any -nn -v host example.com
+
+# 典型一行输出（已简化），从外到里就是「解封装」的顺序：
+# 10:21:33.123  IP  192.168.1.5.54321 > 93.184.216.34.443: Flags [S], seq 0
+#               ^网络层(IP)^         ^端口=传输层^        ^TCP标志位=传输层^
+#
+# -nn 表示不把 IP/端口解析成域名和服务名，看到的就是最原始的地址
+# Flags [S] 就是 SYN，三次握手的第一步——这一层属于传输层 TCP`
+
+const mtuCode = `# 查看网卡 MTU（最大传输单元），以太网默认 1500 字节
+ip link show eth0          # Linux
+# eth0: <BROADCAST,MULTICAST,UP> mtu 1500 ...
+
+# 故意发一个大于 MTU 且禁止分片的包，验证链路层的长度限制
+ping -M do -s 1473 example.com   # 1473 + 28 头 > 1500，会报 message too long`
+
 export default function Ch1() {
   return (
     <>
@@ -46,6 +63,18 @@ export default function Ch1() {
       <p>
         这样带来的好处是：某一层的实现可以独立替换而不影响其他层。把网线换成无线、把 IPv4 换成 IPv6，
         上层的 HTTP 完全不用改动。复杂度被分摊到各层，每层都能单独设计、单独排错。
+      </p>
+      <p>
+        更深一层看，分层其实是软件工程里「面向接口编程」在网络协议上的体现。层与层之间约定的不是<em>实现</em>，
+        而是<em>接口</em>——也就是「我向你提供什么服务、你给我什么参数」。这种约定一旦定下来就极其稳定，
+        所以 TCP 这个协议从 1981 年的 RFC 793 沿用至今四十多年基本没变，而它下面的网络层、链路层
+        早已从拨号 modem 换成了光纤、4G、5G、WiFi 6，TCP 一行代码都不用改。这就是接口稳定带来的红利。
+      </p>
+      <p>
+        但分层不是免费的。它的代价是<strong>性能开销</strong>：每层都要加自己的头部（额外字节）、做自己的处理（额外 CPU），
+        数据要在内核里多次拷贝。这就是为什么追求极致性能的场景（比如高频交易、CDN）会用<em>内核旁路</em>
+        （kernel bypass，如 DPDK）绕开标准协议栈，用空间换分层的开销。理解「分层有代价」，
+        才算真正理解了分层这个权衡。
       </p>
 
       <h2>OSI 七层 vs TCP/IP 四层</h2>
@@ -75,6 +104,59 @@ export default function Ch1() {
         在 TCP/IP 里都被并入了应用层，由应用自己处理。
       </p>
 
+      <h2>每层对应的数据单元和典型设备</h2>
+      <p>
+        每一层处理的数据有自己的名字（PDU，协议数据单元），叫法不同其实只是「在哪一层看它」的区别。
+        下面这张表把层、数据单元、典型协议、典型设备、寻址依据一次对齐，背下来面试基本够用：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>层（TCP/IP）</th>
+            <th>数据单元</th>
+            <th>典型协议</th>
+            <th>典型设备</th>
+            <th>靠什么寻址</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>应用层</td>
+            <td>报文 message</td>
+            <td>HTTP / DNS / SMTP</td>
+            <td>主机上的进程</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>传输层</td>
+            <td>段 segment（UDP 叫数据报）</td>
+            <td>TCP / UDP</td>
+            <td>—</td>
+            <td>端口号</td>
+          </tr>
+          <tr>
+            <td>网络层</td>
+            <td>包 packet</td>
+            <td>IP / ICMP</td>
+            <td>路由器</td>
+            <td>IP 地址</td>
+          </tr>
+          <tr>
+            <td>链路层</td>
+            <td>帧 frame</td>
+            <td>Ethernet / ARP</td>
+            <td>交换机 / 网卡</td>
+            <td>MAC 地址</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        注意「设备工作在哪一层」指的是<strong>它能看懂到哪一层的头部、并据此做决策</strong>。交换机只拆到 MAC 头，
+        所以它是链路层设备；路由器要看 IP 头来选路，所以是网络层设备；而像负载均衡、API 网关这种能解析 HTTP 内容、
+        按 URL 路由的，就属于「七层设备」。这也是为什么业界把「四层负载均衡」（按 IP+端口）和
+        「七层负载均衡」（按 HTTP 内容）分得很清楚。
+      </p>
+
       <Example title="一个 HTTP 请求是怎样逐层封装的">
         <p>
           假设浏览器要发一条 <code>GET /index.html</code>，数据从上往下穿过每一层，每经过一层就被<strong>加上一个头部</strong>，
@@ -89,6 +171,11 @@ export default function Ch1() {
         <p>
           到了对端服务器，过程完全反过来：从链路层往上，每层<strong>剥掉</strong>属于自己的那个头部、读取里面的信息后交给上一层，
           这叫<em>解封装</em>（decapsulation），最后应用层重新拿到原始的 HTTP 报文。
+        </p>
+        <p>
+          一个常被忽略的细节：<strong>MAC 地址会一跳一变，IP 地址却始终不变</strong>。数据每经过一台路由器，
+          链路层帧就被拆掉重新封装一次，目的 MAC 换成下一跳设备的 MAC；但 IP 头里的源/目的 IP 从头到尾不变
+          （除非遇到 NAT）。这正好对应两个词：IP 负责<em>端到端</em>的逻辑寻址，MAC 负责<em>逐跳</em>的物理转发。
         </p>
       </Example>
 
@@ -117,6 +204,21 @@ export default function Ch1() {
         </ul>
       </Callout>
 
+      <h2>边界情况：MTU、分片与协议栈在哪里</h2>
+      <p>
+        链路层对帧的大小有上限，这个上限叫 <em>MTU</em>（Maximum Transmission Unit），以太网通常是 1500 字节。
+        如果网络层一个 IP 包超过了下层 MTU，就要被<strong>分片</strong>（fragmentation）拆成几个小包分别传，
+        到目的主机再重组。分片是有代价的：任何一片丢了，整个包都要重传；所以现代协议（如 TCP）会通过
+        <em>路径 MTU 发现</em>主动避免分片。理解 MTU，才能解释「为什么大包反而更容易出问题」这类线上现象。
+      </p>
+      <p>
+        还有一个常被问到的概念问题：<strong>协议栈到底在哪里实现？</strong>答案是分散的——链路层主要在<em>网卡硬件</em>
+        和驱动里；网络层、传输层（IP/TCP/UDP）在<em>操作系统内核</em>里，所以 socket 是用户程序进内核的入口；
+        应用层（HTTP 解析等）在<em>用户态程序</em>里。这就是为什么 TCP 调优往往要改内核参数（<code>sysctl</code>），
+        而 HTTP 行为只要改应用代码。
+
+      </p>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问到「为什么网络要分层」，别只背「解耦」两个字，要落到具体：
@@ -125,6 +227,25 @@ export default function Ch1() {
         被问「OSI 和 TCP/IP 区别」，答出层数对应关系，再点明谁是理论模型、谁是实际跑的，最后补一句表示层/会话层被并入应用层，就很完整了。
         被问「数据在网络里怎么走」，画出封装/解封装的套娃图，点明「每层加/剥自己的头部」，基本满分。
       </p>
+      <Callout variant="info" title="面试追问与常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为分层是「物理上」一层套一层的独立模块。</strong>实际上它是逻辑划分，
+            同一个内核里 IP 和 TCP 的代码是紧密配合的，所谓「层」更多是概念和职责边界。
+          </li>
+          <li>
+            <strong>追问：HTTPS 里的 TLS/SSL 属于哪一层？</strong>严格说它介于应用层和传输层之间，
+            常被称为「会话层/表示层」的体现；在 TCP/IP 模型里一般归到应用层，因为它就跑在 TCP 之上。
+          </li>
+          <li>
+            <strong>追问：为什么 IP 地址不变、MAC 地址逐跳变？</strong>因为 IP 是端到端逻辑地址，
+            MAC 是相邻设备间的物理地址，每过一跳就要重新填下一跳的 MAC。这是分清网络层和链路层职责的最佳考点。
+          </li>
+          <li>
+            <strong>追问：交换机和路由器谁能跨网段？</strong>路由器能，交换机不能。交换机只在同一广播域内转发。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="用命令行观察分层">
         <p>
@@ -137,15 +258,26 @@ export default function Ch1() {
           后者把数据包途经的每一台路由器逐跳列出来，让你亲眼看到「逐跳转发」：
         </p>
         <CodeBlock lang="bash" title="ping / traceroute 观察网络层" code={traceCode} />
+        <p>
+          想看更底层的头部，用 <code>tcpdump</code> 抓真实的包。它能把 IP 头（网络层）和 TCP 标志位（传输层）
+          原样打印出来，是「封装」这个抽象概念最硬核的证据：
+        </p>
+        <CodeBlock lang="bash" title="tcpdump 看真实头部" code={tcpdumpCode} />
+        <p>
+          最后用 MTU 相关命令，亲手撞一下链路层的「大小天花板」，理解分片是怎么回事：
+        </p>
+        <CodeBlock lang="bash" title="观察 MTU 与分片边界" code={mtuCode} />
       </Practice>
 
       <Summary
         points={[
           '分层的核心是解耦与各司其职：每层只做一件事、只和相邻层用固定接口打交道，从而能独立演进、复杂度可控。',
+          '分层有代价（多次加头、内核拷贝），极致性能场景会用内核旁路绕开标准栈——理解代价才算理解权衡。',
           'OSI 是七层理论参考模型，TCP/IP 是实际运行的四层模型；OSI 的表示层、会话层在 TCP/IP 里被并入应用层。',
-          '四层职责：应用层（HTTP/DNS）、传输层（TCP/UDP，用端口区分进程）、网络层（IP，寻址路由）、链路层（Ethernet/MAC，相邻节点传帧）。',
+          '四层职责与数据单元：应用层（报文）、传输层（段，用端口）、网络层（包，用 IP）、链路层（帧，用 MAC）。',
           '代表设备要分清：交换机在链路层看 MAC、管局域网内部；路由器在网络层看 IP、管跨网络转发。',
-          '数据自上而下逐层加头部叫封装（报文→段→包→帧），到对端自下而上逐层剥头部叫解封装。',
+          '数据自上而下逐层加头部叫封装，到对端自下而上逐层剥头部叫解封装；IP 端到端不变，MAC 逐跳改变。',
+          'MTU 是链路层的帧大小上限（以太网 1500），超过要分片；协议栈分散在网卡、内核、用户态三处实现。',
           '关键约定：每层只认自己的头部，把上层内容当成不透明数据，这正是分层得以解耦的根本。',
         ]}
       />

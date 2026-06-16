@@ -25,6 +25,31 @@ const checklistCode = `# 「按需求选 MQ」决策清单（从上往下问）
 #   日志收集、流处理、数据管道   -> Kafka
 #   订单交易、事务一致、大规模   -> RocketMQ`
 
+const pullPushCode = `# 推 vs 拉：决定了堆积能力和消费节奏的差异
+
+# RabbitMQ：push 模型，broker 主动把消息推给消费者
+#   靠 prefetch 做背压，消费者本地缓冲，堆积压力在 broker 内存
+ch.basic_qos(prefetch_count=50)
+ch.basic_consume(queue='q', on_message_callback=cb, auto_ack=False)
+
+# Kafka / RocketMQ：pull 模型，消费者按自己节奏主动拉
+#   消息顺序落盘、靠 offset 记录消费位置，可重置 offset 回溯重放
+#   伪代码：
+#   while True:
+#       records = consumer.poll(timeout=1000)   # 主动拉一批
+#       handle(records)
+#       consumer.commit()                       # 提交 offset`
+
+const txnCode = `# RocketMQ 事务消息（半消息 + 回查）解决「本地事务 + 发消息」的一致性
+# RabbitMQ 没有原生事务消息，要靠「本地消息表」自己实现类似效果
+
+# 本地消息表方案（RabbitMQ 常用替代）：
+# 1) 同一个数据库事务里：写业务数据 + 写一条「待发送消息」记录
+# 2) 事务提交后，由定时任务/CDC 扫描待发送记录并投递到 MQ
+# 3) 收到 confirm 后把消息记录标记为已发送
+# 关键：业务和「消息待发」在同一本地事务，保证不会出现
+#       「业务成功但消息没发」或「消息发了但业务回滚」`
+
 export default function Ch3() {
   return (
     <>
@@ -42,6 +67,19 @@ export default function Ch3() {
         <strong>Kafka 是「高速的流水账」</strong>（顺序写盘、吞吐怪兽、可回溯），
         <strong>RocketMQ 是「为电商金融定制的物流系统」</strong>（事务消息、顺序消息、堆积能力强）。
         记住这个定位，再看维度对比就不会乱。
+      </p>
+
+      <h2>一图看懂：架构本质差异</h2>
+      <p>
+        差异的根子在<strong>存储与投递模型</strong>不同。RabbitMQ 是「队列 + push」：消息在队列里，broker 主动推给消费者，
+        消费完即删；Kafka/RocketMQ 是「日志 + pull」：消息顺序追加写到磁盘日志，消费者按自己的 offset 主动拉，
+        消费完不删、可回溯重放。这一条差异几乎能推导出后面所有维度的结论：
+      </p>
+      <CodeBlock lang="python" title="push vs pull 模型" code={pullPushCode} />
+      <p>
+        正因为 RabbitMQ 消费完即删、消息优先驻留内存，它<strong>延迟低但不擅长堆积</strong>；
+        而 Kafka 顺序写盘、按 offset 拉取，它<strong>吞吐高、可回溯但单条延迟略高</strong>。
+        记住「push+队列 vs pull+日志」这条主线，比死记硬背维度表强得多。
       </p>
 
       <h2>逐维度对比</h2>
@@ -80,6 +118,7 @@ export default function Ch3() {
         </li>
         <li>
           <strong>RabbitMQ 弱</strong>：消息优先驻留内存，堆积多了触发 flow control、性能骤降，不适合长期囤积大量消息。
+          （lazy queue 能缓解，但仍不是它的强项。）
         </li>
       </ul>
 
@@ -91,6 +130,22 @@ export default function Ch3() {
         </li>
         <li>
           Kafka 在<strong>单分区内</strong>保证顺序，有事务 API 但偏流处理语义；RabbitMQ 单队列单消费者下才有序，原生不支持事务消息。
+        </li>
+      </ul>
+      <p>
+        RabbitMQ 没有事务消息，但工程上可用「<strong>本地消息表</strong>」补齐这个能力，思路是把「写业务」和「记一条待发消息」
+        放进同一个本地事务，再异步投递：
+      </p>
+      <CodeBlock lang="python" title="本地消息表补齐事务一致性" code={txnCode} />
+
+      <h3>消息回溯与重放</h3>
+      <ul>
+        <li>
+          <strong>Kafka / RocketMQ 支持</strong>：消息消费后不删，按 offset 保存，可以把消费位置重置到过去任意点重新消费，
+          做数据回放、问题复现、新消费者全量初始化都很方便。
+        </li>
+        <li>
+          <strong>RabbitMQ 不支持</strong>：消息一旦被 ack 就从队列删除，无法回溯。要重放只能靠业务侧自己存档重发。
         </li>
       </ul>
 
@@ -105,6 +160,21 @@ export default function Ch3() {
           RocketMQ 组件（NameServer、Broker）清晰但需要一定运维投入。
         </li>
       </ul>
+
+      <h2>一张总表</h2>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>RabbitMQ</th><th>Kafka</th><th>RocketMQ</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>吞吐</td><td>万级</td><td>百万级</td><td>十万级</td></tr>
+          <tr><td>延迟</td><td>最低</td><td>较高</td><td>居中</td></tr>
+          <tr><td>路由</td><td>最灵活（exchange）</td><td>弱（topic/partition）</td><td>中（tag 过滤）</td></tr>
+          <tr><td>堆积/回溯</td><td>弱，不可回溯</td><td>强，可回溯</td><td>强，可回溯</td></tr>
+          <tr><td>事务/顺序</td><td>弱（需自实现）</td><td>分区内有序</td><td>最强（事务消息）</td></tr>
+          <tr><td>模型</td><td>队列 + push</td><td>日志 + pull</td><td>日志 + pull</td></tr>
+        </tbody>
+      </table>
 
       <Example title="三个典型场景分别选谁">
         <ul>
@@ -139,16 +209,33 @@ export default function Ch3() {
         <p>
           除了背维度对比，能说出「为什么」更显功力：Kafka 吞吐高是因为
           <strong>分区并行 + 顺序写盘 + 零拷贝 + 批量</strong>；RabbitMQ 延迟低、路由强是因为
-          <strong>AMQP exchange 模型 + 内存优先</strong>；RocketMQ 事务消息强是因为
+          <strong>AMQP exchange 模型 + 内存优先 + push</strong>；RocketMQ 事务消息强是因为
           <strong>半消息 + 事务回查</strong>机制。把原理串起来，比单纯报结论强得多。
         </p>
+      </Callout>
+
+      <Callout variant="info" title="常见误区">
+        <ul>
+          <li>
+            <strong>误区：以为 Kafka 一定比 RabbitMQ「先进、该全用 Kafka」。</strong> 复杂路由、低延迟、量不大的业务场景，
+            RabbitMQ 反而更省心；Kafka 的高吞吐在这些场景用不上，还得忍受它弱路由和较高延迟。
+          </li>
+          <li>
+            <strong>误区：把 exactly-once 当成选型决定因素。</strong> 三者端到端都无法真正 exactly-once，
+            都靠「at-least-once + 消费端幂等」，这点上没有谁有本质优势。
+          </li>
+          <li>
+            <strong>误区：用消息量「峰值」而非「常态」选型。</strong> 偶发峰值可以靠削峰扛过，按常态 + 合理余量选更经济。
+          </li>
+        </ul>
       </Callout>
 
       <h2>实战 / 面试怎么答</h2>
       <p>被问「这三个 MQ 怎么选」，建议这样组织回答：</p>
       <ul>
         <li>先用一句话给三者定位（灵活邮局 / 高速流水账 / 电商物流系统）；</li>
-        <li>再按吞吐、延迟、路由、堆积、顺序事务五个维度快速对比；</li>
+        <li>点出架构本质差异：RabbitMQ 是队列 + push、Kafka/RocketMQ 是日志 + pull，这条推导出后面所有差异；</li>
+        <li>再按吞吐、延迟、路由、堆积回溯、顺序事务五个维度快速对比；</li>
         <li>最后落到场景：日志大数据选 Kafka、复杂路由业务解耦选 RabbitMQ、电商金融选 RocketMQ；</li>
         <li>补一句「还要结合团队栈和运维成本」，体现工程权衡意识。</li>
       </ul>
@@ -159,17 +246,19 @@ export default function Ch3() {
         <p>
           练习：给自己出三道题——「短信验证码下发」「APP 全量行为埋点」「秒杀下单扣库存」，
           用清单各选一个 MQ 并说出理由，对照前面的维度检查是否站得住脚。
+          进阶再想一步：如果用 RabbitMQ 也要做到「扣款和发消息一致」，怎么用本地消息表补齐它缺失的事务消息能力？
         </p>
       </Practice>
 
       <Summary
         points={[
-          '一句话定位：RabbitMQ 是灵活邮局（路由强、延迟低），Kafka 是高速流水账（吞吐高、可回溯），RocketMQ 是电商物流系统（事务 / 顺序 / 堆积强）。',
-          '吞吐 Kafka > RocketMQ > RabbitMQ；延迟 RabbitMQ 最低；堆积能力 Kafka / RocketMQ 远强于 RabbitMQ。',
-          '路由灵活性 RabbitMQ 凭 exchange 模型最强；顺序与事务消息 RocketMQ 最强（半消息 + 事务回查）。',
-          '场景对号入座：日志 / 大数据管道选 Kafka，复杂路由 / 业务解耦 / 低延迟选 RabbitMQ，电商金融大规模 / 事务顺序选 RocketMQ。',
-          '选型本质是匹配主要矛盾（路由 vs 吞吐堆积 vs 事务顺序），再叠加团队已有技术栈与运维成本权衡。',
-          '面试能讲清「为什么」（Kafka 顺序写盘 + 零拷贝、RabbitMQ exchange + 内存优先、RocketMQ 半消息）比只报结论更出彩。',
+          '一句话定位：RabbitMQ 是灵活邮局（路由强、延迟低），Kafka 是高速流水账（吞吐高、可回溯），RocketMQ 是电商物流系统（事务/顺序/堆积强）。',
+          '架构本质：RabbitMQ 是队列+push、消费即删；Kafka/RocketMQ 是日志+pull、按 offset 可回溯——这条推导出几乎所有差异。',
+          '吞吐 Kafka > RocketMQ > RabbitMQ；延迟 RabbitMQ 最低；堆积与回溯能力 Kafka/RocketMQ 远强于 RabbitMQ。',
+          '路由灵活性 RabbitMQ 凭 exchange 模型最强；顺序与事务消息 RocketMQ 最强（半消息+事务回查），RabbitMQ 可用本地消息表替代。',
+          '场景对号入座：日志/大数据选 Kafka，复杂路由/业务解耦/低延迟选 RabbitMQ，电商金融大规模/事务顺序选 RocketMQ。',
+          '选型本质是匹配主要矛盾（路由 vs 吞吐堆积 vs 事务顺序），再叠加团队技术栈与运维成本；别盲目追新、别用峰值选型。',
+          '面试能讲清「为什么」（Kafka 顺序写盘+零拷贝、RabbitMQ exchange+push、RocketMQ 半消息）比只报结论更出彩。',
         ]}
       />
     </>

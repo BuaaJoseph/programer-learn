@@ -27,6 +27,24 @@ dig www.example.com
 # +trace 显示完整递归路径：根域名服务器 -> 顶级域(.com) -> 权威域名服务器
 dig +trace www.example.com`
 
+const nslookupCode = `# 看一个域名的多条记录，理解 CDN 为什么会返回不同 IP
+dig www.example.com A          # IPv4 地址
+dig www.example.com AAAA       # IPv6 地址
+dig www.example.com CNAME      # 别名，常见于接入 CDN 后
+dig www.example.com NS         # 权威域名服务器
+
+# 指定用不同的 DNS 服务器解析，对比结果（排查 DNS 污染/就近调度很有用）
+dig @8.8.8.8 www.example.com
+dig @223.5.5.5 www.example.com`
+
+const tlsResumeCode = `# 观察 TLS 会话复用：第一次握手是完整 1-RTT，第二次可能走 0-RTT/会话票据
+# --tlsv1.3 强制 1.3；多跑两次看 time_appconnect 是否明显下降
+curl -s -o /dev/null -w 'tls: %{time_appconnect}s total: %{time_total}s\\n' \\
+  --tlsv1.3 https://example.com
+
+# 用 openssl 直接看证书链与协商出的协议版本、加密套件
+openssl s_client -connect example.com:443 -servername example.com < /dev/null`
+
 export default function Ch2() {
   return (
     <>
@@ -78,17 +96,48 @@ export default function Ch2() {
         每一级查到结果都会按 <em>TTL</em>（生存时间）缓存一段时间，所以同一个域名第二次访问通常快很多。
       </p>
 
+      <h3>第二步补充：DNS 用 UDP 还是 TCP、记录类型与 CDN 调度</h3>
+      <p>
+        DNS 默认走 <strong>UDP 53</strong> 端口——查询和响应通常很小，UDP 无需握手、一来一回最快。
+        但有两种情况会切到 <strong>TCP</strong>：一是响应内容太大超过 512 字节（UDP 报文上限，会先返回一个带
+        <code>TC</code>「截断」标志的包，让客户端用 TCP 重发）；二是<em>区域传送</em>（zone transfer，主从 DNS 同步全量记录）。
+        所以「DNS 用 UDP 还是 TCP」的标准答案是「以 UDP 为主，特定场景用 TCP」。
+      </p>
+      <p>
+        域名解析返回的不只是一个 IP。常见<em>记录类型</em>有：<code>A</code>（IPv4）、<code>AAAA</code>（IPv6）、
+        <code>CNAME</code>（别名，接入 CDN 后域名往往先 CNAME 到 CDN 厂商的域名）、<code>MX</code>（邮件服务器）、
+        <code>NS</code>（权威服务器）、<code>TXT</code>（各种验证）。这也解释了一个常见现象：同一个域名，
+        在不同地区、不同时间用 <code>dig</code> 解析出来的 IP 可能不一样——这是 CDN 在按地理位置、负载做<strong>就近调度</strong>，
+        给你返回最近的边缘节点。
+      </p>
+
       <h3>第三步：建立 TCP 连接（三次握手）</h3>
       <p>
         拿到 IP 后，传输层用 <em>TCP</em> 建立可靠连接，需要<strong>三次握手</strong>：
         客户端发 <code>SYN</code> → 服务器回 <code>SYN + ACK</code> → 客户端再回 <code>ACK</code>。
         三次的目的是<strong>双方都确认对方的收发能力都正常</strong>，连接才算建好（细节见后续章节）。
       </p>
+      <p>
+        这里有个常被忽略的细节：第三个 <code>ACK</code> 其实可以<strong>顺带把第一个 HTTP 请求一起发出去</strong>，
+        而不必等 ACK 单独走完。Linux 的 <em>TCP Fast Open</em>（TFO）更进一步，能在 SYN 包里就携带数据，
+        把建连和首个请求合并，省掉一个 RTT。理解这点，才能解释为什么有些场景「连接建立」和「发请求」的耗时几乎重叠。
+      </p>
 
       <h3>第四步：TLS 握手（仅 HTTPS）</h3>
       <p>
         如果是 HTTPS，TCP 建好后还要做一次 <em>TLS</em> 握手：协商加密套件、验证服务器证书、交换密钥，
         之后的数据全程加密。这一步是 HTTPS 比 HTTP 多出来的耗时，但换来了机密性与完整性。
+      </p>
+      <p>
+        握手耗时和 TLS 版本强相关：<strong>TLS 1.2 完整握手需要 2 个 RTT</strong>，<strong>TLS 1.3 优化到了 1 个 RTT</strong>，
+        而且支持<em>会话复用</em>——第二次连同一个站点时，可凭上次的会话票据（session ticket）走 <strong>0-RTT</strong>，
+        几乎不增加额外往返。这就是为什么「第二次访问 HTTPS 站点明显更快」的一个隐藏原因。HTTPS 的完整原理在后续章节单独讲，
+        这里只要记住它在链路里的位置和量级即可。
+      </p>
+      <p>
+        顺带一提，TLS 握手里有个叫 <code>SNI</code>（Server Name Indication）的扩展，作用是在一个 IP 上托管多个 HTTPS 站点时，
+        告诉服务器「我要访问哪个域名」，好让它返回对应的证书。这也是 <code>curl --servername</code> 和
+        <code>openssl s_client -servername</code> 要带域名的原因。
       </p>
 
       <h3>第五、六步：发 HTTP 请求 + 服务器响应</h3>
