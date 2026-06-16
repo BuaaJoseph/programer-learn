@@ -20,8 +20,8 @@ export const VOLUMES = [
     subtitle: 'Code-as-Action',
     theme: 'Hugging Face 的极简框架，主打「Agent 写并执行 Python 代码来行动」。最轻、最适合建立 Agent/工具/循环的直觉。',
     chapters: [
-      { slug: 'af1-c1', title: 'smolagents 原理：CodeAgent 与代码行动', topic: '原理', hook: 'CodeAgent 每一步生成并执行一段 Python，而不是输出 JSON 工具调用——更少步数、更自然地组合工具。约 1000 行的极简 ReAct 循环。', minutes: 120, hasContent: false },
-      { slug: 'af1-c2', title: '实战：用 smolagents + 百炼解一道多步题', topic: '实战', hook: 'OpenAIServerModel 接百炼，写一个 CodeAgent 在一步代码里循环计算+筛选，直观感受 code-as-action 的省步数。', minutes: 120, hasContent: false },
+      { slug: 'af1-c1', title: 'smolagents 原理：CodeAgent 与代码行动', topic: '原理', hook: 'CodeAgent 每一步生成并执行一段 Python，而不是输出 JSON 工具调用——更少步数、更自然地组合工具。约 1000 行的极简 ReAct 循环。', minutes: 120, hasContent: true },
+      { slug: 'af1-c2', title: '实战：用 smolagents + 百炼解一道多步题', topic: '实战', hook: 'OpenAIServerModel 接百炼，写一个 CodeAgent 在一步代码里循环计算+筛选，直观感受 code-as-action 的省步数。', minutes: 120, hasContent: true },
     ],
   },
   {
