@@ -75,8 +75,8 @@ export const VOLUMES = [
     subtitle: 'Data & RAG',
     theme: '以「连接 LLM 与你的数据」为核心：索引/检索 + Agent + 事件驱动 Workflows，最适合做知识库与文档问答。',
     chapters: [
-      { slug: 'af6-c1', title: 'LlamaIndex 原理：索引/检索 + Agent + Workflows', topic: '原理', hook: 'VectorStoreIndex/query engine 是数据层，FunctionAgent/AgentWorkflow 是 Agent 层，Workflows 1.0 用事件驱动把步骤串起来。', minutes: 150, hasContent: false },
-      { slug: 'af6-c2', title: '实战：chat-with-your-docs 知识助手（接百炼）', topic: '实战', hook: 'OpenAILike(is_chat_model=True) 接百炼(注意这个坑)，建索引→QueryEngineTool→FunctionAgent，二十行做一个能查你文档的 Agent。', minutes: 150, hasContent: false },
+      { slug: 'af6-c1', title: 'LlamaIndex 原理：索引/检索 + Agent + Workflows', topic: '原理', hook: 'VectorStoreIndex/query engine 是数据层，FunctionAgent/AgentWorkflow 是 Agent 层，Workflows 1.0 用事件驱动把步骤串起来。', minutes: 150, hasContent: true },
+      { slug: 'af6-c2', title: '实战：chat-with-your-docs 知识助手（接百炼）', topic: '实战', hook: 'OpenAILike(is_chat_model=True) 接百炼(注意这个坑)，建索引→QueryEngineTool→FunctionAgent，二十行做一个能查你文档的 Agent。', minutes: 150, hasContent: true },
     ],
   },
   {
