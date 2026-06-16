@@ -42,8 +42,8 @@ export const VOLUMES = [
     subtitle: 'Type-Safe & Structured',
     theme: 'Pydantic 团队出品，把 FastAPI 式的类型安全与依赖注入带到 Agent：结构化输出、deps 注入、可测试。',
     chapters: [
-      { slug: 'af3-c1', title: 'PydanticAI 原理：output_type、deps 与工具', topic: '原理', hook: '泛型 Agent 绑定 model/deps/output 类型；output_type + BaseModel 自动校验重试；deps + RunContext 做依赖注入——低魔法、可测试。', minutes: 120, hasContent: false },
-      { slug: 'af3-c2', title: '实战：工单分级（结构化输出 + 依赖注入，接百炼）', topic: '实战', hook: 'OpenAIChatModel + OpenAIProvider 接百炼，做一个返回结构化 Triage 的客服 Agent，用 deps 注入查余额，并演示用 override 写测试。', minutes: 150, hasContent: false },
+      { slug: 'af3-c1', title: 'PydanticAI 原理：output_type、deps 与工具', topic: '原理', hook: '泛型 Agent 绑定 model/deps/output 类型；output_type + BaseModel 自动校验重试；deps + RunContext 做依赖注入——低魔法、可测试。', minutes: 120, hasContent: true },
+      { slug: 'af3-c2', title: '实战：工单分级（结构化输出 + 依赖注入，接百炼）', topic: '实战', hook: 'OpenAIChatModel + OpenAIProvider 接百炼，做一个返回结构化 Triage 的客服 Agent，用 deps 注入查余额，并演示用 override 写测试。', minutes: 150, hasContent: true },
     ],
   },
   {
