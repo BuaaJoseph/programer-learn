@@ -21,6 +21,32 @@ dubbo.registry.address=nacos://127.0.0.1:8848
 dubbo.registry.parameters.namespace=public
 dubbo.registry.group=DEFAULT_GROUP`
 
+const multiRegistryCode = `# 多注册中心：双注册 / 迁移期常用
+# 场景一：服务同时注册到 ZK 和 Nacos（平滑迁移期，新老消费者都能发现）
+dubbo:
+  registries:
+    zk:
+      address: zookeeper://127.0.0.1:2181
+    nacos:
+      address: nacos://127.0.0.1:8848
+
+# 场景二：某个服务只注册到指定注册中心
+# @DubboService(registry = "nacos")
+# 场景三：只订阅不注册（消费者纯调用）/ 只注册不订阅（提供者纯暴露）
+#   <dubbo:registry ... register="false" />  # 不把自己注册上去
+#   <dubbo:registry ... subscribe="false" /> # 不订阅别人`
+
+const cacheFileCode = `// 本地缓存文件：注册中心挂了也能靠它启动
+// 默认位置 ~/.dubbo/dubbo-registry-{应用名}-{注册中心地址}.cache
+// 内容是「服务 -> 提供者 URL 列表」的快照，Consumer 启动时若连不上注册中心，
+// 会读这个文件兜底，避免「注册中心和应用一起重启时全军覆没」。
+//
+// 可自定义路径：
+dubbo.registry.file=/data/dubbo/order-consumer.cache
+//
+// 注意：缓存是「最终一致」的安全网，不是「实时」的——
+// 它解决的是「冷启动遇上注册中心不可用」，不解决「地址实时性」。`
+
 export default function Ch2() {
   return (
     <>
@@ -61,6 +87,14 @@ export default function Ch2() {
       </p>
 
       <RegistryDiscovery />
+
+      <h3>为什么是「推全量」而不是「推增量」</h3>
+      <p>
+        细心的人会问：明明只下线了一台，为什么注册中心要把<strong>整个列表</strong>重新推一遍，而不是只告诉「少了哪台」？
+        这是个刻意的设计取舍。推全量的好处是<strong>幂等且无状态</strong>：Consumer 不用维护「我现在有哪些、收到的增量要怎么合并」
+        这种容易出错的状态机，每次拿到的就是「当前完整真相」，直接整体替换本地列表即可，丢一两条推送也能靠下次全量自愈。
+        代价是单次列表很大时推送数据量大——这恰恰是 Dubbo 3 推应用级发现的动机之一（地址条数大幅减少）。
+      </p>
 
       <Example title="一台 Provider 宕机，Consumer 多久才不再调它">
         <p>
@@ -105,6 +139,21 @@ export default function Ch2() {
         </p>
       </KeyIdea>
 
+      <p>
+        这个本地缓存不只在内存里，还落到了<strong>磁盘文件</strong>，专门解决一个最尴尬的场景：
+        「注册中心和应用一起重启」。如果只有内存缓存，应用一重启缓存就没了，又连不上注册中心，就彻底起不来。
+        有了磁盘缓存文件，冷启动时连不上注册中心也能读文件兜底拿到一份旧地址先跑起来：
+      </p>
+      <CodeBlock lang="java" title="注册中心本地缓存文件" code={cacheFileCode} />
+
+      <h2>多注册中心与高级订阅</h2>
+      <p>
+        生产里注册中心配置远不止「填一个地址」。两个常见进阶场景值得知道：一是<strong>注册中心迁移</strong>
+        （比如从 ZK 迁到 Nacos），过渡期让服务<strong>双注册</strong>到两个注册中心，新老消费者都能发现，迁移完再撤掉旧的；
+        二是<strong>只注册不订阅 / 只订阅不注册</strong>，纯 Provider 应用不需要订阅、纯 Consumer 应用不需要把自己注册上去：
+      </p>
+      <CodeBlock lang="yaml" title="多注册中心与订阅开关" code={multiRegistryCode} />
+
       <Callout variant="tip" title="应用级注册 vs 接口级注册">
         <p>
           Dubbo2 是<strong>接口级注册</strong>：每个接口都在注册中心存一份地址，接口一多，注册中心的数据量会膨胀。
@@ -120,6 +169,16 @@ export default function Ch2() {
         再补一组对比「ZooKeeper 偏 CP、临时节点 + watch；Nacos AP/CP 可选、更适合大规模」，
         最后点一句「Dubbo3 用应用级注册降低注册中心压力」，就是一个完整且有深度的回答。
       </p>
+
+      <Callout variant="warn" title="注册发现的真实坑">
+        <ul>
+          <li><strong>session 超时调太小</strong>：网络抖动一下就把健康节点摘了，引发地址列表频繁震荡（抖动/flapping），反而更不稳。</li>
+          <li><strong>把注册中心当强一致用</strong>：服务发现本质是最终一致，期待「下线瞬间全网感知」不现实，必须靠容错兜底那段窗口。</li>
+          <li><strong>ZK 集群脑裂/选主期</strong>：CP 系统这段时间可能拒绝写入，Provider 注册失败；要靠重试和本地缓存扛过去。</li>
+          <li><strong>误区：以为 Consumer 缓存能永久兜底</strong>。缓存只防「短暂故障」，注册中心长期挂着、期间集群大变动，旧地址会大面积失效。</li>
+          <li><strong>多环境串扰</strong>：测试和生产共用一个注册中心又不隔离 namespace/group，会互相调到对方的服务，事故现场。</li>
+        </ul>
+      </Callout>
 
       <Practice title="把注册中心从 ZooKeeper 换成 Nacos">
         <p>

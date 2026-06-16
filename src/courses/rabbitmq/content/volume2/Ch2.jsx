@@ -40,6 +40,26 @@ public void onPayCallback(PayMessage msg) {
     }
 }`
 
+const stateCode = `-- 方案三：状态机判断，用一次条件更新同时完成「判重」和「推进」
+-- 只有当前是「待支付」才更新为「已支付」，更新行数=0 说明已处理过
+UPDATE orders
+SET status = 'PAID', pay_no = 'PAY20260616001', updated_at = NOW()
+WHERE order_no = 'ORD1001'
+  AND status = 'WAIT_PAY';     -- 关键：把状态当成乐观锁的条件
+
+-- 应用层判断：
+-- affectedRows == 1 → 本次推进成功，执行后续业务
+-- affectedRows == 0 → 状态已不是待支付（重复消息），直接 ack 丢弃`
+
+const versionCode = `-- 方案四：乐观锁版本号，适合余额、库存这类「带数值变更」的更新
+-- 扣款时带上当前 version，重复消息因 version 已变而更新 0 行
+UPDATE account
+SET balance = balance - 99, version = version + 1
+WHERE user_id = 1001
+  AND version = 7;            -- 读到的版本号
+
+-- 重复执行时 version 已是 8，条件不满足，更新 0 行，扣款不会再发生`
+
 export default function Ch2() {
   return (
     <>
@@ -60,6 +80,10 @@ export default function Ch2() {
         <li><strong>消费超时重投</strong>：业务处理太慢，超过了消费超时或消费者断连，broker 把消息重新分给别人。</li>
         <li><strong>生产者重发</strong>：生产端没收到 confirm 回执，以为没发成功，又发了一遍（其实第一条已经到了）。</li>
       </ul>
+      <p>
+        本质上，这三类都源于同一个分布式难题：<strong>「业务处理」和「确认动作」无法绑成一个原子操作</strong>。
+        只要这两步之间任意一步崩溃或网络丢包，系统就只能选择「宁可重投不可漏投」（at-least-once），重复因此不可避免。
+      </p>
 
       <h3>为什么不能靠「不重复」，而要靠「幂等」</h3>
       <p>
@@ -67,6 +91,12 @@ export default function Ch2() {
         是两个动作，中间任何一个环节崩溃都会导致状态不一致。业界的现实做法是 <em>at-least-once</em>（至少一次）投递
         <strong>加上消费端幂等</strong>，组合出「效果上的恰好一次」。换句话说：把重复当成常态接受，
         然后让代码对重复「免疫」。
+      </p>
+      <p>
+        顺带辨析三种投递语义：<strong>at-most-once</strong>（至多一次，可能丢，autoAck 就是）、
+        <strong>at-least-once</strong>（至少一次，可能重，手动 ack + 重试）、<strong>exactly-once</strong>
+        （恰好一次，理论理想）。RabbitMQ 默认提供的是 at-least-once，所谓 exactly-once 都是
+        「at-least-once 投递 + 消费端幂等」在效果上模拟出来的，没有哪个 MQ 能在端到端真正做到 exactly-once。
       </p>
 
       <Example title="支付回调被投两次，不能扣两次款">
@@ -90,6 +120,14 @@ export default function Ch2() {
         </p>
       </KeyIdea>
 
+      <Callout variant="warn" title="别用消息 ID 当唯一键，要用业务键">
+        <p>
+          一个高频翻车点：拿 RabbitMQ 的 messageId 或自动生成的 UUID 当幂等键。问题在于
+          <strong>生产者重发时往往会生成一个新的 messageId</strong>，于是同一笔业务的两条消息 ID 不同，去重失效。
+          正确做法是用<strong>业务自身的唯一标识</strong>（支付流水号、订单号），它在重发时保持不变，才挡得住重复。
+        </p>
+      </Callout>
+
       <h2>四种常用幂等方案</h2>
       <ul>
         <li><strong>唯一索引</strong>：用业务唯一键建数据库唯一索引，重复插入直接报错，最简单可靠。</li>
@@ -98,6 +136,10 @@ export default function Ch2() {
         <li><strong>乐观锁版本号</strong>：更新时带上 version，<code>UPDATE ... WHERE version = ?</code>，
           重复操作因版本不匹配而更新 0 行，自然失效。</li>
       </ul>
+      <p>状态机方案的精髓是把「判重」和「推进状态」合并成一条带条件的更新，避免「先查后改」的并发竞态：</p>
+      <CodeBlock lang="sql" title="状态机条件更新" code={stateCode} />
+      <p>带数值变更（扣款、扣库存）的场景更适合乐观锁版本号，靠版本不匹配天然挡住重复执行：</p>
+      <CodeBlock lang="sql" title="乐观锁版本号" code={versionCode} />
 
       <Callout variant="warn" title="Redis 去重不是绝对安全">
         <p>
@@ -107,6 +149,23 @@ export default function Ch2() {
         </p>
       </Callout>
 
+      <h2>方案选型对比</h2>
+      <table>
+        <thead>
+          <tr><th>方案</th><th>一致性</th><th>性能</th><th>适用场景</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>唯一索引</td><td>强</td><td>中</td><td>插入型业务（流水、记录），最终兜底</td></tr>
+          <tr><td>Redis SETNX</td><td>弱（可丢标记）</td><td>高</td><td>高并发前置拦截</td></tr>
+          <tr><td>状态机</td><td>强</td><td>中</td><td>有明确状态流转的业务</td></tr>
+          <tr><td>乐观锁版本号</td><td>强</td><td>中</td><td>余额、库存等数值更新</td></tr>
+        </tbody>
+      </table>
+      <p>
+        实战常用<strong>组合拳</strong>：Redis SETNX 做高并发前置拦截（挡掉 99% 的重复），数据库唯一索引/状态机做最终兜底
+        （保证那 1% 也不出错）。单用任何一种都有边界，组合才稳。
+      </p>
+
       <h2>面试怎么答 / 实战要点</h2>
       <p>
         被问「怎么避免重复消费」，先纠正问题：“重复挡不住，只能做幂等。” 然后讲三句：重复来自 ack 丢失、
@@ -114,6 +173,21 @@ export default function Ch2() {
         做快速拦截，有状态流转的业务用状态机判断。最后点一句「at-least-once + 幂等 = 效果上的 exactly-once」，
         立刻显出理解深度。
       </p>
+      <Callout variant="info" title="高频追问">
+        <ul>
+          <li>
+            <strong>追问：所有操作都需要幂等吗？</strong> 不是。天然幂等的操作（如「把状态置为已支付」「SET 余额=100」）
+            不需要额外处理；需要处理的是「累加型」操作（扣款、加积分、发短信）。识别哪些操作非幂等，是第一步。
+          </li>
+          <li>
+            <strong>追问：发短信这种没有数据库的副作用怎么幂等？</strong> 同样用去重表：发之前查「这条短信任务是否发过」，
+            发完记一条已发标记，重复消息查到标记就跳过。
+          </li>
+          <li>
+            <strong>误区：以为开了手动 ack 就不会重复。</strong> 恰恰相反，手动 ack + 重试正是重复的主要来源，幂等是它的配套。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="给支付回调加上幂等">
         <p>
@@ -125,18 +199,20 @@ export default function Ch2() {
         <CodeBlock lang="java" title="PayCallbackHandler.java" code={redisCode} />
         <p>
           进阶：把「SETNX 拦截」和「数据库唯一索引兜底」组合起来，思考 Redis 标记已置但业务未完成时，
-          怎样靠数据库这一层保证最终的强一致。
+          怎样靠数据库这一层保证最终的强一致。再换成状态机方案，体会一条带 <code>WHERE status=...</code>
+          的更新如何把「判重 + 推进」合并成一个原子动作。
         </p>
       </Practice>
 
       <Summary
         points={[
-          '为了不丢消息开了重试，重复消费就成了必然副产物，必须正面解决。',
+          '为了不丢消息开了重试，重复消费就成了必然副产物，根因是「业务处理」与「确认」无法原子化。',
           '重复三大来源：消费端 ack 丢失被重投、消费超时重投、生产端没收到 confirm 而重发。',
-          '工程上做不到真正 exactly-once，现实方案是 at-least-once 投递 + 消费端幂等。',
-          '幂等的本质是「执行一次和执行多次结果一样」，钥匙是稳定的业务唯一键。',
-          '四种方案：唯一索引、Redis SETNX 去重表、状态机判断、乐观锁版本号，按一致性和并发取舍。',
-          '强一致场景以数据库唯一索引/事务兜底，Redis 只做前置快速拦截。',
+          '三种投递语义：at-most-once 会丢、at-least-once 会重、exactly-once 是理想；RabbitMQ 默认 at-least-once。',
+          '工程方案是 at-least-once 投递 + 消费端幂等，组合出效果上的 exactly-once。',
+          '幂等钥匙是稳定的业务唯一键（支付号/订单号），别用会变的 messageId/UUID。',
+          '四种方案：唯一索引、Redis SETNX、状态机条件更新、乐观锁版本号，常用 Redis 前置 + 数据库兜底的组合拳。',
+          '天然幂等的操作无需处理，要处理的是扣款/加积分等累加型副作用。',
         ]}
       />
     </>

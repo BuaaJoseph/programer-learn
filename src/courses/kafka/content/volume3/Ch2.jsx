@@ -31,6 +31,29 @@ while (true) {
   consumer.commitSync(); // 全部处理成功后才提交位移
 }`
 
+const outboxCode = `-- 事务性发件箱(Outbox)：把「写业务」和「记待发消息」放进同一个本地事务
+BEGIN;
+  UPDATE account SET balance = balance - 100 WHERE id = 'A';
+  INSERT INTO outbox(id, topic, payload, status)
+    VALUES ('txn-9527', 'transfer', '{...}', 'PENDING');
+COMMIT;
+-- 之后由 CDC/轮询投递器把 outbox 里的 PENDING 行可靠地发到 Kafka
+-- 业务写库与消息发送原子绑定，彻底消除「库写了消息没发」或反之`
+
+const exactlyOnceTxnCode = `// Kafka 内部链路 EOS：把消费位移也纳入生产事务
+producer.initTransactions();
+while (true) {
+  var records = consumer.poll(Duration.ofMillis(500));
+  producer.beginTransaction();
+  for (var r : records) {
+    producer.send(new ProducerRecord<>("out-topic", transform(r.value())));
+  }
+  // 关键：offset 的提交也走事务，与输出消息同生共死
+  producer.sendOffsetsToTransaction(currentOffsets(records),
+      consumer.groupMetadata());
+  producer.commitTransaction(); // 输出消息 + 位移 一起提交，崩了一起回滚
+}`
+
 export default function Ch2() {
   return (
     <>
@@ -51,6 +74,12 @@ export default function Ch2() {
         <li><strong>broker 端</strong>：<code>replication.factor≥3</code> 多副本 + <code>min.insync.replicas≥2</code>，保证消息落在多台机器上（详见上一章）；</li>
         <li><strong>消费端</strong>：关掉自动提交位移，改成<strong>先处理业务、成功后再手动提交</strong>，避免「位移已提交但业务还没做完就崩了」导致的丢消息。</li>
       </ul>
+      <p>
+        还有两个易被忽略的「丢」点：一是<strong>生产端的异步 send 回调吞了异常</strong>，重试用尽仍失败却没人管，
+        消息悄悄丢了（上卷讲过）；二是 broker <strong>依赖 page cache 异步刷盘</strong>，消息可能还在内存没落盘机器就断电——
+        所以 Kafka 的「不丢」是<strong>靠多副本冗余而非靠单机刷盘</strong>，单台机器丢了缓存里的数据，其他副本上还在。
+        想强制刷盘可调 <code>flush</code> 相关参数，但那会严重拖慢吞吐，通常不这么干。
+      </p>
 
       <h3>不重：幂等生产者 + 消费端幂等</h3>
       <p>
@@ -77,6 +106,10 @@ export default function Ch2() {
         <p>
           解法是开启幂等生产者：开了 <code>enable.idempotence=true</code> 后，即使 <code>max.in.flight</code> 设到 5，
           Kafka 也会在 broker 端按序号纠正顺序，<strong>既保序又不丢吞吐</strong>。没开幂等又要严格保序，就只能把 <code>max.in.flight</code> 压到 1。
+        </p>
+        <p>
+          还有个更隐蔽的乱序源：消费端把消息<strong>丢进线程池并发处理</strong>，即使拉取有序，处理完成的先后也乱了。
+          需要保序时要么单线程处理一个分区、要么按 key 做内存级串行化（同 key 路由到同一个 worker）。
         </p>
       </Callout>
 
@@ -110,18 +143,32 @@ export default function Ch2() {
         消费端 <code>isolation.level=read_committed</code>（只读已提交的事务消息）。
       </p>
       <p>
+        关键在于事务能把<strong>「输出消息」和「消费位移」一起原子提交</strong>（<code>sendOffsetsToTransaction</code>），
+        这样「读—处理—写」三步要么全成、要么全回滚，位移和结果永远一致，这才是 Kafka 内部 EOS 的精髓。
+      </p>
+      <CodeBlock lang="java" title="ExactlyOnceStream.java" code={exactlyOnceTxnCode} />
+      <p>
         它真正擅长的是 Kafka 内部的「<strong>消费一个 topic、处理后写另一个 topic</strong>」这种流处理链路（Kafka Streams 就是基于它）。
         但一旦你的处理结果要写到 <strong>Kafka 之外</strong>（比如写 MySQL、调第三方接口），Kafka 事务就管不到外部系统了——
         这时还是得回到「至少一次 + 消费端幂等」的老路。所以面试里别把 EOS 说成万能，要点出它的边界。
       </p>
 
+      <h3>跨系统一致性：事务性发件箱</h3>
+      <p>
+        当「写数据库」和「发 Kafka 消息」必须同时成功时，单靠 Kafka 事务无能为力（它管不到 MySQL）。
+        工程上的标准解法是 <strong>事务性发件箱（Transactional Outbox）</strong>：在同一个本地数据库事务里，
+        既写业务表、又往 outbox 表插一条待发消息；再由一个独立的投递器（CDC 监听 binlog 或轮询）把 outbox 的消息可靠地发到 Kafka。
+        这样「业务写成功」与「消息记录下来」是原子的，彻底消除「库写了但消息没发」或反之的不一致。
+      </p>
+      <CodeBlock lang="sql" title="outbox.sql" code={outboxCode} />
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「Kafka 怎么保证消息不丢不重不乱」，按维度分层答：
-        <strong>不丢</strong>看生产（acks=all+重试）、broker（多副本+min.insync.replicas）、消费（手动提交）三处；
+        <strong>不丢</strong>看生产（acks=all+重试+回调处理失败）、broker（多副本+min.insync.replicas+靠副本而非刷盘）、消费（手动提交）三处；
         <strong>不重</strong>靠幂等生产者去网络重复 + 消费端业务幂等兜底；
-        <strong>不乱</strong>记住「顺序只在单分区内」，用 key 路由，并当心 max.in.flight 与重试的乱序坑。
-        最后补一句 EOS = 幂等 + 事务 + read_committed，但仅限 Kafka 内部链路，跨外部系统仍需幂等。
+        <strong>不乱</strong>记住「顺序只在单分区内」，用 key 路由，并当心 max.in.flight 与重试、以及消费端线程池的乱序坑。
+        最后补一句 EOS = 幂等 + 事务（含 sendOffsetsToTransaction）+ read_committed，但仅限 Kafka 内部链路，跨外部系统用发件箱 + 幂等。
       </p>
 
       <Practice title="写一套 EOS 关键配置清单">
@@ -131,20 +178,20 @@ export default function Ch2() {
         <CodeBlock lang="java" title="IdempotentProducer.java" code={idempotentCode} />
         <CodeBlock lang="java" title="ManualCommitConsumer.java" code={consumerCode} />
         <p>
-          清单要点：生产端 <code>enable.idempotence=true</code> + <code>acks=all</code> + 大 <code>retries</code>；
+          清单要点：生产端 <code>enable.idempotence=true</code> + <code>acks=all</code> + 大 <code>retries</code> + 回调处理失败；
           broker 端 <code>replication.factor=3</code> + <code>min.insync.replicas=2</code>；
-          消费端关闭自动提交、先处理后提交、配合唯一键做业务幂等；要内部 EOS 再加事务 + <code>read_committed</code>。
+          消费端关闭自动提交、先处理后提交、配合唯一键做业务幂等；要内部 EOS 再加事务 + <code>read_committed</code>，跨库用发件箱。
         </p>
       </Practice>
 
       <Summary
         points={[
-          '不丢要三处兜底：生产 acks=all+重试、broker 多副本+min.insync.replicas、消费手动提交位移。',
+          '不丢要三处兜底：生产 acks=all+重试+回调处理失败、broker 多副本+min.insync.replicas（靠副本而非刷盘）、消费手动提交位移。',
           '不重靠幂等生产者去掉网络重试的重复，外加消费端用唯一业务 id 做幂等兜底。',
           '顺序只在单分区内保证，想有序就用同一个 key 让消息进同一分区。',
-          '小心 max.in.flight>1 时重试导致的乱序，开启幂等生产者可在保序的同时保留吞吐。',
-          'EOS = 幂等生产者 + 事务 + read_committed，但只适用于 Kafka 内部的消费—处理—生产链路。',
-          '处理结果写到 Kafka 之外时事务失效，工程通行解仍是「至少一次投递 + 消费端幂等」。',
+          '小心 max.in.flight>1 重试导致的乱序（开幂等可保序保吞吐），以及消费端线程池并发处理打乱顺序。',
+          'EOS = 幂等 + 事务（用 sendOffsetsToTransaction 把位移和输出一起原子提交）+ read_committed，只适用 Kafka 内部链路。',
+          '处理结果写到 Kafka 之外时事务失效，用事务性发件箱（Outbox + CDC）保跨库一致，或回到「至少一次 + 消费端幂等」。',
         ]}
       />
     </>

@@ -41,6 +41,26 @@ try {
     producer.abortTransaction();    // 出错则整体回滚
 }`
 
+const batchTuningCode = `// 吞吐 vs 延迟：靠攒批两个旋钮平衡
+props.put("batch.size", "65536");     // 单个分区批次的字节上限（默认 16KB）
+props.put("linger.ms", "20");          // 攒批最多等多久（默认 0=有就发）
+props.put("compression.type", "zstd"); // 整批压缩，省带宽和磁盘
+props.put("buffer.memory", "67108864");// 发送缓冲区总大小，满了会阻塞或抛错
+
+// 直觉：linger.ms 调大、batch.size 调大 => 批更大、吞吐更高、延迟略增
+//       两者都调小 => 延迟低，但请求数多、吞吐下降`
+
+const sendCallbackCode = `// 异步发送 + 回调：千万别忽略回调里的异常，否则丢了都不知道
+producer.send(new ProducerRecord<>("orders", "user-42", "下单成功"),
+    (RecordMetadata md, Exception e) -> {
+        if (e != null) {
+            // 重试已用尽仍失败：必须落库/告警，不能吞掉
+            log.error("发送失败，需补偿: {}", e.getMessage());
+        } else {
+            log.info("ok partition={} offset={}", md.partition(), md.offset());
+        }
+    });`
+
 export default function Ch1() {
   return (
     <>
@@ -105,6 +125,11 @@ export default function Ch1() {
           都写入才返回成功。最可靠，延迟也最高。
         </li>
       </ul>
+      <p>
+        补一个常被忽略的细节：从 Kafka 3.0 起，生产者<strong>默认就开启了幂等</strong>（<code>enable.idempotence=true</code>），
+        而幂等要求 <code>acks=all</code>。所以如果你显式设了 <code>acks=1</code> 又没关幂等，可能在启动时报配置冲突——
+        要么把 acks 设回 all，要么显式关掉幂等，二者得对齐。
+      </p>
 
       <ProducerAck />
 
@@ -120,6 +145,23 @@ export default function Ch1() {
         </p>
       </KeyIdea>
 
+      <Callout variant="info" title="为什么是「副本3 / ISR2」而不是「副本2 / ISR2」">
+        <p>
+          数字背后是可用性账：副本数 3、<code>min.insync.replicas=2</code> 时，挂 1 台还能继续写（ISR 仍有 2 个），
+          兼顾不丢与可用。如果配成副本 2、ISR 2，那么<strong>任何一台 broker 维护或宕机，ISR 就不足 2，整个分区拒绝写入</strong>，
+          可用性极差。这就是「3/2」成为黄金组合的原因——留出一台的容错余量。
+        </p>
+      </Callout>
+
+      <h2>吞吐与延迟：靠攒批平衡</h2>
+      <p>
+        生产者性能的核心旋钮是<strong>攒批</strong>：<code>batch.size</code> 控制单个分区一批最多攒多少字节，
+        <code>linger.ms</code> 控制最多等多久就发（哪怕没攒满）。把它们调大，批更大、压缩率更高、请求数更少、吞吐更高，
+        代价是单条消息的端到端延迟略增；都调小则延迟低但吞吐下降。还有 <code>buffer.memory</code> 是发送缓冲区总量，
+        一旦下游发不出去把缓冲打满，<code>send()</code> 会阻塞（或按 <code>max.block.ms</code> 超时抛错）——这是生产端反压的体现。
+      </p>
+      <CodeBlock lang="java" title="ProducerTuning.java" code={batchTuningCode} />
+
       <h2>retries 与重复：幂等生产者</h2>
       <p>
         网络抖动会让生产者发出消息后收不到确认，于是它<strong>重试</strong>。但消息可能其实已经写进 broker 了，
@@ -129,6 +171,11 @@ export default function Ch1() {
         Kafka 的解法是<em>幂等生产者</em>：开启 <code>enable.idempotence=true</code> 后，broker 给每个生产者分配一个
         <em>PID</em>（producer id），每条消息带上「分区内单调递增的序列号」。broker 发现某个序列号已经写过，就直接丢弃，
         从而做到<strong>单分区、单会话内的精确一次写入</strong>，重试也不会写重。
+      </p>
+      <p>
+        还有个隐藏陷阱：<code>max.in.flight.requests.per.connection</code>（单连接上未确认请求数）如果 &gt; 1 又开了重试，
+        在<strong>非幂等</strong>模式下重试可能让批次乱序（后发的先成功）。幂等模式下 Kafka 会按序列号纠正，
+        允许该值最大到 5 仍保序——所以「要保序又要重试」一定要开幂等。
       </p>
       <Callout variant="warn" title="幂等的边界别说错">
         <p>
@@ -148,11 +195,24 @@ export default function Ch1() {
         被回滚或未提交的消息对它不可见。生产端事务 + 消费端 <code>read_committed</code> + 幂等，合起来就是 Kafka 著名的
         <em>EOS</em>（exactly-once semantics，精确一次语义），常用于「消费 → 处理 → 再生产」的流处理链路。
       </p>
+      <p>
+        底层多一句：事务由 broker 端的 <strong>Transaction Coordinator</strong> 协调，状态记在内部主题
+        <code>__transaction_state</code>；回滚的消息并不会被物理删除，而是打上「中止」标记（control message），
+        <code>read_committed</code> 的消费者在读取时跳过它们。所以事务不是「真删」，而是「可见性控制」。
+      </p>
+
+      <h2>异步发送别吞异常</h2>
+      <p>
+        <code>send()</code> 是异步的，立刻返回一个 <code>Future</code>，真正的成败在回调里。
+        最常见的线上丢消息事故，恰恰是<strong>回调里的异常被忽略了</strong>：重试用尽仍失败，回调拿到 exception，
+        程序却什么都没做，于是这条消息悄无声息地丢了。正确做法是回调里对失败做落库、告警或补偿。
+      </p>
+      <CodeBlock lang="java" title="SendWithCallback.java" code={sendCallbackCode} />
 
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问「Kafka 怎么保证消息不丢」，标准答法是分三端说：
-        <strong>生产端</strong>用 <code>acks=all</code> + 重试 + <code>min.insync.replicas≥2</code>；
+        <strong>生产端</strong>用 <code>acks=all</code> + 重试 + <code>min.insync.replicas≥2</code> + 回调里处理失败；
         <strong>broker 端</strong>副本数≥3、关掉 <code>unclean.leader.election</code>；
         <strong>消费端</strong>处理完再手动提交 offset（下一章详细讲）。
         再追问「怎么不重」，就答幂等生产者去掉生产侧重复、消费侧做业务幂等或上事务实现 EOS。
@@ -173,10 +233,12 @@ export default function Ch1() {
       <Summary
         points={[
           '分区选择三种：显式指定 > 按 key 做 hash（保证同 key 有序）> 无 key 时粘性轮询攒批提吞吐。',
-          'acks=0 不等确认最快但易丢；acks=1 只等 leader；acks=all 等所有 ISR 最可靠。',
-          'acks=all 必须配 min.insync.replicas≥2 且副本数≥3 才真正不丢，三者要一起说。',
-          'retries 会因确认丢失造成重复；幂等生产者用 PID + 序列号在单分区单会话内去重。',
-          '事务用 transactional.id 原子写多分区，配合消费端 read_committed 实现端到端精确一次 EOS。',
+          'acks=0 不等确认最快但易丢；acks=1 只等 leader；acks=all 等所有 ISR 最可靠；3.0 起默认开幂等且要求 acks=all。',
+          'acks=all 必须配 min.insync.replicas≥2 且副本数≥3 才真正不丢；3/2 组合留出一台容错余量、兼顾可用性。',
+          'batch.size 与 linger.ms 调大提吞吐、增延迟；buffer.memory 打满会触发生产端反压。',
+          'retries 会因确认丢失造成重复；幂等生产者用 PID + 序列号在单分区单会话内去重；保序又重试必须开幂等。',
+          '事务用 transactional.id 原子写多分区，由 Transaction Coordinator 协调，配合消费端 read_committed 实现 EOS。',
+          '异步 send 的回调异常绝不能吞，重试用尽仍失败要落库/告警/补偿，否则静默丢消息。',
           '回答不丢不重要分生产端、broker 端、消费端三层讲，别只答一个 acks。',
         ]}
       />

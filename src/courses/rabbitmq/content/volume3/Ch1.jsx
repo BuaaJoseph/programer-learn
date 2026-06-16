@@ -35,6 +35,25 @@ spring:
         concurrency: 4             # 起 4 个消费者线程
         max-concurrency: 16        # 高峰自动扩到 16 个`
 
+const batchCode = `# 批量消费 + 批量 ack：把「每条一次 IO」变成「一批一次 IO」，吞吐数量级提升
+buffer = []
+
+def on_message(channel, method, props, body):
+    buffer.append((method.delivery_tag, body))
+    if len(buffer) >= 100:                       # 攒够一批
+        rows = [b for _, b in buffer]
+        batch_insert(rows)                       # 一次批量写库
+        # multiple=True：确认到这个 tag 为止的所有消息，省去逐条 ack
+        channel.basic_ack(buffer[-1][0], multiple=True)
+        buffer.clear()
+# 注意：要配一个定时 flush，避免不足 100 条的尾部消息一直不提交`
+
+const lazyCode = `# 海量堆积场景：用 lazy queue，消息尽快落盘、不占内存，扛积压更稳
+args = {'x-queue-mode': 'lazy'}       # 惰性队列
+ch.queue_declare(queue='bulk.order', durable=True, arguments=args)
+# 代价：消费时要从磁盘读，延迟略高；换来的是百万级积压也不爆内存
+# RabbitMQ 3.12+ 起队列默认行为已接近 lazy，老版本需显式声明`
+
 export default function Ch1() {
   return (
     <>
@@ -65,6 +84,11 @@ export default function Ch1() {
           <strong>突发流量</strong>——大促、秒杀、定时批处理瞬间灌进海量消息，平时够用的消费者一下子被打穿。
         </li>
       </ul>
+      <p>
+        定位堆积的第一步是看管理台队列的两个关键指标：<strong>Ready</strong>（待推送给消费者的）和
+        <strong>Unacked</strong>（已推送但还没 ack 的）。Ready 一直涨说明消费跟不上；
+        Unacked 一直高不降说明消费者卡在某条消息上（慢处理或忘了 ack）。两者结合能快速判断病根。
+      </p>
 
       <h3>堆积的危害</h3>
       <p>堆积不是「慢一点」这么简单，它会连锁恶化：</p>
@@ -77,6 +101,10 @@ export default function Ch1() {
         <li>
           <strong>延迟急剧变大</strong>——后进队列的消息要排在百万条之后，端到端延迟从毫秒级劣化到分钟甚至小时级，
           时效性业务（如下单后短信）直接失效。
+        </li>
+        <li>
+          <strong>波及其他队列</strong>——同一 Broker 共享内存与磁盘，一个队列把资源吃满会触发全局 flow control，
+          连无关的队列也跟着被限流，影响面扩散。
         </li>
       </ul>
 
@@ -91,6 +119,11 @@ export default function Ch1() {
         它的语义是：<strong>每个消费者同时最多持有 N 条「已推送但还没 ack」的消息</strong>。
         broker 推够 N 条后就停手，直到消费者 ack 掉一条，才补推一条。这就形成了一条天然的
         <em>backpressure</em>（背压）链路——消费得快就推得快，消费得慢就推得慢，broker 不会再单方面把消费者压垮。
+      </p>
+      <p>
+        补一个常被混淆的点：<code>basic_qos</code> 还有个 <code>global</code> 参数。默认 <code>global=false</code>，
+        prefetch 是<strong>按消费者</strong>限额（每个消费者各 N 条）；<code>global=true</code> 则是<strong>按 Channel</strong>
+        限额（整个 Channel 上所有消费者合起来 N 条）。绝大多数场景用默认的 per-consumer 即可。
       </p>
 
       <Example title="大促把队列堆到百万条">
@@ -126,6 +159,10 @@ export default function Ch1() {
             目标是「消费者一直有活干、但又不会囤太多」，最终要靠压测调出来。
           </li>
         </ul>
+        <p>
+          一个粗略的估算公式：<code>prefetch ≈ (目标吞吐 ÷ 消费者数) × 单条处理耗时</code> 再留点余量。
+          比如单消费者要做 100 条/秒、单条 5ms，prefetch 取 1～2 即可让管道不空转。
+        </p>
       </KeyIdea>
 
       <Callout variant="warn" title="prefetch 生效有前提">
@@ -136,6 +173,13 @@ export default function Ch1() {
         </p>
       </Callout>
 
+      <h2>提升消费吞吐的三板斧</h2>
+      <p>背压只是「不被压垮」，要真正消化积压还得提吞吐。除了横向加消费者，还有两招见效快：</p>
+      <p><strong>一、批量消费 + 批量 ack</strong>：把「每条一次 IO」变成「一批一次 IO」，配合 <code>multiple=true</code> 批量确认：</p>
+      <CodeBlock lang="python" title="批量消费 + 批量 ack" code={batchCode} />
+      <p><strong>二、惰性队列（lazy queue）</strong>：海量积压时让消息尽快落盘、不囤内存，用延迟换稳定，避免 OOM：</p>
+      <CodeBlock lang="python" title="lazy queue 扛积压" code={lazyCode} />
+
       <h2>实战 / 面试怎么答</h2>
       <p>被问「消息堆积了怎么办」，按<strong>止血 → 扩容 → 治本</strong>三步答：</p>
       <ul>
@@ -144,13 +188,29 @@ export default function Ch1() {
         </li>
         <li>
           <strong>再扩容</strong>：横向加消费者实例 / 线程提高并发；优化单条消费效率（批量写库、异步调用、去掉慢 SQL）；
-          必要时临时多开一个队列分流。
+          必要时临时多开一个队列分流，或临时起一批「只搬运不处理」的消费者把消息倒到新队列再慢慢消化。
         </li>
         <li>
           <strong>最后治本</strong>：在生产端做<strong>限流</strong>削峰，让生产速度别长期超过消费能力；
           对历史积压评估是否可丢弃或转存离线处理。
         </li>
       </ul>
+      <Callout variant="info" title="高频追问">
+        <ul>
+          <li>
+            <strong>追问：一个队列加再多消费者也提不上吞吐怎么办？</strong> 单队列吞吐有上限（受队列进程单线程调度限制），
+            这时要拆多队列（按 key 分片）或上 quorum 队列分散负载，光堆消费者无用。
+          </li>
+          <li>
+            <strong>追问：积压了几百万条，能直接清掉吗？</strong> 业务允许的话可以 purge 队列或丢弃过期消息；
+            不允许就得倒到离线队列慢慢处理。先评估这些消息的业务价值再决定。
+          </li>
+          <li>
+            <strong>误区：以为加大 prefetch 就能消化积压。</strong> prefetch 只决定「推多少给客户端」，
+            不改变实际处理能力，反而可能撑爆消费者。提吞吐靠并发和单条提效，不靠 prefetch。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="给消费者设置 prefetch 并验证背压">
         <p>下面用 Python pika 客户端设置 <code>prefetch_count</code>，注意必须搭配手动 ack：</p>
@@ -162,17 +222,19 @@ export default function Ch1() {
         <p>
           验证方法：在管理台观察队列的 <code>Unacked</code> 数会稳定在 prefetch × 消费者数附近，
           而 <code>Ready</code>（待推送）数随着消费推进逐步下降，说明背压生效了。
+          再做个对比实验：把单条 ack 换成攒 100 条批量 ack，观察吞吐能提升几倍。
         </p>
       </Practice>
 
       <Summary
         points={[
           '堆积的根因是「消费速度 < 生产速度」，常见于单条消费慢、消费者卡住 / 挂掉、突发流量三类场景。',
-          '危害是连锁的：内存到水位触发 flow control 换页磁盘、磁盘满则阻塞生产者，同时端到端延迟急剧变大。',
-          'QoS basic.qos(prefetchCount) 限制每个消费者「未 ack 消息」的最大条数，形成天然的背压（backpressure）。',
-          'prefetch 取值是权衡：太大撑爆客户端且分配不均，太小往返开销大吞吐低，常用经验值 10~100，最终靠压测。',
-          'QoS 只在手动 ack（auto_ack=False，处理完再 basic_ack）下生效，自动确认会让 prefetch 失效。',
-          '堆积处置按「止血（调 prefetch 稳住）→ 扩容（加消费者 / 提效率）→ 治本（生产端限流削峰）」三步走。',
+          '定位看 Ready（待推送）和 Unacked（已推未 ack）两指标：Ready 涨是消费慢，Unacked 高不降是卡住。',
+          '危害是连锁的：内存到水位触发 flow control 换页磁盘、磁盘满则阻塞生产者，还会波及同 Broker 其他队列。',
+          'QoS basic.qos(prefetchCount) 限制每个消费者「未 ack 消息」的最大条数，形成天然背压；global 控制按消费者还是按 Channel 限额。',
+          'prefetch 取值是权衡：太大撑爆客户端且分配不均，太小往返开销大吞吐低，常用 10~100，靠压测定。',
+          'QoS 只在手动 ack 下生效；提吞吐靠并发、批量消费+批量 ack、lazy queue 扛积压，而非加大 prefetch。',
+          '堆积处置按「止血（调 prefetch）→ 扩容（加消费者/提效率/分流）→ 治本（生产端限流削峰）」三步走。',
         ]}
       />
     </>

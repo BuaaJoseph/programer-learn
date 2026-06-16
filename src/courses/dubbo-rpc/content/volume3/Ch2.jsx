@@ -61,6 +61,36 @@ public class OrderServiceMock implements OrderService {
     }
 }`
 
+const circuitStateCode = `// 熔断器的三态状态机（Sentinel/Hystrix 通用模型）
+//
+//        错误率/慢调用超阈值
+//   CLOSED ─────────────────────► OPEN
+//   (放行)                         (跳闸，全部快速失败)
+//     ▲                              │
+//     │ 探测请求成功                   │ 熔断时长到期
+//     │                              ▼
+//   恢复合闸 ◄──── HALF_OPEN ◄────────┘
+//                 (放少量探测请求)
+//        探测失败 -> 回到 OPEN
+
+// CLOSED：正常放行，同时统计错误率
+// OPEN：跳闸期间所有请求不打下游，直接走降级（fail fast）
+// HALF_OPEN：熔断时长到了，放几个探测请求试水，成功则合闸、失败则继续 OPEN`
+
+const dynamicConfigCode = `# 不重启动态改超时：通过配置中心下发，覆盖到运行中的实例
+# 推到注册中心/配置中心的 configurators，Dubbo 监听后热更新
+configVersion: v2.7
+key: com.demo.OrderService
+enabled: true
+configs:
+  - side: consumer        # 改消费端
+    parameters:
+      timeout: 2000        # 把超时从 1000 临时调到 2000，无需重启
+  - side: provider        # 也能改提供端
+    addresses: [ "192.168.0.13" ]   # 只对某台机器生效（精准降配）
+    parameters:
+      weight: 50           # 把这台权重调低，给它减压`
+
 export default function Ch2() {
   return (
     <>
@@ -123,6 +153,31 @@ export default function Ch2() {
       </p>
       <CodeBlock lang="java" title="Sentinel 降级与 Dubbo Mock 降级" code={sentinelMockCode} />
 
+      <h3>熔断器的三态状态机</h3>
+      <p>
+        熔断不是「坏了就一直拒绝」，它是一个会自我恢复的<strong>三态状态机</strong>，这是面试常被追问的细节。
+        正常时处于 <code>CLOSED</code>（闭合，放行并统计错误率）；错误率或慢调用比例超阈值就跳到 <code>OPEN</code>
+        （断开，所有请求快速失败走降级）；熔断时长到了进入 <code>HALF_OPEN</code>（半开，放几个探测请求试水），
+        探测成功就合闸回 <code>CLOSED</code>，失败则继续 <code>OPEN</code>：
+      </p>
+      <CodeBlock lang="text" title="熔断器三态转换" code={circuitStateCode} />
+      <Callout variant="note" title="熔断 vs 限流 vs 降级，别混为一谈">
+        <p>
+          三者目的不同：<strong>限流</strong>是「入口减负」——请求太多主动拒一部分，保护自己不被压垮；
+          <strong>熔断</strong>是「对下游断流」——下游不行了就别再打它，保护调用链不雪崩；
+          <strong>降级</strong>是「兜底返回」——拿不到真结果时给个默认值，保护用户体验。限流和熔断触发后，
+          通常都会走降级返回兜底。面试能把这三个的「保护对象」说清楚就赢了。
+        </p>
+      </Callout>
+
+      <h2>动态配置：不重启就改治理参数</h2>
+      <p>
+        线上最怕「改个超时还得发版重启」。Dubbo 的治理参数大多能通过<strong>配置中心动态下发</strong>，
+        利用前一章讲的 URL + @Adaptive 机制，运行中的实例监听到配置变化就热更新，无需重启。
+        甚至能精准到「只调某一台机器的权重」做应急降配：
+      </p>
+      <CodeBlock lang="yaml" title="动态下发治理配置" code={dynamicConfigCode} />
+
       <Example title="下游抖动时，怎么不被拖垮">
         <p>
           场景：订单服务要调用库存服务，某天库存服务因为一次 GC 频繁卡顿，单次响应从 50ms 飙到 5 秒。如果什么都不做：
@@ -154,6 +209,16 @@ export default function Ch2() {
         actives、或上 Sentinel 做 QPS 限流），最后 <strong>熔断 + 降级</strong>（错误率过高熔断、Mock 或 fallback 兜底）。
         能点出「慢比错可怕、治理就是加安全带」这句立意，层次感就有了。
       </p>
+
+      <Callout variant="warn" title="服务治理的真实坑">
+        <ul>
+          <li><strong>上游 timeout 小于下游</strong>：上游 500ms 超时，下游配了 1000ms，结果上游早早放弃、下游还在白干，资源全浪费且重试加倍。链路超时应该「越往上游越大」。</li>
+          <li><strong>熔断阈值拍脑袋</strong>：错误率阈值设太低，正常抖动也跳闸误伤；设太高，等真跳闸下游早被打垮了。要基于真实的错误率基线来调。</li>
+          <li><strong>降级数据当真实数据用</strong>：fallback 返回的兜底值若没打标记，上游误以为是真实结果写入库，会造成数据污染。降级结果必须可识别。</li>
+          <li><strong>误区「限流配了就万无一失」</strong>：单机限流挡不住集群整体过载，需要分布式限流（如 Sentinel 集群流控）。</li>
+          <li><strong>重试与超时叠加放大流量</strong>：retries=2 + 下游变慢，瞬间流量×3 压向下游，本想容错反而加速雪崩。治理参数要整体配套，不能各调各的。</li>
+        </ul>
+      </Callout>
 
       <Practice title="配齐 timeout / retries 并加一个降级">
         <p>

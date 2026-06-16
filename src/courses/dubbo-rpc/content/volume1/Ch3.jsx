@@ -130,6 +130,30 @@ export default function Ch3() {
         所以追求极致性能的内部 RPC 多用二进制私有协议，而对外、要穿网关的接口才更常用 HTTP。
       </p>
 
+      <h3>Dubbo 协议帧长什么样</h3>
+      <p>
+        具体到字节，Dubbo 协议是一个<strong>固定 16 字节的头</strong>加上变长的 body。头里有魔数
+        <code>0xdabb</code>（用来快速判断「这是不是一个 Dubbo 包」）、标志位（序列化类型藏在里面）、
+        状态码、8 字节的 <code>requestId</code>、以及 body 的长度。收包时先读定长头、拿到 body 长度、
+        再精确读这么多字节——这套「先读定长头再按长度读 body」正是解决 TCP <strong>粘包/拆包</strong>的标准套路：
+      </p>
+      <CodeBlock lang="text" title="Dubbo 协议帧结构" code={dubboHeaderCode} />
+      <Callout variant="warn" title="为什么会有粘包拆包">
+        <p>
+          TCP 是<strong>字节流</strong>，没有「消息边界」概念。你 <code>write</code> 两个请求，对端可能一次 <code>read</code>
+          就读到一个半（拆包），也可能两个粘在一起读到（粘包）。协议头里的「body 长度」字段就是用来划定边界的。
+          Dubbo 基于 Netty，用 <code>LengthFieldBasedFrameDecoder</code> 这类解码器自动按长度切包，业务层完全无感。
+        </p>
+      </Callout>
+
+      <h3>Dubbo 3.x 的 Triple 协议</h3>
+      <p>
+        值得一提，Dubbo 3.x 主推 <strong>Triple 协议</strong>，它构建在 HTTP/2 之上、兼容 gRPC，
+        既保留了 Dubbo 的服务治理能力，又能跨语言、能穿透标准网关和 Service Mesh。
+        这是 Dubbo「拥抱云原生」的关键一步：老的 Dubbo 协议性能好但封闭，Triple 在通用性和生态上补齐短板。
+        面试里能提一句「Dubbo 3 用 Triple 兼容 gRPC、走 HTTP/2」会显得你了解版本演进。
+      </p>
+
       <KeyIdea title="序列化和协议是两件事">
         <p>
           别把序列化和协议混为一谈。<strong>序列化</strong>管的是「一个对象怎么编码成字节」（Hessian2、Protobuf……）；
@@ -155,6 +179,16 @@ export default function Ch3() {
         再追问「那用什么」，答 <strong>Dubbo 默认 Hessian2，要极致性能上 Protobuf 或 Kryo，要可读用 JSON</strong>，
         并点明<strong>序列化和协议是两层，可以自由组合</strong>——这样就答到点上了。
       </p>
+
+      <Callout variant="warn" title="序列化的真实坑与误区">
+        <ul>
+          <li><strong>Dubbo 2.7.x 的 Hessian2 反序列化白名单</strong>：高版本默认开启类检查，传自定义类要配 <code>serialize.check</code> 或加白名单，否则报 <code>ClassNotFoundException</code> 或被拦截。</li>
+          <li><strong>两端 POJO 字段不一致</strong>：提供端加了字段、消费端没更新 jar，Hessian2 一般容忍（少的取默认值），但 enum 新增值、字段改名/改类型就会出问题。</li>
+          <li><strong>误区「Kryo 一定最快就该全用」</strong>：Kryo 需要注册类才高效、线程不安全要用对象池、跨语言基本没戏，纯 Java 内部服务才适合。</li>
+          <li><strong>误区「JSON 调试方便就线上也用」</strong>：高 QPS 下 JSON 的体积和解析开销会明显拉高 CPU 和带宽，生产环境慎用。</li>
+          <li><strong>大对象/大集合序列化</strong>：一次传几 MB 的 List，序列化耗时和 GC 压力都很大，应分页或流式处理。</li>
+        </ul>
+      </Callout>
 
       <Practice title="给 Dubbo 配置序列化方式">
         <p>

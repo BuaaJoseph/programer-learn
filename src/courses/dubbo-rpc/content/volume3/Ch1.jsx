@@ -64,6 +64,46 @@ MyLoadBalance lb = ExtensionLoader
         .getExtensionLoader(MyLoadBalance.class)
         .getExtension("roundrobin");`
 
+const adaptiveCode = `// @Adaptive：Dubbo 在运行时根据 URL 参数动态选实现
+// 接口上的方法标注 @Adaptive，Dubbo 会「字节码生成」一个自适应代理类
+
+@SPI("random")
+public interface LoadBalance {
+    // 括号里是 URL 里用来决定实现名的 key；
+    // 取不到就回退到 @SPI 指定的默认值 random
+    @Adaptive("loadbalance")
+    <T> Invoker<T> select(List<Invoker<T>> invokers, URL url, Invocation inv);
+}
+
+// Dubbo 自动生成的代理类，逻辑等价于：
+class LoadBalance$Adaptive implements LoadBalance {
+    public Invoker select(List invokers, URL url, Invocation inv) {
+        // 运行时从 URL 里读 loadbalance 参数，没有就用默认 random
+        String name = url.getParameter("loadbalance", "random");
+        // 再按 name 去 ExtensionLoader 取真正的实现，转调过去
+        LoadBalance real = ExtensionLoader
+                .getExtensionLoader(LoadBalance.class).getExtension(name);
+        return real.select(invokers, url, inv);
+    }
+}
+// 妙处：实现的选择从「编译期写死」推迟到「每次调用按 URL 决定」`
+
+const wrapperCode = `// Wrapper（AOP）：构造函数接收本接口类型 = 自动成为包装层
+public class ProtocolFilterWrapper implements Protocol {
+    private final Protocol protocol;
+    // 关键：构造器参数是 Protocol 自己 -> Dubbo 认出它是 Wrapper
+    public ProtocolFilterWrapper(Protocol protocol) {
+        this.protocol = protocol;
+    }
+    @Override
+    public <T> Exporter<T> export(Invoker<T> invoker) {
+        // 在真正 export 前后织入逻辑（这里是构建 Filter 链）
+        return protocol.export(buildInvokerChain(invoker));
+    }
+}
+// 多个 Wrapper 会层层嵌套：监听器Wrapper -> Filter Wrapper -> 真实实现
+// 这就是 Dubbo 不依赖 Spring AOP 也能做横切逻辑的奥秘`
+
 export default function Ch1() {
   return (
     <>
@@ -128,6 +168,35 @@ export default function Ch1() {
       </ul>
       <CodeBlock lang="java" title="Dubbo SPI 的取用方式" code={dubboSpiUseCode} />
 
+      <h2>@Adaptive 自适应扩展：把选择推迟到运行时</h2>
+      <p>
+        五项增强里最烧脑、也最被面试官追问的是 <strong>@Adaptive</strong>。普通的 <code>getExtension("random")</code>
+        是<strong>编译期就写死了名字</strong>，可问题是：负载均衡用哪个，是消费端在配置里指定、甚至能动态下发改的，
+        编译时根本不知道。@Adaptive 就是为此而生——Dubbo 在运行期<strong>字节码生成</strong>一个自适应代理类，
+        每次调用时从传入的 <code>URL</code> 参数里读出该用哪个实现，再转发过去：
+      </p>
+      <CodeBlock lang="java" title="@Adaptive 自适应扩展的原理" code={adaptiveCode} />
+      <p>
+        看懂这段就明白了：为什么 Dubbo 里到处传一个 <code>URL</code> 对象。<strong>URL 是 Dubbo 的「配置总线」</strong>，
+        几乎所有参数（协议、序列化、负载均衡、超时、重试……）都塞在这个 URL 里，@Adaptive 代理就是靠读它来动态路由实现的。
+
+      </p>
+
+      <h2>Wrapper：Dubbo 自己的 AOP</h2>
+      <p>
+        另一个精妙设计是 <strong>Wrapper（包装类）</strong>。规则很简单：如果一个实现类的<strong>构造函数恰好接收本接口类型</strong>，
+        Dubbo 就认定它是 Wrapper，不把它当普通实现，而是用它去<strong>层层包裹</strong>真正的实现。
+        这就实现了「不改实现代码就织入横切逻辑」——日志、监控、Filter 链构建全靠它，等于 Dubbo 自带的轻量 AOP：
+      </p>
+      <CodeBlock lang="java" title="Wrapper 实现 AOP 包装" code={wrapperCode} />
+      <Callout variant="note" title="为什么不用 Spring AOP">
+        <p>
+          Dubbo 设计上要能<strong>脱离 Spring 独立运行</strong>（早期很多场景是纯 API/XML 用法），所以它不能依赖 Spring 的 IOC/AOP，
+          只能自己造一套小而精的「IOC（setter 注入）+ AOP（Wrapper）」。理解这点，就能理解 Dubbo SPI 为什么要重复造轮子——
+          它要的是一个<strong>零外部依赖、可独立工作</strong>的扩展内核。
+        </p>
+      </Callout>
+
       <Example title="自定义一个 LoadBalance 扩展是什么体验">
         <p>
           假设你嫌内置的几种负载均衡都不合口味，想加一个自己的策略。在 Dubbo 里这事儿非常顺：
@@ -167,6 +236,16 @@ export default function Ch1() {
         按需加载和按名取，最后点出三个高级特性——<strong>IOC 注入、AOP 包装、@Adaptive 自适应</strong>，
         顺带提一句 <code>@Activate</code> 用于 Filter 自动激活。能把「为什么 Dubbo 不直接用 ServiceLoader」讲清楚，这题就稳了。
       </p>
+
+      <Callout variant="warn" title="SPI 的高频追问与误区">
+        <ul>
+          <li><strong>「@Adaptive 是怎么实现的？」</strong>运行期动态生成一个自适应类的字节码，方法体里从 URL 读参数决定调哪个实现。不是反射、不是预生成，是现编现编译。</li>
+          <li><strong>「ExtensionLoader 是单例吗？」</strong>每个扩展接口对应一个 ExtensionLoader，全局缓存；每个扩展实现默认也是单例缓存的（同名只 new 一次）。</li>
+          <li><strong>「Wrapper 和普通实现怎么区分？」</strong>看构造函数：有一个接收本接口类型的构造器就是 Wrapper，否则是普通实现。</li>
+          <li><strong>误区「Dubbo SPI 就是 JDK SPI 加个 key」</strong>：还差着 IOC 注入、Wrapper AOP、@Adaptive、@Activate 四样，不是简单加个 key。</li>
+          <li><strong>配置文件坑</strong>：文件名必须是接口全限定名、放 <code>META-INF/dubbo/</code>（或 internal/services 子目录），写错或漏 <code>@SPI</code> 都会加载不到。</li>
+        </ul>
+      </Callout>
 
       <Practice title="写一个最小的自定义 SPI 扩展">
         <p>

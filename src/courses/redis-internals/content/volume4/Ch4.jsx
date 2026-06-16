@@ -30,6 +30,20 @@ redis-cli --cluster add-node 127.0.0.1:7006 127.0.0.1:7000
 redis-cli --cluster reshard 127.0.0.1:7000
 # 按提示输入：迁移多少个槽、目标节点ID、源节点（all 表示从所有现有主均摊）`
 
+const redirectCmd = `# 用 redis-cli -c (集群模式) 连接，客户端会自动跟随重定向
+$ redis-cli -c -p 7000
+127.0.0.1:7000> set user:1001 lisi
+-> Redirected to slot [4847] located at 127.0.0.1:7001   # MOVED 自动跳转
+OK
+
+# 不加 -c 时，发错节点会直接看到原始的 MOVED/ASK 错误
+127.0.0.1:7000> set user:1001 lisi
+(error) MOVED 4847 127.0.0.1:7001
+
+# 多键操作跨槽会被拒绝
+127.0.0.1:7000> mget user:1001 order:99
+(error) CROSSSLOT Keys in request don't hash to the same slot`
+
 export default function Ch4() {
   return (
     <>
@@ -61,6 +75,15 @@ export default function Ch4() {
 
       <Cluster />
 
+      <Callout variant="info" title="为什么偏偏是 16384，不是 65536">
+        <p>
+          这是高频追问，作者本人在 GitHub 解释过：节点间用 gossip 心跳交换「我负责哪些槽」的<strong>位图</strong>。
+          16384 个槽的位图是 <code>16384/8 = 2KB</code>；若用 65536，位图就是 8KB，心跳包大了 4 倍，
+          而 Redis 集群<strong>设计上不建议超过 1000 个节点</strong>，16384 个槽分给 1000 个节点已绰绰有余。
+          所以 16384 是在「心跳消息体积」和「足够的槽粒度」之间的权衡——记住这个理由即可。
+        </p>
+      </Callout>
+
       <h2>MOVED 与 ASK：客户端重定向</h2>
       <p>
         客户端可能把命令发到了「不负责这个槽」的节点。这时节点不会帮你转发，而是回一个<strong>重定向</strong>错误：
@@ -75,13 +98,18 @@ export default function Ch4() {
           客户端这一次去目标节点（先发 <code>asking</code> 再发命令），但<strong>不更新本地缓存</strong>，因为迁移还没完成。
         </li>
       </ul>
+      <p>
+        关键区别：<strong>MOVED 是「永久搬迁」</strong>（更新缓存，以后都走新节点）；<strong>ASK 是「临时借道」</strong>
+        （只这一次，下次还问原节点）。这套机制让客户端在槽迁移过程中也能读到正确数据，是 Cluster 在线扩容不停服的基础。
+      </p>
+      <CodeBlock lang="text" title="MOVED / ASK / CROSSSLOT 实际表现" code={redirectCmd} />
 
       <KeyIdea title="hashtag：让相关 key 落同一个槽">
         <p>
-          Cluster 默认<strong>不支持跨槽的多键操作</strong>（如 mget 多个落在不同节点的 key、跨槽事务），因为它们可能在不同机器上。
+          Cluster 默认<strong>不支持跨槽的多键操作</strong>（如 mget 多个落在不同节点的 key、跨槽事务），因为它们可能在不同机器上，会报 CROSSSLOT。
           解决办法是 <em>hashtag</em>：如果 key 里含有 <code>{'{...}'}</code>，则<strong>只用花括号内的内容</strong>算 CRC16。
           比如 <code>{'{user:1001}:name'}</code> 和 <code>{'{user:1001}:age'}</code> 都只对 <code>user:1001</code> 取哈希，
-          必然落在<strong>同一个槽、同一个节点</strong>，于是可以对它们做多键操作和事务。
+          必然落在<strong>同一个槽、同一个节点</strong>，于是可以对它们做多键操作和事务。但别滥用——所有 key 都用同一个 hashtag 会让数据全挤到一个节点，丧失分片意义。
         </p>
       </KeyIdea>
 
@@ -106,7 +134,15 @@ export default function Ch4() {
       <p>
         Cluster 没有中心配置节点，所有节点通过 <em>gossip 协议</em>互相「八卦」：每个节点周期性地和随机几个节点交换信息
         （谁在线、谁负责哪些槽、谁疑似下线），消息在<strong>专用集群总线端口</strong>（数据端口 + 10000）上传播。
-        靠这种点对点扩散，整个集群的拓扑视图最终趋于一致，也能发现节点故障并自动做主从切换（Cluster 自带高可用，无需哨兵）。
+        靠这种点对点扩散，整个集群的拓扑视图最终趋于一致。
+      </p>
+
+      <h3>Cluster 自带的故障转移</h3>
+      <p>
+        Cluster 不需要哨兵，自己就能做主从切换。某主节点被<strong>超过半数主节点</strong>标记为疑似下线（PFAIL）后升级为
+        确认下线（FAIL），它的<strong>从节点</strong>会发起选举：向所有主节点拉票，拿到<strong>多数主节点</strong>的票就升为新主，
+        接管原主的槽。这就要求集群至少 <strong>3 个主节点</strong>（否则一个主挂了凑不齐多数派）。若某主和它的所有从都挂了、
+        且开了 <code>cluster-require-full-coverage yes</code>（默认），整个集群会拒绝服务——生产可按需关掉这项让其余槽继续可用。
       </p>
 
       <Callout variant="warn" title="与哨兵方案的区别 / 面试陷阱">
@@ -115,24 +151,42 @@ export default function Ch4() {
             <strong>哨兵不分片</strong>：哨兵方案数据全在一台主库，只解决高可用；Cluster <strong>既分片又高可用</strong>，能水平扩容。
           </li>
           <li>
-            <strong>Cluster 限制多键操作</strong>：跨槽的 mget、事务、Lua 默认会报错，必须用 hashtag 把相关 key 收拢到同一槽。
+            <strong>Cluster 限制多键操作</strong>：跨槽的 mget、事务、Lua 默认会报 CROSSSLOT，必须用 hashtag 把相关 key 收拢到同一槽。
           </li>
           <li>
-            <strong>16384 不是 16383 也不是更大</strong>：选这个数是在「心跳消息体积（槽位图）」和「最大节点数」之间的权衡，常被追问，记住结论即可。
+            <strong>16384 的由来</strong>：槽位图心跳体积（2KB）与建议最大节点数（约 1000）之间的权衡，常被追问。
+          </li>
+          <li>
+            <strong>Cluster 选主用 gossip + 多数主节点投票，不用哨兵的 Raft</strong>，且投票者是主节点而非哨兵——别混了。
           </li>
         </ul>
       </Callout>
+
+      <table>
+        <thead>
+          <tr><th>维度</th><th>哨兵 Sentinel</th><th>集群 Cluster</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>分片</td><td>不分片(数据全在一主)</td><td>16384 槽分片</td></tr>
+          <tr><td>水平扩容</td><td>不能</td><td>reshard 在线扩容</td></tr>
+          <tr><td>高可用</td><td>哨兵自动故障转移</td><td>自带故障转移</td></tr>
+          <tr><td>多键操作</td><td>不受限</td><td>跨槽受限，需 hashtag</td></tr>
+          <tr><td>额外进程</td><td>需独立哨兵</td><td>无需</td></tr>
+        </tbody>
+      </table>
 
       <h3>面试怎么答</h3>
       <p>
         被问「Redis 集群怎么分片」，主线是：引入 16384 个槽做中间层，key 经 <code>CRC16(key) % 16384</code> 定位槽，
         槽再分给各主节点；客户端发错节点会收到 MOVED（稳定归属，更新缓存）或 ASK（迁移中，临时跳转）；扩缩容靠在线迁移槽（reshard）；
-        节点间用 gossip 同步拓扑并自带故障转移。最后对比一句：哨兵只做高可用、数据不分片，Cluster 是分片 + 高可用一体。
+        节点间用 gossip 同步拓扑、靠多数主节点投票自带故障转移。再补一句 16384 的由来、hashtag 的用途与不可滥用，
+        最后对比「哨兵只做高可用、数据不分片，Cluster 是分片 + 高可用一体」。常见误区：以为 Cluster 也用哨兵、以为槽数随意。
       </p>
 
       <Practice title="创建集群并观察槽分布">
         <CodeBlock lang="bash" title="创建集群" code={createCmd} />
         <CodeBlock lang="text" title="cluster info / cluster keyslot" code={infoCmd} />
+        <CodeBlock lang="text" title="MOVED / ASK / CROSSSLOT 实际表现" code={redirectCmd} />
         <CodeBlock lang="bash" title="在线扩容：reshard 迁槽" code={reshardCmd} />
       </Practice>
 
@@ -140,10 +194,11 @@ export default function Ch4() {
         points={[
           'Cluster 是 Redis 官方分布式方案，通过分片突破单机内存与单线程吞吐上限，同时内置高可用。',
           '键空间预划成 16384 个槽，key 经 CRC16(key) % 16384 定位槽，槽再分配给各主节点，加减节点只搬槽不重算全部 key。',
-          '客户端发错节点会收到 MOVED（归属已稳定，更新本地缓存）或 ASK（槽迁移中，本次临时跳转、不更新缓存）。',
-          'hashtag 用 {} 只对花括号内容取哈希，让相关 key 落同一槽，从而支持多键操作和事务。',
-          '扩缩容靠 reshard 在线迁移槽；节点间用 gossip 协议交换拓扑与故障信息，自带主从故障转移。',
-          '与哨兵的区别：哨兵只做高可用、数据不分片，Cluster 是分片 + 高可用一体，但限制跨槽多键操作。',
+          '16384 的由来：槽位图心跳体积(2KB)与建议最大节点数(约1000)之间的权衡。',
+          '客户端发错节点会收到 MOVED（归属已稳定，更新本地缓存、永久跳转）或 ASK（槽迁移中，临时跳转、不更新缓存）。',
+          'hashtag 用 {} 只对花括号内容取哈希，让相关 key 落同一槽以支持多键操作，但不可滥用导致数据倾斜。',
+          '扩缩容靠 reshard 在线迁移槽；节点间用 gossip 协议交换拓扑，靠多数主节点投票自带故障转移(至少3主)。',
+          '与哨兵的区别：哨兵只做高可用、数据不分片、用 Raft 选主；Cluster 是分片 + 高可用一体、用 gossip + 主节点投票。',
         ]}
       />
     </>

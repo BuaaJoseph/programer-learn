@@ -34,6 +34,33 @@ if (lock.acquire(5, TimeUnit.SECONDS)) {   // 最多等 5 秒
     // 没拿到锁，按业务降级或重试
 }`
 
+const lockPseudo = `// 加锁/解锁的核心逻辑（理解 Curator 内部在干什么）
+String lock() {
+    myNode = create("/lock/order_", EPHEMERAL_SEQUENTIAL); // 排队拿号
+    while (true) {
+        children = sort(getChildren("/lock"));
+        if (myNode == children[0]) return myNode;          // 我最小，拿锁
+        prev = children[indexOf(myNode) - 1];              // 找前一个
+        if (exists("/lock/" + prev, watch=true)) {
+            wait();                                         // 阻塞，等前者删除唤醒
+        }
+        // exists 返回 false 说明前者刚好已删，循环再判一次（关键防漏唤醒）
+    }
+}
+void unlock(myNode) { delete("/lock/" + myNode); }         // 释放即删自己`
+
+const readWriteLockCode = `// Curator 还提供读写锁：读读共享、读写/写写互斥
+InterProcessReadWriteLock rwLock =
+    new InterProcessReadWriteLock(client, "/lock/cache");
+
+rwLock.readLock().acquire();    // 多个读可同时持有
+// ... 读缓存 ...
+rwLock.readLock().release();
+
+rwLock.writeLock().acquire();   // 写独占，会等所有读释放
+// ... 刷新缓存 ...
+rwLock.writeLock().release();`
+
 export default function Ch3() {
   return (
     <>
@@ -58,6 +85,11 @@ export default function Ch3() {
         <li>不是最小的，就只 <em>watch</em><strong>紧挨在自己前面的那个节点</strong>，然后阻塞等待。</li>
         <li>前一个节点被删除（前一个客户端释放锁或崩溃）时，自己被唤醒，重新判断是否轮到自己。</li>
       </ul>
+      <p>
+        把这套流程写成伪代码，你会更清楚 Curator 内部在替你做什么——尤其是「watch 前一个节点失败时要重判一次」
+        这个防漏唤醒的细节：
+      </p>
+      <CodeBlock lang="java" title="加锁/解锁核心逻辑伪代码" code={lockPseudo} />
 
       <Example title="下单防重">
         <p>
@@ -80,6 +112,12 @@ export default function Ch3() {
           这就是<em>惊群</em>（herd effect）。只 watch 前一个，则锁释放时只唤醒下一个排队者，
           像排队取号一样既<strong>公平</strong>（按序号先来先得）又<strong>无惊群</strong>。
         </p>
+        <p>
+          量化一下惊群的危害：假设 1000 个客户端排队等锁。若都监听锁目录，每释放一次锁就触发 1000 个 watch 事件、
+          1000 次重新 getChildren，绝大多数发现自己仍不是最小、白忙一场——这会反复产生<strong>读风暴</strong>。
+          改成「链式监听前一个」，每次释放只唤醒 1 个客户端，事件量从 O(n) 降到 O(1)。这是 ZooKeeper 锁设计里
+          最值得品味的一笔，本质和第一卷讲 watch 时提到的「避免读风暴」是同一个道理。
+        </p>
       </KeyIdea>
 
       <Callout variant="warn" title="临时节点天然防死锁">
@@ -94,7 +132,26 @@ export default function Ch3() {
         <p>
           这是 ZooKeeper 锁相比手写实现的一大优势：崩溃即释放，不需要额外的超时兜底逻辑。
         </p>
+        <p>
+          但有一个绕不开的边界——<strong>GC / 网络抖动导致的 session 假死</strong>。持锁者发生长时间 STW GC，
+          ZK 误判 session 过期、删了它的锁节点、把锁给了下一个；GC 结束后老持锁者「以为自己还持有锁」继续写临界区，
+          就发生了<strong>两个客户端同时进临界区</strong>。这不是 ZK 独有的缺陷，是所有「靠租约的分布式锁」的共性
+          （Redis 锁同样有），根治要靠 fencing token（拿锁时带一个单调递增的版本号，写后端时校验，旧持有者的旧 token 被拒）。
+          面试能讲到这一层，就远超普通候选人了。
+        </p>
       </Callout>
+
+      <h3>读写锁与可重入</h3>
+      <p>
+        除了互斥锁，Curator 还提供<strong>读写锁</strong>：读读共享、读写互斥、写写互斥，适合「读多写少又要保证写时无人读」
+        的缓存刷新场景。实现上是用两类带前缀的顺序节点（read- / write-）配合不同的等待规则。
+      </p>
+      <CodeBlock lang="java" title="Curator 读写锁" code={readWriteLockCode} />
+      <p>
+        <code>InterProcessMutex</code> 还是<strong>可重入</strong>的：同一个客户端实例多次 <code>acquire</code> 同一把锁
+        只会真正加一次锁、内部计数，对应次数的 <code>release</code> 才真正释放。这点和 JDK 的 ReentrantLock 一致，
+        避免了同线程递归调用时自己把自己锁死。
+      </p>
 
       <h3>对比 Redis 分布式锁</h3>
       <p>
@@ -104,6 +161,19 @@ export default function Ch3() {
         崩溃即自动释放、有公平排队和顺序保证，但因为每次加锁解锁都涉及过半写，<strong>性能比 Redis 低</strong>。
         选型口诀：<strong>要极致性能选 Redis，要强可靠和公平选 ZooKeeper</strong>。
       </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>ZooKeeper 锁</th><th>Redis 锁（SET NX）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>持锁者崩溃</td><td>session 过期自动释放</td><td>等 TTL 过期才释放</td></tr>
+          <tr><td>公平性</td><td>顺序节点天然公平排队</td><td>不公平，谁抢到算谁</td></tr>
+          <tr><td>惊群</td><td>链式监听，无惊群</td><td>无队列，靠轮询/订阅重试</td></tr>
+          <tr><td>性能</td><td>较低（每次过半写）</td><td>高（内存单机操作）</td></tr>
+          <tr><td>GC 假死风险</td><td>有，需 fencing token</td><td>有，需 fencing token</td></tr>
+          <tr><td>过期续期</td><td>不需要（靠 session 心跳）</td><td>需 watchdog 续期（Redisson）</td></tr>
+        </tbody>
+      </table>
 
       <h2>面试怎么答</h2>
       <p>
@@ -111,6 +181,12 @@ export default function Ch3() {
         不是最小就只 watch 前一个节点、等它删除被唤醒。再主动说三个优点——公平（按序号）、防惊群（只 watch 前一个）、
         防死锁（临时节点崩溃自动释放）。最后对比 Redis：ZK 更可靠但性能低，并提一句生产别手写、用 Curator 的
         <code>InterProcessMutex</code> 现成实现。
+      </p>
+      <p>
+        高频追问：<strong>「ZK 锁绝对安全吗？」</strong>——不绝对，GC/抖动导致 session 假死时可能两个客户端同时进临界区，
+        要 fencing token 兜底。<strong>「为什么不直接用 create 同名节点抢锁？」</strong>——那叫非公平锁，能用但会惊群、
+        不公平；临时顺序节点方案是其改进版。<strong>「Curator 的 acquire 超时返回 false 后节点怎么办？」</strong>——
+        Curator 会自动删掉它刚建的排队节点，避免残留影响后面排队。
       </p>
 
       <Practice title="原理伪代码与 Curator 实现">
@@ -121,14 +197,21 @@ export default function Ch3() {
           它已经处理好顺序、watch、重入、重试等所有坑：
         </p>
         <CodeBlock lang="java" title="Curator InterProcessMutex" code={curatorCode} />
+        <p>
+          动手实验：开两个进程都用 Curator 抢同一把锁，让先拿到锁的进程 sleep 一会儿，观察第二个进程在第一个
+          release（或被 kill 触发 session 过期）后立刻拿到锁；再 <code>ls /lock</code> 看排队节点的增删，
+          把上面的理论对上号。
+        </p>
       </Practice>
 
       <Summary
         points={[
           '加锁流程：在锁目录建临时顺序节点，判断自己是不是最小，最小则拿锁、否则只 watch 前一个节点等待。',
-          '只 watch 紧挨自己前面的节点，能避免锁释放时同时唤醒所有人的惊群问题，并保证按序号公平排队。',
+          '只 watch 紧挨自己前面的节点，把唤醒从 O(n) 降到 O(1)，避免惊群读风暴，并保证按序号公平排队。',
           '用临时节点而非持久节点，持锁进程崩溃会话断开后节点自动删除，锁自动释放，天然防死锁。',
-          '对比 Redis 锁：Redis 性能高但靠超时兜底、可靠性弱；ZooKeeper 更可靠公平但性能较低。',
+          'GC/网络抖动会导致 session 假死、两客户端同进临界区，这是租约锁通病，要 fencing token 兜底。',
+          'Curator 还提供可重入锁、读写锁（读读共享、读写/写写互斥），覆盖更多并发场景。',
+          '对比 Redis 锁：Redis 性能高但靠 TTL 兜底、不公平；ZooKeeper 更可靠公平、崩溃即释放但性能较低。',
           '生产中用 Apache Curator 的 InterProcessMutex 现成实现，避免自己处理顺序/watch/重入的细节。',
           '一句话记忆：临时顺序节点 + 只盯前一个 = 公平、无惊群、不死锁的可靠分布式锁。',
         ]}

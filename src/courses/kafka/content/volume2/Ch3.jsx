@@ -33,6 +33,35 @@ void handleWithIdempotency(String key, String value) {
     doBusiness(value);
 }`
 
+const perPartitionCommitCode = `// 进阶：按分区精确提交，并指定「下一条」offset（注意要 +1）
+while (true) {
+    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+    for (TopicPartition tp : records.partitions()) {
+        List<ConsumerRecord<String, String>> ps = records.records(tp);
+        for (ConsumerRecord<String, String> r : ps) {
+            handleWithIdempotency(r.key(), r.value());
+        }
+        long lastOffset = ps.get(ps.size() - 1).offset();
+        // 提交的是「已处理的最后一条 + 1」，即下一条要读的位置
+        consumer.commitSync(Map.of(tp,
+            new OffsetAndMetadata(lastOffset + 1)));
+    }
+}`
+
+const seekCode = `// 重放 / 跳读：offset 完全由消费者掌控
+// 1) 从头重放某分区
+consumer.seekToBeginning(List.of(new TopicPartition("orders", 0)));
+
+// 2) 跳到末尾，只看新消息
+consumer.seekToEnd(List.of(new TopicPartition("orders", 0)));
+
+// 3) 按时间点回放：找到「昨天 0 点」对应的 offset 再 seek 过去
+long ts = LocalDate.now().minusDays(1).atStartOfDay()
+    .toInstant(ZoneOffset.UTC).toEpochMilli();
+var tp = new TopicPartition("orders", 0);
+var off = consumer.offsetsForTimes(Map.of(tp, ts)).get(tp);
+if (off != null) consumer.seek(tp, off.offset());`
+
 export default function Ch3() {
   return (
     <>
@@ -55,6 +84,10 @@ export default function Ch3() {
         它以 <code>（group, topic, partition）</code> 为 key、最新 offset 为 value，是个 compacted topic（只保留每个 key 的最新值）。
         所以消费进度本身也是一条 Kafka 消息——这是 Kafka 设计上很优雅的一点：用自己存自己。
       </p>
+      <p>
+        一个常被搞混的细节：提交的 offset 是「<strong>已处理的最后一条 + 1</strong>」，也就是「下一条要读的位置」，而不是
+        「最后处理的那条的 offset」。手写按分区提交时若忘了 <code>+1</code>，重启会重读最后一条——这是个经典 off-by-one bug。
+      </p>
 
       <h2>自动提交的问题</h2>
       <p>
@@ -70,6 +103,11 @@ export default function Ch3() {
           <strong>提交时机不可控</strong>——提交和处理是两条独立节奏，你无法精确对齐，出问题时也很难推理到底丢在哪一步。
         </li>
       </ul>
+      <p>
+        准确说，自动提交是在<strong>下一次 poll() 被调用时</strong>检查「距上次提交是否超过 interval」，到了才提交。
+        所以它既不会丢「已经 poll 过但还没到提交间隔」的进度（rebalance 时还会补一次），也不保证「处理完才提交」——
+        它对齐的是「poll 到」而非「处理完」，这正是它会丢消息的根本原因。
+      </p>
 
       <h2>手动提交：同步与异步</h2>
       <p>
@@ -86,8 +124,10 @@ export default function Ch3() {
       </ul>
       <p>
         常见组合是：循环里用 <code>commitAsync()</code> 追求吞吐，在消费者关闭或 rebalance 前用一次 <code>commitSync()</code>
-        兜底确保最终提交成功。
+        兜底确保最终提交成功。还可以<strong>按分区单独提交</strong>，配合 RebalanceListener 让每个分区的进度更精确、
+        减少 rebalance 时的重复范围。
       </p>
+      <CodeBlock lang="java" title="PerPartitionCommit.java" code={perPartitionCommitCode} />
 
       <KeyIdea title="提交时机决定语义：先后顺序是核心">
         <p>
@@ -114,6 +154,15 @@ export default function Ch3() {
         </p>
       </Example>
 
+      <h2>重放与跳读：offset 完全归你掌控</h2>
+      <p>
+        因为消息读完不删、offset 只是个游标，消费者可以随意把它移到任意位置——这是 Kafka 区别于传统队列的杀手锏。
+        <code>seekToBeginning</code> 从头重放、<code>seekToEnd</code> 跳到最新、<code>offsetsForTimes</code> + <code>seek</code>
+        按时间点回放。线上排查、修数据、重算指标都靠它：换个新 <code>group.id</code> 从 <code>earliest</code> 跑一遍，
+        就能把历史数据重新灌进下游，原有消费组完全不受影响。
+      </p>
+      <CodeBlock lang="java" title="SeekAndReplay.java" code={seekCode} />
+
       <Callout variant="warn" title="auto.offset.reset 只在「没有已提交 offset」时生效">
         <p>
           当一个组<strong>第一次</strong>消费某分区、或它的已提交 offset 已经过期被删时，从哪开始读由
@@ -122,7 +171,8 @@ export default function Ch3() {
         </p>
         <p>
           常见误解是以为它每次启动都生效。其实<strong>只要有有效的已提交 offset，它就被忽略</strong>，永远从已提交位置接着读。
-          新建组想跑全量历史，记得设 <code>earliest</code>。
+          新建组想跑全量历史，记得设 <code>earliest</code>。还有个坑：如果消费组下线太久，已提交 offset 因 retention 过期被删，
+          下次上线会触发 reset——若是 <code>latest</code> 就会<strong>静默跳过这段时间的全部消息</strong>，排查时极易踩雷。
         </p>
       </Callout>
 
@@ -131,6 +181,8 @@ export default function Ch3() {
         被问「Kafka 消费怎么做到不丢不重」，标准答法：<strong>不丢</strong>靠「先处理后提交 + 手动提交」，绝不让 offset 跑在处理前面；
         <strong>不重</strong>靠消费端<strong>幂等</strong>（唯一键去重 / 数据库唯一约束 / 状态机），因为只要会 rebalance 或崩溃重启，
         at-least-once 下的重复就无法根除。要更强的端到端精确一次，再上生产端事务 + 消费端 <code>read_committed</code>（见本卷第 1 章）。
+        再追问「能不能用事务把 offset 和业务写入绑一起」——能，<code>sendOffsetsToTransaction</code> 把 offset 提交纳入生产事务，
+        这是流处理里实现 EOS 的关键一招。
       </p>
 
       <Practice title="手动提交 + 消费端幂等">
@@ -147,12 +199,13 @@ export default function Ch3() {
 
       <Summary
         points={[
-          'offset 是消费者在分区里的消费位置，已提交位移存在内部 compacted topic __consumer_offsets。',
-          '自动提交（enable.auto.commit）按时间定期提交，不管处理完没有，崩溃时可能丢消息且时机不可控。',
-          '手动提交分同步 commitSync（阻塞、会重试、可靠）和异步 commitAsync（不阻塞、不自动重试、高吞吐）。',
+          'offset 是消费者在分区里的消费位置，已提交位移存在内部 compacted topic __consumer_offsets；提交值是「最后处理+1」，别漏 +1。',
+          '自动提交（enable.auto.commit）在下次 poll 时按间隔提交，对齐的是「poll 到」而非「处理完」，崩溃时可能丢消息。',
+          '手动提交分同步 commitSync（阻塞、会重试、可靠）和异步 commitAsync（不阻塞、不自动重试、高吞吐），可按分区精确提交。',
           '先提交后处理→丢消息（at-most-once）；先处理后提交→重复消费（at-least-once），工程上选后者。',
           '宁可重复不可丢失，重复用消费端幂等（唯一键去重）消掉，配合后可做到不丢不重。',
-          'auto.offset.reset（earliest/latest）只在没有有效已提交 offset 时生效，否则永远从已提交位置续读。',
+          'offset 可任意 seek：从头重放、跳到末尾、按时间点回放，用新 group 即可重灌历史而不影响他人。',
+          'auto.offset.reset（earliest/latest）只在没有有效已提交 offset 时生效；组下线太久 offset 过期 + latest 会静默跳过消息。',
         ]}
       />
     </>

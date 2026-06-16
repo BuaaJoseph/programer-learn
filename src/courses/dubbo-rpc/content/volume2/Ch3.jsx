@@ -22,6 +22,38 @@ dubbo.provider.weight=200
 # 预热：服务刚启动的 warmup 时间内（毫秒）权重线性爬升
 dubbo.provider.warmup=600000`
 
+const customLbCode = `// 自定义负载均衡：实现 LoadBalance 接口（走 Dubbo SPI 扩展）
+public class TaggedLoadBalance extends AbstractLoadBalance {
+    @Override
+    protected <T> Invoker<T> doSelect(List<Invoker<T>> invokers,
+                                      URL url, Invocation invocation) {
+        // 例：把带有特定标签（如灰度 tag=gray）的请求只打到灰度机器
+        String tag = invocation.getAttachment("tag");
+        if (tag != null) {
+            for (Invoker<T> inv : invokers) {
+                if (tag.equals(inv.getUrl().getParameter("tag"))) return inv;
+            }
+        }
+        // 兜底：退回随机
+        return invokers.get(ThreadLocalRandom.current().nextInt(invokers.size()));
+    }
+}
+// 注册：META-INF/dubbo/org.apache.dubbo.rpc.cluster.LoadBalance
+//   tagged=com.example.TaggedLoadBalance
+// 使用：@DubboReference(loadbalance = "tagged")`
+
+const weightHashCode = `// 加权随机的核心思路（Random 默认策略的伪代码）
+int totalWeight = invokers.stream().mapToInt(this::getWeight).sum();
+int offset = ThreadLocalRandom.current().nextInt(totalWeight);
+for (Invoker inv : invokers) {
+    offset -= getWeight(inv);
+    if (offset < 0) return inv;   // 落在哪个权重区间就选谁，权重越大区间越宽
+}
+
+// 一致性哈希：每个节点在环上放 160 个虚拟节点，避免数据倾斜
+// hash(请求参数) -> 顺时针找到第一个虚拟节点 -> 对应真实节点
+// 加一台机器，只有「新节点到它前驱之间」那段 key 重新归属，其余不动`
+
 export default function Ch3() {
   return (
     <>
@@ -56,6 +88,28 @@ export default function Ch3() {
       </ul>
 
       <LoadBalance />
+
+      <h3>为什么负载均衡放在 Consumer 端</h3>
+      <p>
+        这是一个很值得品的设计选择。传统架构里负载均衡器（如 Nginx、F5）是<strong>独立一层</strong>，
+        所有流量先打到它再转发。Dubbo 反其道而行，把负载均衡做进了 Consumer 进程内（<em>客户端负载均衡</em>），好处是：
+      </p>
+      <ul>
+        <li><strong>少一跳</strong>：Consumer 直连选中的 Provider，没有中间转发节点，延迟更低。</li>
+        <li><strong>无单点</strong>：不存在「负载均衡器挂了全挂」的问题，每个 Consumer 各自决策。</li>
+        <li><strong>信息更全</strong>：Consumer 本地能掌握每个 Provider 的活跃数、响应时间，才能做 LeastActive 这种「感知后端状态」的策略，集中式 LB 很难拿到这么细的实时信息。</li>
+      </ul>
+      <p>
+        代价是每个 Consumer 都要自己维护地址列表、自己算策略，逻辑下沉到了客户端——这正是 RPC 框架（而非纯网络层）来做这件事的原因。
+      </p>
+
+      <h3>加权随机和一致性哈希的实现要点</h3>
+      <p>
+        面试常追问「加权随机怎么实现的」。其实就是把所有节点的权重想成数轴上一段段宽度不同的区间，
+        在总权重范围内取一个随机数，落在哪段就选哪个节点——权重越大区间越宽，被选中概率越高。
+        一致性哈希则给每个真实节点在哈希环上撒 160 个<strong>虚拟节点</strong>，避免节点少时数据分布不均（倾斜）：
+      </p>
+      <CodeBlock lang="java" title="加权随机与一致性哈希的核心逻辑" code={weightHashCode} />
 
       <Example title="集群里混进一个慢节点，该用哪种">
         <p>
@@ -95,6 +149,22 @@ export default function Ch3() {
         </p>
       </Callout>
 
+      <h2>不够用？自定义一个负载均衡</h2>
+      <p>
+        四种内置策略覆盖了大多数场景，但真实业务总有特殊需求，比如<strong>灰度发布</strong>：
+        带 <code>tag=gray</code> 的请求只能打到灰度机器，其余打到正式机器。Dubbo 的负载均衡是通过
+        <strong>SPI 扩展</strong>暴露的，实现 <code>LoadBalance</code> 接口、在 <code>META-INF/dubbo</code> 下注册，
+        就能像内置策略一样用名字引用。这也是 Dubbo「一切皆可扩展」设计哲学的体现（后续 SPI 章会细讲）：
+      </p>
+      <CodeBlock lang="java" title="自定义标签路由负载均衡" code={customLbCode} />
+      <Callout variant="note" title="负载均衡 vs 路由，别混">
+        <p>
+          很多人把「灰度」直接塞进负载均衡，其实 Dubbo 更推荐用<strong>路由（Router）</strong>先<em>筛选</em>出候选 Invoker 子集，
+          再由负载均衡在子集里<em>选一台</em>。职责是：<strong>路由决定「能选哪些」，负载均衡决定「选其中哪个」</strong>。
+          标签路由、条件路由都属于路由层，上面那个例子是为了演示扩展点才写进 LB 里。
+        </p>
+      </Callout>
+
       <h2>实战/面试怎么答</h2>
       <p>
         被问「Dubbo 有哪些负载均衡策略」，先报四个名字并各点一句擅长场景：
@@ -103,6 +173,16 @@ export default function Ch3() {
         再补一句「配合权重和预热，新机器上线可以平滑承接流量」，就显得既懂原理又懂线上。
         如果面试官追问「慢节点怎么办」，直接答 LeastActive 并解释「活跃数」的原理。
       </p>
+
+      <Callout variant="warn" title="负载均衡的坑与追问">
+        <ul>
+          <li><strong>ConsistentHash 默认对第一个参数哈希</strong>：如果第一个参数不是你想要的 key（比如它是个时间戳），路由会乱掉，要用 <code>hash.arguments</code> 指定参数下标。</li>
+          <li><strong>LeastActive 依赖 ActiveLimitFilter 统计活跃数</strong>：活跃数是「调用开始 +1、结束 -1」维护的，若过滤器没生效，LeastActive 会退化成随机。</li>
+          <li><strong>权重不预热的后果</strong>：新机器一上线 JVM 没热（JIT 没编译、连接池没建、缓存空），满流量直接打抖动甚至超时，warmup 就是治这个。</li>
+          <li><strong>误区「轮询一定最均匀最好」</strong>：节点性能不一时，轮询会让弱节点被压垮；性能差异大应配权重或用 LeastActive。</li>
+          <li><strong>误区「负载均衡能解决数据倾斜」</strong>：如果是热点 key（某个大客户请求特别多），ConsistentHash 反而会把它们全压到一台上，需在业务层打散。</li>
+        </ul>
+      </Callout>
 
       <Practice title="给服务配上合适的负载均衡策略">
         <p>

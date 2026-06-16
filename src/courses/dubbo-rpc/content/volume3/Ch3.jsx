@@ -46,6 +46,36 @@ const checklistCode = `选型决策清单（自上而下，命中即定）
 
 一句话：对内高频用 RPC（Dubbo），对外开放用 HTTP（Feign）。`
 
+const genericCode = `// 泛化调用：消费端不需要 Provider 的接口 jar，照样能调
+// 典型用途：网关、测试平台、服务编排——它们要调成百上千个接口，
+// 不可能为每个接口都依赖一个 jar。
+GenericService svc = ReferenceConfigCache.getCache()
+        .get(reference);   // reference.setGeneric("true")
+
+// 参数和返回值都用 Map / 基本类型表达，不需要 POJO 类
+Object result = svc.$invoke(
+    "queryOrder",                                  // 方法名
+    new String[]{ "java.lang.Long" },              // 参数类型全限定名
+    new Object[]{ 1001L });                        // 参数值
+// result 是个 Map：{ "id": 1001, "status": "PAID", ... }
+// 网关收到 HTTP JSON -> 转成上面三个参数 -> 泛化调 Dubbo -> 再转 JSON 返回`
+
+const dubbo3FeatureCode = `# Dubbo 3.x 的几个关键演进（面试加分项）
+# 1) Triple 协议：基于 HTTP/2、兼容 gRPC，跨语言 + 能穿标准网关/Mesh
+dubbo:
+  protocol:
+    name: tri          # 用 Triple 协议
+    port: 50051
+
+# 2) 应用级服务发现：注册粒度从接口降到应用，注册中心数据量大幅下降
+  application:
+    register-mode: instance
+
+# 3) 与 Spring Cloud 互通：Dubbo 3 可复用 Nacos 注册中心，
+#    让 Dubbo 服务和 Spring Cloud 服务互相发现、混合调用
+
+# 趋势：Dubbo 不再「封闭高性能」，而是「既要性能又要云原生通用性」`
+
 export default function Ch3() {
   return (
     <>
@@ -101,6 +131,37 @@ export default function Ch3() {
         </p>
       </Callout>
 
+      <h2>泛化调用：网关凭什么不依赖接口 jar</h2>
+      <p>
+        Dubbo 的「面向接口」很优雅，但有个现实难题：<strong>API 网关</strong>要把外部 HTTP 流量翻译成内部 Dubbo 调用，
+        它面对的是成百上千个后端接口，总不能为每个接口都引一个 jar 包吧？答案是 <strong>泛化调用（Generic Invoke）</strong>。
+        开启 <code>generic=true</code> 后，消费端不需要任何接口定义，用「方法名 + 参数类型字符串 + 参数 Map」就能发起调用，
+        返回值也是 Map：
+      </p>
+      <CodeBlock lang="java" title="泛化调用：无需接口 jar" code={genericCode} />
+      <p>
+        这正是「Dubbo 网关」「Dubbo 测试平台」「服务编排」这类基础设施的底层支撑。理解它，
+        也能反过来加深对前面「请求里要带接口名、方法名、参数类型」的理解——泛化调用只是把这些信息从「编译期接口」
+        改成了「运行期显式传入」，本质的 RPC 协议没变。
+
+      </p>
+
+      <h2>Dubbo 3 的演进：从封闭高性能到云原生</h2>
+      <p>
+        选型讨论绕不开版本趋势。Dubbo 3.x 在做的，恰恰是补齐它相对 HTTP/gRPC 的两块短板：<strong>跨语言</strong>和
+        <strong>云原生通用性</strong>。关键动作有三个——Triple 协议（基于 HTTP/2、兼容 gRPC、能穿标准网关和 Service Mesh）、
+        应用级服务发现（降注册中心压力）、以及与 Spring Cloud 生态互通（复用 Nacos，让 Dubbo 服务和 Spring Cloud 服务互相发现）：
+      </p>
+      <CodeBlock lang="yaml" title="Dubbo 3.x 关键特性" code={dubbo3FeatureCode} />
+      <Callout variant="note" title="选型结论也在演进">
+        <p>
+          所以「Dubbo 不能跨语言、不好穿网关」这类老印象，在 Dubbo 3 + Triple 下已经被很大程度上抹平了。
+          面试里若能补一句「Dubbo 3 用 Triple 兼容 gRPC、走 HTTP/2，跨语言和云原生短板都在补齐」，
+          会显得你不是停留在几年前的认知上。
+
+        </p>
+      </Callout>
+
       <Example title="内部订单服务 vs 对外开放接口，分别选谁">
         <p>同一家电商公司，两个场景，结论恰好相反：</p>
         <ul>
@@ -133,6 +194,16 @@ export default function Ch3() {
         最后落到场景：对内高频选 Dubbo、对外开放选 HTTP，并补一句 gRPC 是兼顾性能与跨语言的折中。
         能把「按场景选」这个判断逻辑讲出来，远比报结论加分。
       </p>
+
+      <Callout variant="warn" title="选型常见误区">
+        <ul>
+          <li><strong>「Dubbo 一定比 Feign 快很多，所以全用 Dubbo」</strong>：内部低频调用，那点性能差距远不如 HTTP 的可调试性值钱，别为了快牺牲排查效率。</li>
+          <li><strong>「Dubbo 不能跨语言」</strong>：这是老黄历，Dubbo 3 的 Triple 协议兼容 gRPC，跨语言已不是问题。</li>
+          <li><strong>「对外接口用了 Dubbo」</strong>：合作方根本接不了二进制私有协议，对外一律 HTTP/REST 是底线。</li>
+          <li><strong>「Feign 没有治理能力」</strong>：能力是有的，只是靠 LoadBalancer/Gateway/Sentinel 拼装，不像 Dubbo 那样开箱内置且细到方法级。</li>
+          <li><strong>误区「选型是技术信仰之争」</strong>：它纯粹是「调用方是谁、跨不跨语言、对不对外、性能多敏感」这几个事实问题的结论，没有银弹。</li>
+        </ul>
+      </Callout>
 
       <Practice title="一份「按场景选 RPC 还是 HTTP」的决策清单">
         <p>

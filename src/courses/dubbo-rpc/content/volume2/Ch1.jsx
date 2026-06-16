@@ -33,6 +33,34 @@ const consumerCode = `<!-- consumer.xml：服务消费方 -->
 <!-- 业务代码里像调用本地方法一样使用 -->
 <!-- orderService.createOrder(req); -->`
 
+const zkTreeCode = `# ZooKeeper 里 Dubbo 的节点结构（接口级服务发现，2.x 经典模型）
+/dubbo
+  /com.example.OrderService          # 一个接口一棵子树
+    /providers                        # 提供者列表（临时节点，Provider 掉线自动消失）
+      /dubbo%3A%2F%2F192.168.0.11%3A20880%2F...   # URL 编码后的提供者地址
+      /dubbo%3A%2F%2F192.168.0.12%3A20880%2F...
+    /consumers                        # 消费者列表（便于运维查看谁在调）
+      /consumer%3A%2F%2F...
+    /configurators                    # 动态配置（限流、权重调整等）
+    /routers                          # 路由规则
+
+# Consumer 在 /providers 上注册一个 watcher，
+# 节点一变（增删）ZooKeeper 推送 -> Consumer 刷新本地地址列表`
+
+const appLevelCode = `# 应用级服务发现（Dubbo 3.x 默认）：注册的不再是「接口」而是「应用」
+# 为什么改？接口级下，一个应用暴露 100 个接口就在注册中心写 100 份地址，
+# 大规模集群里注册中心数据量爆炸（百万级节点），推送压力巨大。
+#
+# 应用级：一个应用实例只注册一条「应用 -> 实例地址」，
+# 接口到应用的映射单独存一份元数据，数据量降低一两个数量级。
+dubbo:
+  application:
+    name: order-provider
+    # register-mode 可选 interface / instance / all（3.x 默认 all 平滑过渡）
+    register-mode: instance
+  registry:
+    address: nacos://127.0.0.1:8848`
+
 export default function Ch1() {
   return (
     <>
@@ -119,6 +147,37 @@ export default function Ch1() {
         </p>
       </Callout>
 
+      <h2>注册中心里到底存了什么</h2>
+      <p>
+        光说「登记地址」太抽象，打开 ZooKeeper 看一眼节点结构就懂了。Dubbo 2.x 用的是<strong>接口级</strong>服务发现：
+        每个接口在 ZK 里是一棵子树，下面分 <code>providers</code> / <code>consumers</code> / <code>configurators</code> /
+        <code>routers</code> 四类节点。Provider 把自己的地址 URL 编码后写进 <code>providers</code> 下，
+        而且是<strong>临时节点</strong>——Provider 和 ZK 的会话一断（进程挂了），节点自动消失，下线感知就是靠这个机制：
+      </p>
+      <CodeBlock lang="text" title="ZooKeeper 中的 Dubbo 节点树（接口级）" code={zkTreeCode} />
+      <p>
+        Consumer 在 <code>providers</code> 节点上挂一个 <em>watcher</em>，节点一有增删，ZK 就推送通知，
+        Consumer 据此刷新本地地址列表。这就是前面「通知」那一步的底层实现。
+
+      </p>
+
+      <h3>从接口级到应用级：Dubbo 3 的关键演进</h3>
+      <p>
+        接口级服务发现有个致命问题：<strong>注册中心数据量随接口数膨胀</strong>。一个应用暴露 100 个接口，
+        就要在注册中心写 100 份几乎一样的地址数据；当集群有几千个实例、上万个接口时，注册中心节点数能到百万级，
+        推送一次变更的开销大到能把 ZK 拖垮。Dubbo 3.x 默认改成<strong>应用级服务发现</strong>：
+        注册的最小单位从「接口」变成「应用实例」，一个实例只注册一条「应用→地址」记录，
+        接口到应用的映射单独作为元数据存储，注册中心的数据量直接降一两个数量级。
+      </p>
+      <CodeBlock lang="yaml" title="应用级服务发现配置（Dubbo 3.x）" code={appLevelCode} />
+      <Callout variant="note" title="为什么 Nacos 越来越常见">
+        <p>
+          ZooKeeper 是 CP 系统（强一致优先），注册中心其实更需要 AP（可用性优先）——服务地址多一个少一个不致命，
+          但注册中心因为分区不可用就麻烦了。Nacos 既能做注册中心又能做配置中心，且支持 AP/CP 切换，
+          配合 Dubbo 3 的应用级发现是当下主流组合。面试问「ZK 和 Nacos 怎么选」，答这条 CAP 取向就到位了。
+        </p>
+      </Callout>
+
       <h2>Dubbo 的分层：每一层只干一件事</h2>
       <p>
         Dubbo 内部按职责分成多层，从上到下大致是：
@@ -148,6 +207,15 @@ export default function Ch1() {
         <strong>调用时是 Consumer 直连 Provider、注册中心不在链路上</strong>这个杀手锏结论，
         最后如果还有时间，补一句分层设计「各层解耦、实现可插拔」。这样层次分明，比堆名词强得多。
       </p>
+
+      <Callout variant="warn" title="面试高频追问">
+        <ul>
+          <li><strong>「注册中心挂了，新启动的 Consumer 还能调吗？」</strong>不能——它还没拿到地址列表，本地没缓存。已经运行的 Consumer 不受影响。这是和「短暂宕机」不同的场景，别答错。</li>
+          <li><strong>「Provider 进程被 kill -9 了，地址多久消失？」</strong>取决于 ZK 会话超时（默认几十秒级），不是瞬时的。这段窗口内 Consumer 可能还会调到死节点，所以容错机制必不可少。</li>
+          <li><strong>「接口级和应用级服务发现区别？」</strong>注册粒度不同：接口级一接口一份地址、数据量大；应用级一实例一份、数据量小，Dubbo 3 默认应用级。</li>
+          <li><strong>误区：以为 Monitor 挂了会影响调用。</strong>Monitor 是旁路，只收集统计，挂了业务照常。</li>
+        </ul>
+      </Callout>
 
       <Practice title="跑通一对最小的 Provider 与 Consumer">
         <p>
