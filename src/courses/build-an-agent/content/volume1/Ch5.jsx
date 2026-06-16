@@ -121,6 +121,38 @@ export const bashTool: Tool = {
   },
 }`
 
+const atomicSrc = `// 直接 writeFile 不是原子的：写到一半进程被杀，文件就「半写」了——
+// 内容截断、甚至损坏。原子写的标准套路是「先写临时文件，再 rename 覆盖」。
+
+import { writeFile, rename } from 'node:fs/promises'
+
+async function atomicWrite(abs: string, content: string) {
+  const tmp = abs + '.tmp-' + process.pid + '-' + Date.now()
+  await writeFile(tmp, content, 'utf8')
+  // rename 在同一文件系统内是原子操作：要么旧文件、要么新文件，
+  // 永远不会出现「半个文件」的中间态。
+  await rename(tmp, abs)
+}
+
+// forge 本卷的 write 用的是朴素 writeFile（够清楚），
+// 但你要知道生产级写工具为什么常常多这一步。`
+
+const editAltSrc = `// edit 的「唯一性约束」之外，业界还有几种定位被改位置的方案，各有取舍：
+
+// 方案 A（forge 采用）：唯一字符串匹配
+//   优点：简单、无需行号、对模型友好（带上下文即可）
+//   缺点：oldString 必须逐字符精确（含空白），模型偶尔会因空格对不上而失败
+
+// 方案 B：按行号替换  edit(path, startLine, endLine, newText)
+//   优点：定位明确
+//   缺点：文件一改行号全乱，模型基于旧行号的后续编辑会错位；对空白不敏感反而易误伤
+
+// 方案 C：unified diff（像 git patch）
+//   优点：能一次表达多处改动、信息最紧凑
+//   缺点：模型生成的 diff 上下文行经常对不上，应用失败率高，还得写 patch 解析器
+
+// 结论：A 在「实现复杂度 / 模型成功率 / 误伤风险」三者间最平衡，所以最流行。`
+
 export default function Ch5() {
   return (
     <>
@@ -193,6 +225,20 @@ export default function Ch5() {
         <strong>新建文件、或整体替换</strong>用 write；<strong>改已有文件的一小块</strong>用 edit。
         前者一锤子；后者外科手术。下面就是那把手术刀。
       </p>
+
+      <Callout variant="note" title="覆盖写不是原子的——生产级 write 多一步「临时文件 + rename」">
+        <p>
+          <code>writeFile</code> 把内容写进文件这件事，看着是「一下子」，其实在底层是分多次系统调用完成的。
+          如果进程在写到一半时被杀（崩溃、断电、被 <code>kill</code>），文件就会停在<strong>「半写」</strong>状态——
+          内容被截断、甚至结构损坏。对源码文件这是灾难。生产级写工具因此常用<strong>原子写</strong>套路：
+          先把完整内容写进一个临时文件，再用 <code>rename</code> 把临时文件「改名」成目标文件。
+          同一文件系统内的 <code>rename</code> 是<strong>原子</strong>的——任一时刻，目标路径要么是完整的旧文件、要么是完整的新文件，绝不会是半个。
+        </p>
+        <CodeBlock lang="ts" title="原子写：先写临时文件，再 rename 覆盖" code={atomicSrc} />
+        <p>
+          forge 本卷的 write 用朴素的 <code>writeFile</code>（为了把主干讲清楚），但你要知道为什么真实工具往往多这一步。
+        </p>
+      </Callout>
 
       <h2>edit：精确字符串替换</h2>
       <p>

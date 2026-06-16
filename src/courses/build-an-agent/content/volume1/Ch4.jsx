@@ -368,6 +368,48 @@ export default function Ch4() {
         </li>
       </ul>
 
+      <p>
+        这套「单星不跨目录、双星跨目录」的规则不是 forge 拍脑袋定的，而是<strong>沿袭了 Unix shell 和 .gitignore 的通行约定</strong>，
+        模型在训练语料里见过海量这样的 glob，所以它写 <code>src/**/*.ts</code> 几乎不会出错。把这套语义对齐成「大家都熟的那套」，
+        本身就是降低模型出错率的设计。具体编译规则和例子列在下表：
+      </p>
+      <CodeBlock lang="ts" title="glob 元字符的编译规则与匹配示例" code={globTableSrc} />
+      <Callout variant="warn" title="为什么必须用 ^...$ 锚定，又为什么转义元字符？">
+        <p>
+          两处细节，漏了任何一处都会出微妙的 bug。<strong>其一，锚定。</strong>正则默认是「子串匹配」——
+          <code>/a\.ts/</code> 能在 <code>xax.tsy</code> 里命中。但 glob 的语义是「整条路径完整匹配」，
+          所以编译结果两头要加 <code>^</code> 和 <code>$</code>，否则 <code>*.ts</code> 会误中 <code>a.tsx</code> 这种。
+          <strong>其二，转义。</strong>用户模式里的 <code>.</code> 在 glob 语义里是个普通字符（文件名里的点），
+          但在正则里 <code>.</code> 是「匹配任意字符」。不转义，<code>*.ts</code> 就会把 <code>axts</code> 也算进来。
+          所以 <code>globToRegExp</code> 里那一长串 <code>.+^&#36;&#123;&#125;()|[]</code> 的转义判断，是在<strong>把正则的「魔法」按住</strong>，
+          只放行我们想要的 <code>*</code> / <code>**</code> / <code>?</code> 三种通配。
+        </p>
+      </Callout>
+
+      <h3>遍历性能：为什么 IGNORE 这个集合是「省命」级别的优化</h3>
+      <p>
+        <code>walkFiles</code> 看着平平无奇，但它的性能完全取决于「跳过了什么」。设想一个普通的前端项目：
+        源码可能就几百个文件，<code>node_modules</code> 里却轻松上<strong>十万</strong>个文件。如果不跳过它：
+      </p>
+      <ul>
+        <li><strong>遍历本身慢得吓人</strong>：每次 glob/grep 都要 <code>readdir</code> 上万个目录、<code>stat</code> 几十万个条目，几秒钟就这么没了。</li>
+        <li><strong>grep 还要读每个文件的内容</strong>：在十万个第三方文件里逐行跑正则，CPU 和磁盘 I/O 直接拉满。</li>
+        <li><strong>结果被噪声淹没</strong>：你搜一个函数名，命中里九成是某个依赖包里的同名符号，真正有用的那条反而被挤出 200 条上限之外。</li>
+      </ul>
+      <p>
+        所以那个不起眼的 <code>IGNORE</code> 集合（外加「点开头目录一律跳过」），同时解决了<strong>速度</strong>和<strong>信噪比</strong>两个问题。
+        这也是为什么真实工具（ripgrep、fd 等）默认都尊重 <code>.gitignore</code>——「该忽略的东西」和「版本控制忽略的东西」高度重合。
+        forge 这里用一个硬编码的小集合做了最朴素的近似，够用；要做得更讲究，下一步就是去解析项目的 <code>.gitignore</code>。
+      </p>
+      <Callout variant="note" title="一个隐藏的健壮性细节：readdir 外层的 try/catch">
+        <p>
+          注意 <code>walkFiles</code> 里 <code>readdir</code> 套了个 <code>try/catch</code>，读不了的目录直接 <code>return</code> 跳过。
+          为什么要这样？因为大目录树里<strong>难免有读不了的角落</strong>——权限不足的目录、悬空的符号链接、
+          挂载点失效的路径。如果不兜住，一个读不了的子目录就会让整次遍历抛异常、前功尽弃。
+          「局部失败不应该让整体崩溃」是遍历这类操作的通用纪律：跳过坏点，继续走完能走的。
+        </p>
+      </Callout>
+
       <h2>glob：按模式找文件</h2>
       <p>
         有了 walk，glob 就只剩薄薄一层。看 <code>src/tools/glob.ts</code> 的<strong>逐字</strong>内容：
@@ -461,6 +503,41 @@ export default function Ch4() {
           至于这套并行调度的更多细节，正是下一章要细抠的内容。
         </p>
       </Example>
+
+      <h2>「只读」也不等于「绝对安全」：路径逃逸这道暗坎</h2>
+      <p>
+        前面反复强调只读工具「安全」，但要把话说精确：它们的安全指的是<strong>不改变状态</strong>，
+        而不是「读什么都行」。这里藏着一个生产级 Agent 必须正视的问题——<strong>路径逃逸</strong>。
+        模型给的 <code>path</code> 是不可信输入，如果它发来 <code>../../etc/passwd</code> 或一个绝对路径 <code>/etc/shadow</code>，
+        <code>resolve(ctx.cwd, path)</code> 会老老实实算出工作目录<strong>之外</strong>的路径，read 就真的把它读出来回灌给模型了。
+      </p>
+      <p>
+        本卷的 forge 为保持主干清爽，<strong>暂未</strong>做这层防护——它信任「在沙盒目录里跑」这个前提。但你要清楚正确的做法长什么样：
+        解析出绝对路径后，校验它<strong>仍在 <code>ctx.cwd</code> 之内</strong>（比如 <code>abs.startsWith(resolve(ctx.cwd))</code>，
+        并小心符号链接绕过），否则拒绝。这和卷 3 的「权限闸门」是一脉相承的安全话题，只不过那里管的是写工具、这里管的是读工具的「读取范围」。
+      </p>
+      <Callout variant="warn" title="只读 ≠ 无害：把模型输入当攻击面来对待">
+        <p>
+          一个被恶意 prompt 注入引导的模型，可能试图用 read/grep 去<strong>窃取</strong>工作目录外的敏感文件
+          （<code>.env</code>、SSH 私钥、系统配置），再把内容回灌进对话——这本身就是一种数据泄露。
+          所以「只读」省掉的是「写坏东西」的风险，但<strong>没有</strong>省掉「读了不该读的东西」的风险。
+          生产级 Agent 对读工具同样要设范围边界：限定在工作目录内、显式排除敏感文件。本卷把它列为已知简化，留作进阶练习。
+        </p>
+      </Callout>
+
+      <h2>并行的收益，到底有多大？</h2>
+      <p>
+        「只读可并行」不是一句口号，它带来的速度差是<strong>实打实、肉眼可见</strong>的。关键在于：read/glob/grep 这类操作的耗时，
+        绝大部分是<strong>等 I/O</strong>（等磁盘把文件读出来、等目录列完），而不是 CPU 在算。等待是可以<strong>重叠</strong>的——
+        三个文件一起发起读取，磁盘和操作系统会并发处理，总时间约等于最慢的那一个，而不是三者相加：
+      </p>
+      <CodeBlock lang="ts" title="串行 vs 并行：I/O 等待是重叠的，不是叠加的" code={seqVsParSrc} />
+      <p>
+        模型探索一个陌生项目时，一轮里发出三五个 read/grep 是常态。串行跑，用户要干等好几个来回；
+        并行跑，几乎是一瞬间齐活。这就是上一章 <code>runTools</code> 把只读工具塞进 <code>Promise.all</code> 的全部理由——
+        而它<strong>敢</strong>这么做的前提，正是这些工具被诚实地标了 <code>readOnly: true</code>、彼此真的互不影响。
+        「安全让 Agent 敢探索，并行让探索快」——两句话在这里合成了一句可量化的结论。
+      </p>
 
       <Summary
         points={[

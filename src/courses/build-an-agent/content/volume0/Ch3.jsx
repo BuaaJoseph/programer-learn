@@ -36,6 +36,52 @@ const thinkingTs = `const res = await client.messages.create({
   messages: [{ role: 'user', content: '推导一下：一个房间里 23 个人，至少两人生日相同的概率超过 50% 吗？' }],
 })`
 
+const multiTurnTs = `// messages 是一本「对话账本」，多轮就是不断往里追加
+const history = [
+  { role: 'user', content: '我叫小明。' },
+]
+let res = await client.messages.create({ model: 'claude-opus-4-8', max_tokens: 1024, messages: history })
+
+// 把模型这轮的回复，以 assistant 角色追加回账本
+history.push({ role: 'assistant', content: res.content })
+
+// 再问一句——模型「记得」上文，只因为我们把完整 history 又发了一遍
+history.push({ role: 'user', content: '我叫什么名字？' })
+res = await client.messages.create({ model: 'claude-opus-4-8', max_tokens: 1024, messages: history })
+// → 模型答得出「小明」，是因为它能看到整本账本，而不是因为它「有记忆」`
+
+const streamTs = `// 流式：用 .stream() 边生成边收，最后用 finalMessage() 拿到完整结果
+const stream = client.messages.stream({
+  model: 'claude-opus-4-8',
+  max_tokens: 4096,
+  messages: [{ role: 'user', content: '写一段较长的说明文字' }],
+})
+
+stream.on('text', (delta) => process.stdout.write(delta)) // 一块块实时打印
+
+const final = await stream.finalMessage() // 需要完整消息时再取`
+
+const usageTs = `const res = await client.messages.create({ /* ... */ })
+
+// 每次响应都带 usage，记着算成本与上下文占用
+console.log(res.usage.input_tokens)   // 这次发进去的 token 数（计费按输入价）
+console.log(res.usage.output_tokens)  // 这次生成出来的 token 数（计费按输出价，单价更高）`
+
+const errorTs = `import Anthropic from '@anthropic-ai/sdk'
+
+try {
+  const res = await client.messages.create({ /* ... */ })
+} catch (err) {
+  // 用 SDK 提供的「类型化异常」分类处理，别去 match 错误字符串
+  if (err instanceof Anthropic.RateLimitError) {
+    // 429：被限流。SDK 默认已带指数退避重试，这里是兜底
+  } else if (err instanceof Anthropic.APIError) {
+    console.error(\`API 出错 \${err.status}：\`, err.message)
+  } else {
+    throw err // 不是 API 错误，原样抛出
+  }
+}`
+
 export default function Ch3() {
   return (
     <>
@@ -108,6 +154,17 @@ export default function Ch3() {
 
       <CodeBlock lang="bash" title="运行 hello.ts" code={runHello} />
 
+      <Callout variant="note" title="为什么用 SDK，而不是自己 fetch HTTP 接口？">
+        <p>
+          Claude 的接口本质是一个 HTTP 端点（<code>POST /v1/messages</code>），你完全可以用 <code>fetch</code> 裸调。
+          但官方 SDK <code>@anthropic-ai/sdk</code> 替你包好了一堆「不写就要踩坑」的事：
+          <strong>自动读环境变量里的 key、对 429/5xx 错误做指数退避重试、把响应解析成带类型的对象、
+          提供流式辅助方法（如 <code>finalMessage()</code>）、暴露类型化的异常类</strong>。
+          自己 fetch 不是不行，但等于把这些都重写一遍，且很容易写漏（比如忘了重试、忘了处理流式分块）。
+          所以本课程一律走 SDK——把精力留给真正属于我们的脚手架逻辑，而不是重复造轮子。
+        </p>
+      </Callout>
+
       <h2>第三步：一次请求里到底有什么</h2>
       <p>
         这段代码能跑通只是第一步，更重要的是理解这次请求的「形状」。把它讲透，后面所有和模型打交道的代码都不再神秘。
@@ -139,6 +196,23 @@ export default function Ch3() {
         </ul>
       </Example>
 
+      <h3>多轮对话：模型为什么「记得」上文</h3>
+      <p>
+        既然 <code>messages</code> 是一本账本，多轮对话就不是什么新机制——<strong>无非是不停地往同一个数组里追加</strong>。
+        这是初学者最该早点想通的一件事：
+      </p>
+      <CodeBlock lang="ts" title="多轮对话：把回复追加回历史，再发一次" code={multiTurnTs} />
+      <KeyIdea title="模型是无状态的，「记忆」是你给的">
+        <p>
+          Claude 的接口<strong>不在服务器上替你存对话</strong>。它每次只看你这一次请求里发去的 <code>messages</code>，
+          答完就「忘」。所谓「它记得我刚才说的名字」，纯粹是因为你把<strong>包含那句话的完整历史</strong>又发了一遍。
+          这一点直接决定了 forge 的内核形态：上一章那个 while 循环，本质就是
+          <strong>「把越来越厚的历史反复发给一个无状态的模型」</strong>。也正因为历史只增不减，
+          它迟早会撑爆上下文窗口——这就是卷 4「上下文工程」（预算、压缩）存在的根本原因。
+          现在记住这条因果链，后面很多设计你会觉得理所当然。
+        </p>
+      </KeyIdea>
+
       <h2>第四步：开启自适应思考</h2>
       <p>
         对于需要推理的复杂任务，建议给请求加上 <code>thinking</code> 参数，让模型在回答前先「想一想」。
@@ -155,8 +229,16 @@ export default function Ch3() {
           简单的一问一答可以<strong>不加 thinking</strong>，省时省钱；只有遇到需要多步推理的硬任务，再把它打开。
         </p>
       </Callout>
+      <p>
+        再补两个会影响你后面写 forge 的事实。其一，开了思考后，<strong>返回的 <code>content</code> 里会多出
+        <code>thinking</code> 类型的块</strong>——这正好印证了上一节「content 是块数组」的设计：思考、文字、
+        将来的工具调用，都是并列的块类型，你按 <code>type</code> 分别处理即可。其二，在 Opus 4.8 上思考过程默认是
+        <strong>「省略」</strong>的（<code>thinking</code> 块的文本为空），需要把它展示给用户时要显式设
+        <code>thinking: &#123; type: 'adaptive', display: 'summarized' &#125;</code> 才能拿到一段可读的思考摘要。
+        无论是否展示，思考都真实发生、也都照常计费——<code>display</code> 只控制「给不给你看」，不影响「想不想、花不花钱」。
+      </p>
 
-      <h2>第五步：长输出，先记住有「流式」这回事</h2>
+      <h2>第五步：长输出，用「流式」边收边显示</h2>
       <Callout variant="tip" title="长回答用流式边收边显示">
         <p>
           当模型要输出很长一段内容时，一次性等它全写完再返回，体验差、还容易触发超时。
@@ -165,6 +247,57 @@ export default function Ch3() {
           流式的完整用法留到<strong>第 2 卷</strong>再做，这里先在脑子里记下「有这么个东西」。
         </p>
       </Callout>
+      <p>
+        虽然完整实现留到卷 2，但这里值得先把「为什么需要它」说透，因为它不只是个体验优化，
+        更是个<strong>工程必需品</strong>。非流式的 <code>create</code> 是「发出去 → 干等到全部生成完 → 一次性返回」，
+        这有两个硬伤：一是<strong>用户要盯着一个不动的光标等几十秒</strong>，体验糟糕；二是当
+        <code>max_tokens</code> 设得很大、生成很长时，<strong>整个 HTTP 请求可能在 SDK 默认超时前还没返回，直接报错</strong>。
+        流式从根上绕开这两点——它在第一个字生成出来时就开始往回传，所以「立刻有反馈」且「不会因为生成太久而超时」。
+        经验法则：<strong>预期输出较短就用 <code>create</code>，预期输出长（或 <code>max_tokens</code> 设得大）就用 <code>stream</code></strong>。
+        提前感受一下它的样子：
+      </p>
+      <CodeBlock lang="ts" title="流式调用的样子（卷 2 详讲）" code={streamTs} />
+
+      <h2>第六步：token、计费与错误处理</h2>
+      <p>
+        forge 是要长期跑、反复调模型的工具，所以从第一次调用起就该对两件事有概念：
+        <strong>这次花了多少钱</strong>，以及<strong>调用失败了怎么办</strong>。
+      </p>
+      <p>
+        先说 token 和计费。模型不是按「字数」而是按 <strong>token</strong> 计费——token 是模型切分文本的最小单位，
+        一个英文单词大致 1 个多 token，中文一个字往往算 1～2 个 token。每次响应都会带一个 <code>usage</code> 对象，
+        告诉你这次的输入、输出各用了多少 token：
+      </p>
+      <CodeBlock lang="ts" title="读取 usage：每次都知道花了多少" code={usageTs} />
+      <p>
+        两个要点：其一，<strong>输出 token 通常比输入 token 贵得多</strong>（Opus 4.8 大致是输入 $5、输出 $25 每百万 token，
+        约 5 倍差），所以「让模型少废话、直接给结论」不只是体验问题，也是成本问题。其二，回想上一节那条因果链——
+        <strong>对话历史是只增不减的</strong>，意味着随着轮次变多，每一轮的<em>输入</em> token 都在变大，
+        成本会悄悄滚雪球。这正是卷 4「上下文工程」要解决的事（用压缩、预算把历史控制住），也是卷 7
+        会专门做成本与延迟度量的原因。现在你只需养成习惯：<strong>每次调用都心里有本账</strong>。
+      </p>
+      <Example title="错误处理：用类型化异常，别 match 字符串">
+        <p>
+          网络调用一定会失败——限流（429）、服务过载（529）、偶发的 5xx、或者你请求本身写错了（400）。
+          一个能长期跑的 Agent 必须把这些处理好。SDK 为每种错误提供了<strong>类型化的异常类</strong>，
+          请用 <code>instanceof</code> 判断，而不是去 <code>err.message.includes('429')</code> 抠字符串（脆弱且易错）：
+        </p>
+        <CodeBlock lang="ts" title="结构化的错误处理" code={errorTs} />
+        <ul>
+          <li>
+            <strong>哪些该重试，哪些不该。</strong>429（限流）、529（过载）、500+（服务端临时故障）是<strong>可重试</strong>的；
+            400（请求写错了）、401（key 无效）是<strong>不可重试</strong>的——重试一万次还是错，得去改请求或换 key。
+          </li>
+          <li>
+            <strong>SDK 已经替你重试了一部分。</strong>对 429/5xx，SDK 默认带指数退避自动重试（默认 2 次）。
+            所以你的 <code>catch</code> 往往是<strong>兜底</strong>：处理重试耗尽后仍失败的情况，而不是从零实现重试。
+          </li>
+          <li>
+            <strong>从最具体到最宽泛。</strong><code>instanceof</code> 的判断顺序要先窄后宽——先判 <code>RateLimitError</code>，
+            再判它的父类 <code>APIError</code>，否则具体分支永远进不去。
+          </li>
+        </ul>
+      </Example>
 
       <h2>从「问一句答一句」到 Agent，还差什么</h2>
       <p>
@@ -189,11 +322,13 @@ export default function Ch3() {
         points={[
           '去 Anthropic 控制台拿 API key，用 export 设成环境变量 ANTHROPIC_API_KEY；绝不硬编码进代码、绝不提交到 git。',
           'new Anthropic() 不传参数，会自动读取环境变量 ANTHROPIC_API_KEY——这正是用环境变量而非硬编码的回报。',
+          '用官方 SDK 而非裸 fetch：它替你包好读 key、重试 429/5xx、解析类型、流式辅助、类型化异常，让你专注脚手架逻辑。',
           'messages.create 三要素：model（用哪个模型）、max_tokens（这次回复的输出上限）、messages（要发的对话内容）。',
-          'messages 是对话历史数组，每条有 role（user/assistant）和 content；模型「记得上文」靠的是你每次把完整历史发回去。',
-          '返回的 content 是块数组，因为一条回复可能含多种块（现在是 text，以后还有工具调用 tool_use），所以要遍历、按 type 处理。',
-          '复杂任务加 thinking: { type: "adaptive" }；Opus 4.8 上 thinking 只支持 adaptive 这一种，简单调用可不加。',
-          '长输出建议用 client.messages.stream(...) 边收边显示，第 2 卷再做；本章先用 create 跑通链路。',
+          'messages 是对话账本，每条有 role（user/assistant）和 content；模型是无状态的，「记得上文」靠的是你每次把完整历史重发——这也注定历史会膨胀（卷 4 上下文工程的由来）。',
+          '返回的 content 是块数组，因为一条回复可能含多种块（text、thinking，以后还有工具调用 tool_use），所以要遍历、按 type 处理。',
+          '复杂任务加 thinking: { type: "adaptive" }；Opus 4.8 上 thinking 只支持 adaptive，思考默认省略、想看摘要要设 display: "summarized"，且思考照常计费。',
+          '长输出/大 max_tokens 用 client.messages.stream(...) 边收边显示，既改善体验又避免 HTTP 超时；卷 2 详讲，本章先用 create 跑通链路。',
+          '按 token 计费且输出比输入贵约 5 倍，每次响应的 usage 都该看；错误用 SDK 的类型化异常（instanceof，先窄后宽）分类处理，429/5xx 可重试且 SDK 已带退避重试、400/401 不可重试。',
           '单次调用还不是 Agent——Agent 多出来的是「外层循环」和「能动手的工具」，这正是第 1 卷要造的。',
         ]}
       />
