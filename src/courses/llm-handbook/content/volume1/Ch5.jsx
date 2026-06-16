@@ -169,6 +169,26 @@ export default function Ch5() {
         知道宽度和深度，心算就能估个量级，反过来也能从参数量倒推大致规模。
       </p>
 
+      <Example title="GPT-2 small 的「零件清单」">
+        <p>把一个真实小模型拆开看，所有概念就落地了。GPT-2 small：d_model=768、12 层、12 个注意力头、词表 50257。</p>
+        <table>
+          <thead>
+            <tr><th>部件</th><th>规格</th><th>约占参数</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>token embedding（与输出层共享）</td><td>50257 × 768</td><td>约 0.39 亿</td></tr>
+            <tr><td>每层注意力 Q/K/V/O</td><td>约 4 × 768²</td><td>约 0.024 亿/层</td></tr>
+            <tr><td>每层 FFN（768→3072→768）</td><td>约 8 × 768²</td><td>约 0.047 亿/层</td></tr>
+            <tr><td>12 层主体合计</td><td>12 × 12 × 768²</td><td>约 0.85 亿</td></tr>
+            <tr><td>总计</td><td>—</td><td>约 1.24 亿（官方 124M）</td></tr>
+          </tbody>
+        </table>
+        <p>
+          注意小模型里 embedding 那 0.39 亿占了快三分之一——这就是为什么本章 Practice 强调，估小模型<strong>必须</strong>把词表那项加上，
+          只算 <code>12·d²·层数</code> 会偏低不少；而到了 GPT-3 那种规模，主体远大于 embedding，省略词表项也八九不离十。
+        </p>
+      </Example>
+
       <KeyIdea title="深度带来层级化的抽象">
         <p>
           为什么要堆这么多层？粗略地说，浅层更多处理表层模式（拼写、局部语法、相邻词关系），
