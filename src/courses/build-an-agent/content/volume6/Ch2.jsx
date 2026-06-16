@@ -222,6 +222,24 @@ export default function Ch2() {
         </p>
       </Example>
 
+      <h2>白捡的好处：可测试性</h2>
+      <p>
+        当初为解耦而引入的 <code>Provider</code> 接口，还顺手带来一个常被低估的红利：<strong>主循环变得极易测试</strong>。LLM 调用是出了名的「难测」——它走网络（慢、要联网）、花真金白银（每次调用都计费）、而且<strong>不确定</strong>（同样的输入，回复可能不一样）。如果主循环直接 new 一个真客户端，那「测一遍主循环逻辑」就等于「真的发一次请求」，慢、贵、还不可复现。
+      </p>
+      <p>
+        但因为内核只依赖 <code>Provider</code> 接口，我们可以在测试里塞一个<strong>假 Provider</strong>（测试替身 / test double）：它不发任何请求，直接返回我们预先写好的回复脚本。
+      </p>
+
+      <CodeBlock lang="ts" title="test/fake-provider.ts" code={testDoubleSketch} />
+
+      <p>
+        于是测「模型要求调工具时，主循环会不会正确执行工具、把结果回灌、再发下一轮」这类逻辑，变成了一个毫秒级、零成本、完全确定的纯逻辑测试——你用脚本精确控制「模型这一轮会说什么」，断言主循环的反应。这就是依赖倒置的连锁回报：<strong>为换厂商而做的解耦，自动也把「难测的外部依赖」变成了「可注入的可控对象」。</strong>好的抽象往往是这样，你为一个目的引入它，却在别处反复收到红利。
+      </p>
+
+      <Callout variant="note">
+        这呼应一个更普适的经验：<em>难测，常常是耦合过紧的症状。</em>当你发现某段逻辑「没法不联网/不动数据库就测」，先别急着写 mock，回头看看是不是依赖箭头指错了方向——把硬依赖换成可注入的接口，可测性往往自然就来了。
+      </Callout>
+
       <h2>呼应 /model 命令</h2>
       <p>
         还记得卷 2 里那个 <code>/model</code> 命令吗？它能在会话进行中切换模型。现在你应该看穿它的本质了：它做的事，
@@ -234,11 +252,33 @@ export default function Ch2() {
         前者是「换一个 Provider 实例」，后者是「造第一个 Provider 实例」，落点都是同一个 <code>Provider</code> 接口。一套抽象，两个入口。
       </Callout>
 
+      <h2>厂商差异有多大：抽象成本藏在哪</h2>
+      <p>
+        别天真地以为所有厂商长得一样。统一的接口背后，各家在协议层面的差异其实相当大，而<strong>这些差异并没有凭空消失，只是被搬进了各自的 Provider 实现里</strong>。下面这张表能让你具体感受「ClaudeProvider 和 BailianProvider 内部到底要消化掉哪些不同」：
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>维度</th><th>Anthropic（Claude）</th><th>OpenAI 兼容（百炼 / Qwen 等）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>消息角色</td><td>system 独立成参数</td><td>system 作为 messages 里的一条</td></tr>
+          <tr><td>工具调用块</td><td>tool_use / tool_result 块</td><td>tool_calls 字段 + role:tool 消息</td></tr>
+          <tr><td>思考过程</td><td>原生 thinking 块</td><td>多数不支持或形式不同</td></tr>
+          <tr><td>token 计数</td><td>有专门的计数端点</td><td>常只能本地估算</td></tr>
+          <tr><td>流式事件</td><td>content_block_delta 等结构</td><td>OpenAI 的 chunk/delta 结构</td></tr>
+          <tr><td>参数命名</td><td>maxTokens 风格（SDK 内）</td><td>max_tokens 蛇形</td></tr>
+        </tbody>
+      </table>
+
       <Callout variant="warn">
-        别天真地以为所有厂商长得一样。不同厂商的能力和参数其实差异不小：有的支持 thinking 块、有的不支持；
-        token 计数方式各家不同（有的有专门的计数端点，有的只能本地估算）；流式事件的结构也各有各的形状。
-        Provider 实现的难点正在这里——每个实现都要在内部把这些差异处理干净，对外却必须保持那个统一的、薄薄的接口。
-        抽象不是没有成本，成本被你藏进了各自的 Provider 文件里，换来的是内核的纯净。
+        关键纪律：<strong>抽象不是没有成本，成本被你藏进了各自的 Provider 文件里，换来的是内核的纯净。</strong>
+        每个 Provider 实现都要在内部把上表这些差异翻译干净，对外却必须保持那个统一的、薄薄的接口。
+        所以衡量一个 Provider 写得好不好，标准不是「它支持多少特性」，而是「它有没有把所有厂商怪癖都关在自己这一个文件里、没有一丝外溢」。
+      </Callout>
+
+      <Callout variant="note">
+        <strong>一个常见误区：以为薄抽象 = 功能阉割。</strong>不是的。薄的是<em>接口</em>，不是<em>实现</em>。ClaudeProvider 内部完全可以用上 prompt 缓存、thinking、图片输入等全部高级特性——只要这些是它「在统一契约下的内部优化」，对外仍只暴露那四样。换句话说：用最强的实现，藏在最薄的接口后面。
       </Callout>
 
       <h2>卷内衔接</h2>

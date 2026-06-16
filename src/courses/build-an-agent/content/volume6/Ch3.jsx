@@ -140,6 +140,30 @@ const indexCode = `const mcpTools = config.mcpServers ? await loadMcpTools(confi
 // …
 const tools: Tool[] = [...ALL_TOOLS, makeTodoTool(todos), taskTool, ...mcpTools]`
 
+const jsonrpcSample = `// 一条 JSON-RPC 2.0「请求」（有 id，对方必须回复）
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} }
+
+// 对应的「响应」（id 与请求一致，二选一带 result 或 error）
+{ "jsonrpc": "2.0", "id": 1, "result": { "tools": [ /* … */ ] } }
+
+// 一条「通知」（无 id，单向，对方不回复）
+{ "jsonrpc": "2.0", "method": "notifications/initialized" }`
+
+const handshakeSample = `// 1) 客户端 → server：initialize（亮明协议版本 + 自我介绍 + 能力声明）
+{ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": { "name": "forge", "version": "0.1.0" } } }
+
+// 2) server → 客户端：回复自己支持的能力（tools / resources / prompts…）
+{ "jsonrpc": "2.0", "id": 1, "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": { "tools": {} },
+    "serverInfo": { "name": "filesystem", "version": "1.0.0" } } }
+
+// 3) 客户端 → server：initialized 通知，握手完成，可以正式干活了
+{ "jsonrpc": "2.0", "method": "notifications/initialized" }`
+
 export default function Ch3() {
   return (
     <article>
@@ -167,6 +191,18 @@ export default function Ch3() {
         工具的提供者和工具的使用者彻底解耦——这正是平台化的核心。
       </KeyIdea>
 
+      <h2>它从哪来：一点背景</h2>
+      <p>
+        MCP 由 <strong>Anthropic 于 2024 年底开源</strong>提出。动机很务实：在 MCP 之前，每个 Agent 应用都得为「接入某个数据源 / 工具」单独写一套对接代码——A 应用要连数据库写一遍、B 应用要连同一个数据库再写一遍，是个典型的 M×N 集成爆炸（M 个应用 × N 个数据源）。MCP 的思路是在中间立一个标准协议，把 M×N 变成 M+N：工具方只需写一个 MCP server，所有 MCP 客户端都能用；客户端只需实现一次 MCP 客户端，所有 MCP server 都能接。
+      </p>
+      <p>
+        协议开放之后，生态长得很快——文件系统、Git、各类数据库、浏览器自动化、Slack、GitHub 等都有了现成的 server，并迅速被 Anthropic 之外的多家客户端采纳。这也是为什么我们说接入 MCP 是 forge「从工具走向平台」的关键：你接的不是某一个功能，而是<strong>整个正在生长的生态</strong>。
+      </p>
+
+      <Callout variant="tip">
+        别被「又一个协议」吓到。MCP 没发明任何新的底层技术——它复用了成熟的 <strong>JSON-RPC 2.0</strong> 做消息格式，复用了 <strong>stdio / HTTP</strong> 做传输。它真正贡献的是一套<em>语义约定</em>：把「Agent 与外部能力对话」这件事，规范成了 tools / resources / prompts 几类标准交互。站在巨人肩上，所以好实现、也好理解。
+      </Callout>
+
       <h2>协议要点：握手 → 列举 → 调用</h2>
       <p>
         MCP 底层是 <strong>JSON-RPC 2.0</strong>。我们用最简单的 <strong>stdio 传输</strong>：
@@ -182,6 +218,55 @@ export default function Ch3() {
         <br />
         <strong>调用</strong>：客户端发 <code>tools/call</code>（带工具名和参数），server 执行后把结果回传。
       </Callout>
+
+      <h3>先讲清楚 JSON-RPC 2.0</h3>
+      <p>
+        理解 MCP，绕不开它的消息格式 JSON-RPC 2.0。它简单到只有三种消息形态，记住这三种，整个协议的交互就都看得懂了：
+      </p>
+      <ul>
+        <li><strong>请求（request）</strong>：带 <code>id</code> 和 <code>method</code>。<em>带 id 意味着「我等你回复」</em>——对方<strong>必须</strong>返回一条 id 相同的响应。</li>
+        <li><strong>响应（response）</strong>：带与请求相同的 <code>id</code>，并<strong>二选一</strong>带 <code>result</code>（成功）或 <code>error</code>（失败）。</li>
+        <li><strong>通知（notification）</strong>：只有 <code>method</code>、<strong>没有 id</strong>。「只发不等回复」的单向消息。</li>
+      </ul>
+
+      <CodeBlock lang="json" title="JSON-RPC 2.0 的三种消息" code={jsonrpcSample} />
+
+      <p>
+        <code>id</code> 在这里是全部魔法的来源：因为请求和响应靠 <code>id</code> 配对，所以客户端可以<strong>同时把多个请求发出去</strong>而不必排队等，收到响应时按 <code>id</code> 认领即可。这正是我们客户端里 <code>pending</code> 那张 <code>Map&lt;id, resolve&gt;</code> 表的意义——它是「把异步往返按 id 对号入座」的登记簿。
+      </p>
+
+      <h3>握手的真实报文</h3>
+      <p>
+        把握手三步写成真实的 JSON-RPC 报文，就是下面这样。注意第一步和第三步——一个是带 id 的请求（要等回复），一个是不带 id 的通知（发完即走）：
+      </p>
+
+      <CodeBlock lang="json" title="initialize 握手的三条消息" code={handshakeSample} />
+
+      <p>
+        握手不只是「礼貌性招呼」，它有实质作用：双方借此<strong>协商协议版本</strong>（避免新客户端连老 server 时鸡同鸭讲），并交换<strong>能力声明</strong>（capabilities）——server 借此告诉客户端「我支持 tools，但不支持 resources」，客户端就不会去调它根本没有的能力。这是所有健壮协议的通例：先对齐版本与能力，再开始干活。
+      </p>
+
+      <h3>两种传输：stdio 与 SSE/HTTP</h3>
+      <p>
+        JSON-RPC 只管<strong>消息长什么样</strong>，不管<strong>消息怎么送过去</strong>——后者是「传输层」的事。MCP 定义了两种主流传输，适配不同部署形态：
+      </p>
+
+      <table>
+        <thead>
+          <tr><th></th><th>stdio（本章用的）</th><th>SSE / Streamable HTTP</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>server 在哪</td><td>本机，作为子进程</td><td>远程，独立服务</td></tr>
+          <tr><td>怎么收发</td><td>子进程的 stdin / stdout</td><td>HTTP 请求 + SSE 流式回推</td></tr>
+          <tr><td>启动方式</td><td>客户端 spawn 起来</td><td>连一个已运行的 URL</td></tr>
+          <tr><td>典型场景</td><td>本地文件 / Git / 命令行工具</td><td>团队共享 / SaaS / 跨网络</td></tr>
+          <tr><td>认证</td><td>靠本机进程权限</td><td>常配 OAuth / Token</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        关键洞察：<strong>换传输不改语义</strong>。无论 stdio 还是 HTTP，传的都是同样的 JSON-RPC 消息、走的都是同样的「握手 → 列举 → 调用」流程。所以本章把 stdio 这条传输实现透了，将来要支持远程 server，只是把「读写子进程 stdin/stdout」换成「读写 HTTP/SSE」，上层的 <code>request</code> / <code>notify</code> / <code>wrap</code> 逻辑几乎原样可用。我们刻意从 stdio 入手，正因为它最简单——子进程的标准流，不涉及网络、端口、认证，能把协议本身讲得最干净。
+      </p>
 
       <h2>forge 的 MCP 客户端</h2>
       <p>
@@ -268,11 +353,45 @@ export default function Ch3() {
         但更根本的原则是：<strong>只接入你信任的 server</strong>，就像你不会随便给陌生 U 盘插进电脑一样。
       </Callout>
 
+      <h2>MCP 的三种原语：tools / resources / prompts</h2>
+      <p>
+        本章只实现了 <strong>tools</strong>，但 MCP 标准里 server 能向客户端暴露的是三类东西。三者分工不同，搞清楚边界，你才知道一个 server 该提供什么、forge 该怎么消费：
+      </p>
+      <ul>
+        <li>
+          <strong>Tools（工具）</strong>：可被模型<em>调用</em>的动作，有副作用（读文件、查数据库、发请求）。它是「模型主动决定要做某事」——本章包装的就是这类。对应 <code>tools/list</code> 与 <code>tools/call</code>。
+        </li>
+        <li>
+          <strong>Resources（资源）</strong>：可被<em>读取</em>的上下文数据，由 <em>应用 / 用户</em>决定要不要塞进上下文（一个文件、一段日志、一条数据库记录）。它更像「把素材摆上桌」，而不是「让模型去拿」。对应 <code>resources/list</code> 与 <code>resources/read</code>。
+        </li>
+        <li>
+          <strong>Prompts（提示）</strong>：server 预定义、可参数化的提示模板，通常由<em>用户</em>主动触发（比如一个「代码审查」模板）。它把「好的提问方式」也变成了可分发的资产。对应 <code>prompts/list</code> 与 <code>prompts/get</code>。
+        </li>
+      </ul>
+
+      <table>
+        <thead>
+          <tr><th>原语</th><th>谁来主导</th><th>本质</th><th>JSON-RPC 方法</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tools</td><td>模型</td><td>可执行的动作（有副作用）</td><td>tools/list · tools/call</td></tr>
+          <tr><td>Resources</td><td>应用 / 用户</td><td>可读取的上下文数据</td><td>resources/list · resources/read</td></tr>
+          <tr><td>Prompts</td><td>用户</td><td>预定义的提示模板</td><td>prompts/list · prompts/get</td></tr>
+        </tbody>
+      </table>
+
       <Callout variant="note">
         这里实现的是<strong>最小可用</strong>的 stdio 客户端——够把 MCP 的原理讲透。
-        完整的 MCP 还有更多东西：资源（resources，把文件/数据暴露给模型当上下文）、
-        提示（prompts，server 预定义的提示模板）、以及 SSE/HTTP 传输（用于远程 server）。
-        它们都能按同样的「JSON-RPC 请求/响应」思路在这个客户端上扩展出来。
+        resources 和 prompts 都能按同样的「JSON-RPC 请求/响应」思路在这个客户端上扩展出来：
+        无非是多几个 <code>request('resources/list')</code> / <code>request('prompts/get', …)</code>，再把结果映射成 forge 内部能消费的形状。
+        协议的「形状」你已经掌握了，剩下的只是按图索骥地补方法。
+      </Callout>
+
+      <Callout variant="warn">
+        <strong>几个常见误区，趁早说清楚。</strong>
+        其一，「MCP 是 Anthropic 私有的、只能配 Claude 用」——错，它是开放协议，server 与具体模型厂商无关，任何实现了客户端的 Agent 都能接。
+        其二，「接了 MCP 就等于装了插件、即开即用」——不尽然，stdio server 要本机能跑起它的启动命令（比如得有 <code>npx</code>、对应包能下载到），连不上会静默退化（我们的 <code>loadMcpTools</code> 就是只打日志不崩）。
+        其三，「工具越多越好，把能找到的 server 都接上」——恰恰相反，工具清单会进入模型的上下文，几十上百个工具会稀释模型的注意力、抬高 token 成本、还增加误调用风险。<em>按需接入、保持工具表精简</em>，才是工程上的正解。
       </Callout>
 
       <h2>第 6 卷小结</h2>

@@ -74,6 +74,32 @@ const commandTs = `{
 const costOutput = `> /cost
 轮数 8 · 输入 45200 tok · 输出 3100 tok · 约 $0.3035 · 平均延迟 2140ms`
 
+const cachedPricing = `export interface Pricing {
+  inputPerM: number
+  outputPerM: number
+  /** 写入缓存的输入 token 价（通常略高于普通输入）。 */
+  cacheWritePerM?: number
+  /** 命中缓存的输入 token 价（通常是普通输入的一个零头）。 */
+  cacheReadPerM?: number
+}`
+
+const cachedUsage = `// 命中缓存的部分按"缓存读"价计，未命中的按普通输入价计
+const cached = usage.cacheReadTokens ?? 0
+const fresh = usage.inputTokens - cached
+const cost =
+  (fresh / 1e6) * p.inputPerM +
+  (cached / 1e6) * (p.cacheReadPerM ?? p.inputPerM) +
+  (usage.outputTokens / 1e6) * p.outputPerM`
+
+const budgetGuard = `// 软预算告警：累计花费越过阈值就提示，但不强制中断
+checkBudget(model: string, softUsd: number): string | null {
+  const spent = this.estimateUsd(model)
+  if (spent >= softUsd) {
+    return \`⚠ 本次会话已花约 $\${spent.toFixed(2)}，超过预算 $\${softUsd.toFixed(2)}\`
+  }
+  return null
+}`
+
 export default function Ch2() {
   return (
     <article>
@@ -98,6 +124,37 @@ export default function Ch2() {
         才谈得上去压缩、去提速。
       </KeyIdea>
 
+      <h2>先搞懂 token 计费模型</h2>
+      <p>
+        在动手累加之前，得先理解钱是怎么算出来的，否则统计出来的数字你也读不懂。LLM 计费有三条必须刻进脑子的规律：
+      </p>
+      <ul>
+        <li>
+          <strong>按 token 计，不是按字数</strong>：一个 token 大约是 4 个英文字符、或不到一个汉字到一个汉字。
+          代码、中文、特殊符号的 token 密度都不同，所以「估 token」永远只能近似，精确值要么调 <code>countTokens</code>、
+          要么以返回的 <code>usage</code> 为准。
+        </li>
+        <li>
+          <strong>输入和输出分开计价，且输出贵得多</strong>：看价格表里 opus 是输入 5、输出 25——输出是输入的 5 倍。
+          直觉上的误区是「让模型少说话省钱」，但真相往往相反：<strong>输入才是大头</strong>，因为每轮都要把整段历史重发一遍。
+        </li>
+        <li>
+          <strong>成本随轮数二次方增长</strong>：第 1 轮发 1 段历史，第 8 轮要发前 7 轮的全部历史。
+          所以一个 8 轮任务的输入总量，远不止单轮的 8 倍。这就是为什么长会话的账单会「失控」。
+        </li>
+      </ul>
+      <table>
+        <thead>
+          <tr><th>项</th><th>计价方</th><th>典型量级</th><th>优化抓手</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>输入 token</td><td>较便宜，但随历史滚雪球</td><td>大头</td><td>上下文压缩、提示缓存</td></tr>
+          <tr><td>输出 token</td><td>单价贵几倍</td><td>通常较小</td><td>限制 maxTokens、要求简洁</td></tr>
+          <tr><td>缓存读 token</td><td>普通输入的零头</td><td>命中越多越省</td><td>稳定前缀 + 缓存</td></tr>
+          <tr><td>延迟</td><td>不计费但耗体验</td><td>每轮秒级</td><td>流式、并行工具、换快模型</td></tr>
+        </tbody>
+      </table>
+
       <h2>数据从哪来：零额外成本</h2>
       <p>
         好消息是，我们要的数据本来就有。每轮 LLM 回复里都带着 <code>usage</code>（输入/输出 token），
@@ -107,6 +164,11 @@ export default function Ch2() {
         延迟更简单：用 <code>Date.now()</code> 把 <code>complete</code> 调用一头一尾包住，相减就是这一轮的往返耗时。
         没有额外的 API 调用，没有额外的网络开销——纯粹是把已经到手的信息记下来。
       </p>
+      <Callout variant="note">
+        <strong>为什么宁可用平台返回的 usage，也不自己数 token？</strong>因为「真值」只有平台知道：它把 system、工具定义、
+        历史、缓存命中全部算进去后才得出最终计费 token，你在客户端再聪明也只能估。所以统计要以 <code>res.usage</code> 为准，
+        客户端的 <code>countTokens</code> 只用于「发请求前的预算预判」，两者职责不同。
+      </Callout>
 
       <h2>成本模块：src/cost.ts</h2>
       <p>新建一个独立模块，专门管价格表和累计统计：</p>
@@ -131,6 +193,12 @@ export default function Ch2() {
         </li>
       </ul>
 
+      <Callout variant="warn">
+        <strong>为什么价格表硬编码在代码里是个已知妥协？</strong>厂商随时可能调价，硬编码意味着改价要发新版本。
+        工程上更稳的做法是把价格抽到一份配置文件或环境变量，甚至允许 <code>0</code> 价（缺表）时降级为「只显示 token、不显示美元」。
+        forge 选硬编码是为了教学清晰——真上生产，记得把这张表挪到可热更新的地方，并明确标注「估算、以账单为准」。
+      </Callout>
+
       <h2>Agent 侧埋点：测量与累加</h2>
       <p>
         在主循环里，给 <code>complete</code> 调用前后各放一个时间戳，调用结束后把这轮的 <code>usage</code> 和耗时交给 tracker：
@@ -140,6 +208,12 @@ export default function Ch2() {
         <code>t0 = Date.now()</code> 记下起点，<code>await</code> 完成后 <code>{'Date.now() - t0'}</code> 就是这一轮往返的毫秒数；
         <code>this.cost.add(res.usage, ...)</code> 把这轮的 token 用量和耗时一并累加。一行埋点，干净利落。
       </p>
+      <Callout variant="note">
+        <strong>边界情况：流式下这个延迟测的是什么？</strong>因为 <code>await</code> 要等整个流读完才返回，所以测的是
+        「<strong>到最后一个 token 落地</strong>」的总时长，而不是「首 token 到达」（TTFB）。两者对体验意义不同：
+        TTFB 决定「等多久才看到第一个字」，总时长决定「等多久才能继续」。要细分，可在 <code>onTextDelta</code> 第一次触发时
+        再打一个时间戳，专门统计首字延迟。
+      </Callout>
       <p>再给 Agent 暴露一个查询方法，供命令调用：</p>
       <CodeBlock lang="ts" title="src/agent.ts（查询方法）" code={agentSummaryTs} />
       <p>
@@ -158,6 +232,49 @@ export default function Ch2() {
           输出 3100 token，估算花了三毛多美元，平均每轮等 2.1 秒。
         </p>
       </Example>
+
+      <h2>省钱的三板斧：缓存、压缩、选型</h2>
+
+      <h3>提示缓存：让重复的前缀按零头计价</h3>
+      <p>
+        Agent 每轮都重发 system 提示 + 工具定义 + 历史，这一大段前缀<strong>几乎一模一样</strong>。提示缓存的思路是：
+        把这段稳定前缀在平台侧缓存住，下一轮命中缓存的部分按「缓存读」价计——通常只是普通输入价的一个零头。
+        要吃到这个红利，价格表和换算逻辑都得升级：
+      </p>
+      <CodeBlock lang="ts" title="src/cost.ts（带缓存的价格）" code={cachedPricing} />
+      <CodeBlock lang="ts" title="src/cost.ts（命中缓存的换算）" code={cachedUsage} />
+      <Callout variant="tip">
+        缓存命中的前提是<strong>前缀稳定且足够长</strong>。所以工程上要把「最不变的内容」放最前面（system → 工具定义 → 早期历史），
+        变动的（最新用户输入）放最后。一个常见误区是每轮往 system 里塞当前时间戳之类的动态串，前缀一变缓存全失效，
+        白白多花钱——稳定前缀是缓存能省钱的命根子。
+      </Callout>
+
+      <h3>批处理：把不急的活攒起来打折跑</h3>
+      <p>
+        如果你的场景是「跑一批离线任务」（比如给 200 个文件批量生成摘要），而不是交互式对话，那么<strong>批处理</strong>
+        往往能拿到显著折扣，代价是结果不实时返回（异步、稍后取）。判断标准很简单：<strong>用户在不在等？</strong>
+        在等就走实时（forge 的交互模式），不在等就攒成批走折扣通道。这是延迟和成本之间一个非常实在的取舍。
+      </p>
+
+      <h3>延迟优化：四个不花钱的提速点</h3>
+      <ul>
+        <li><strong>流式输出</strong>：先让用户看到字在动，感知延迟骤降——总时长没变，但「等待焦虑」没了。</li>
+        <li><strong>并行工具调用</strong>：同一轮模型要求调多个互不依赖的工具时，<code>Promise.all</code> 并行跑而非串行。</li>
+        <li><strong>上下文压缩降轮内输入</strong>：输入少了，模型处理也快，延迟和成本一起降。</li>
+        <li><strong>简单任务换快模型</strong>：呼应卷 6 的 Provider 抽象——haiku 比 opus 快也便宜，分类/格式化这类活根本用不着旗舰模型。</li>
+      </ul>
+
+      <h2>预算告警：花超了得有人喊一声</h2>
+      <p>
+        有了累计花费，就能加一道<strong>软预算告警</strong>：越过阈值时提示，但<strong>不强制中断</strong>对话——
+        因为粗暴掐断一个跑到一半的任务，伤害可能比多花几毛钱更大。把决定权留给用户：
+      </p>
+      <CodeBlock lang="ts" title="src/cost.ts（软预算告警）" code={budgetGuard} />
+      <p>
+        在每轮 <code>cost.add</code> 之后调一次 <code>checkBudget</code>，返回非空就打印那行警告（且整个会话只提示一次，
+        避免刷屏）。「软」是关键设计选择：告警负责<strong>知情</strong>，而不是<strong>替用户做决定</strong>。
+        真要硬上限（到顶即停），那是另一种产品取向，适合无人值守的自动化场景。
+      </p>
 
       <Callout variant="tip">
         有了这块仪表盘，优化就有了抓手：输入 token 偏高，就上<strong>上下文压缩</strong>（裁剪/摘要历史，直接降输入）；
@@ -185,11 +302,13 @@ export default function Ch2() {
       <Summary
         points={[
           'Agent 会自己多轮往返，token、花费、延迟都在悄悄累积，看得见才优化得了。',
-          '数据零额外成本：usage 本就在每轮回复里累加，延迟用 Date.now() 包住 complete 调用测量。',
+          'token 计费三规律：按 token 不按字、输入输出分开计价且输出更贵、成本随轮数滚雪球（输入是大头）。',
+          '数据零额外成本：usage 本就在每轮回复里累加（以平台 usage 为真值），延迟用 Date.now() 包住 complete 调用测量。',
           'src/cost.ts 用 PRICING 价格表（输入输出分开计价）+ CostTracker 累计 token 与耗时，estimateUsd 估算花费，summary 拼可读摘要。',
-          'Agent 主循环里一行埋点 cost.add(res.usage, Date.now() - t0)，并暴露 costSummary 供查询。',
+          'Agent 主循环里一行埋点 cost.add(res.usage, Date.now() - t0)，并暴露 costSummary 供查询；流式下测的是总时长非首字延迟。',
           '/cost 命令随时打印「轮数 · 输入/输出 token · 约 $花费 · 平均延迟」一行统计。',
-          '这些数字指导优化：上下文压缩降输入、减少工具往返降轮数、必要时切更便宜的模型；注意它是估算，真实账单以平台为准。',
+          '省钱三板斧：提示缓存（稳定前缀按零头计价）、批处理（不急的活攒起来打折）、选型（简单任务换快模型）。',
+          '软预算告警只知情不中断，把决定权留给用户；它是估算，真实账单以平台为准。',
         ]}
       />
     </article>
