@@ -35,6 +35,20 @@ EXPLAIN SELECT * FROM orders WHERE user_id BETWEEN 10000 AND 10100;
 -- 对比：对没建索引的列过滤，type 会退化成 ALL（全表扫描）
 EXPLAIN SELECT * FROM orders WHERE amount = 99.00;`
 
+const treeHeightSql = `-- 想知道一个索引到底有几层（树高）？8.0 可以从内部视图估算
+-- 先找到索引的 index_id
+SELECT name, index_id
+FROM information_schema.INNODB_INDEXES
+WHERE name = 'idx_user_id';
+
+-- 也可以用 innodb_ruby 等工具直接读 .ibd 文件看 PAGE_LEVEL，
+-- 根页的 level 就是“树高-1”：level=2 表示三层树（根+中间+叶子）
+
+-- 估算扇出的经验值（主键 BIGINT、二级索引）：
+--   非叶页扇出 ≈ 16KB / (索引列字节 + 主键字节 + 头部开销)
+--   叶子页能放的行 ≈ 16KB / 平均行长
+-- 行越宽、主键越长，扇出越小，树越容易多一层`
+
 export default function Ch1() {
   return (
     <>
@@ -96,6 +110,21 @@ export default function Ch1() {
         </p>
       </Example>
 
+      <h3>扇出（fan-out）：决定树高的真正旋钮</h3>
+      <p>
+        <em>扇出</em>是指一个非叶节点能挂多少个子节点。扇出越大，同样的数据量树就越矮。
+        而扇出 ≈ <code>一页能放下的「键+指针」对数</code>。这就推出几个直接结论：
+      </p>
+      <ul>
+        <li><strong>键越短，扇出越大</strong>：所以主键、索引列都该尽量短，<code>BIGINT</code>（8 字节）就比 <code>CHAR(36)</code> 的 UUID（36 字节）能让非叶页多放好几倍的指针。</li>
+        <li><strong>页越大，扇出越大</strong>：所以 <code>innodb_page_size</code> 默认 16KB 而非 4KB，但页太大又会让一次 IO 搬运过多无用数据，16KB 是个权衡点。</li>
+        <li><strong>树高每加一层，承载量翻约“扇出”倍</strong>：扇出 1170 时，1→2→3 层就从约千行涨到两千万行。这就是为什么千万级表的 B+ 树通常只有 3 层。</li>
+      </ul>
+      <p>
+        反过来，如果你的二级索引建在一个很长的字符串列上（比如 <code>VARCHAR(255)</code> 的 URL），扇出会骤降、树容易长到 4~5 层，
+        每次查询多一两次 IO。这时<em>前缀索引</em>（<code>INDEX(url(20))</code>）就是常用的折中——只索引前 N 个字符，牺牲一点选择性换回扇出。
+      </p>
+
       <TreeCompare />
 
       <KeyIdea title="矮，是一切的目标">
@@ -124,6 +153,23 @@ export default function Ch1() {
         </p>
       </Callout>
 
+      <Callout variant="note" title="为什么不用 B 树而是 B+ 树存数据库，再追问一句">
+        <p>
+          面试官常会顺着追问：“B 树非叶也存数据，单点查询不是可能更早命中、更快吗？”答案是：<strong>数据库的查询模式以范围扫描和有序遍历为主，不是只有单点等值</strong>。
+          B 树的范围查询要在树里中序遍历、来回上下跳，IO 不连续；B+ 树数据全在叶子、叶子又用双向链表顺序串联，
+          范围扫描就是“定位起点 + 顺着链表扫”，几乎是顺序 IO。再加上 B+ 树非叶不存数据、扇出更大、树更矮、整棵树更适合缓存进 Buffer Pool，
+          综合下来 B+ 树全面胜出。<strong>“偶尔单点更快”换不来“范围扫描和稳定矮树”这两个数据库刚需。</strong>
+        </p>
+      </Callout>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“一棵 B+ 树最多存多少数据？”</strong>——别背死数字，要会推：三层、主键 BIGINT、行 1KB 时约 2000 万行。关键是说清推导链路（扇出 × 层数 × 每叶子行数）。</li>
+          <li><strong>“为什么索引列要尽量选区分度高的？”</strong>——区分度（基数 / 总行数）低（如性别）时，即使走索引也要扫出大量行再回表，优化器可能干脆放弃索引走全表扫。</li>
+          <li><strong>“索引是不是越多越好？”</strong>——不是。每个二级索引都是一棵独立 B+ 树，写入时要同步维护，<code>INSERT/UPDATE/DELETE</code> 都变慢，还占空间。索引要少而精。</li>
+        </ul>
+      </Callout>
+
       <h2>这对写 SQL 意味着什么</h2>
       <p>
         理解了 B+Tree “定位快、范围扫描更快”的特性，你就会明白：等值查询（<code>=</code>）和范围查询
@@ -143,6 +189,10 @@ export default function Ch1() {
         <p>
           对比有索引和没索引两条 SQL 的 <code>type</code> 和 <code>rows</code> 字段，感受一下扫描行数的数量级差异。
         </p>
+        <p>
+          进阶：用下面的脚本查索引的 index_id，并理解扇出与树高的估算逻辑——当你怀疑某索引“太胖、树太高”时，这是判断依据。
+        </p>
+        <CodeBlock lang="sql" title="tree_height.sql" code={treeHeightSql} />
       </Practice>
 
       <Summary

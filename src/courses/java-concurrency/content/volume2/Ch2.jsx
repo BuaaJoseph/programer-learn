@@ -47,6 +47,20 @@ boolean ok = ref.compareAndSet(
         stamp + 1   // 写入时把版本号 +1
 );`
 
+const fieldUpdaterCode = `import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+
+// 不想为每个对象都包一个 AtomicInteger（省内存），可以用 FieldUpdater
+// 对普通的 volatile int 字段做原子更新
+public class Node {
+    volatile int version;        // 必须是 volatile、非 private、非 static
+    static final AtomicIntegerFieldUpdater<Node> V =
+        AtomicIntegerFieldUpdater.newUpdater(Node.class, "version");
+
+    void bump() {
+        V.incrementAndGet(this);  // 原子地把这个对象的 version + 1
+    }
+}`
+
 export default function Ch2() {
   return (
     <>
@@ -69,6 +83,14 @@ export default function Ch2() {
         因为它是「先假设没人动过、动了就重试」的思路，CAS 属于<em>乐观锁</em>——不像 <code>synchronized</code>
         那样一上来就独占（悲观锁），而是乐观地直接试着改，失败了再说。
       </p>
+      <Callout variant="info" title="CAS 凭什么是原子的：硬件级保证">
+        <p>
+          很多人疑惑：「比较」和「交换」明明是两步，CAS 凭什么不会被打断？答案在<strong>硬件</strong>。x86 用带 <code>lock</code> 前缀的
+          <code>cmpxchg</code> 指令，<code>lock</code> 会锁住缓存行（现代 CPU 是锁缓存行而非锁总线，成本小得多），保证这条指令执行期间
+          其他核动不了这块内存。所以 CAS 的原子性不是 JVM 软件实现的，而是<strong>直接落到一条 CPU 指令</strong>上。Java 里这条指令的入口是
+          <code>Unsafe.compareAndSwapXxx</code>（JDK 9+ 改为 <code>VarHandle</code>），原子类只是对它的封装。
+        </p>
+      </Callout>
 
       <Cas />
 
@@ -79,6 +101,13 @@ export default function Ch2() {
         就重新读最新值、重新计算、再 CAS，循环直到成功。所以「原子自增」并不是一步到位，而是「读—算—比较交换—
         失败重试」的循环。
       </p>
+      <p>
+        原子类家族还有几个常被追问的成员：<code>AtomicReference</code>{'<T>'} 原子更新对象引用；
+        <code>AtomicIntegerArray</code> 原子更新数组某个下标；<code>AtomicIntegerFieldUpdater</code>{'<T>'}
+        在不为每个对象都包一个原子类（省内存）的前提下，对已有的 <code>volatile</code> 字段做原子更新——
+        大型框架里为了节省内存常用它。
+      </p>
+      <CodeBlock lang="java" title="FieldUpdater：省内存的原子更新" code={fieldUpdaterCode} />
 
       <Example title="无锁计数器">
         <p>
@@ -107,6 +136,14 @@ export default function Ch2() {
           得用 <code>AtomicReference</code> 把它们封成一个对象一起换，或者退回去用锁。
         </li>
       </ul>
+      <Callout variant="warn" title="ABA 不是危言耸听：无锁栈的真实 bug">
+        <p>
+          ABA 在<strong>无锁数据结构</strong>里是真实会出事的。设想一个用 CAS 实现的无锁栈，栈顶是节点 A（A.next = B）。
+          线程 1 读到栈顶 A，准备 <code>CAS(top, A, B)</code> 弹出 A，刚读完就被挂起。这时线程 2 弹出 A、弹出 B，又压入了一个<strong>复用的旧节点 A</strong>
+          （但此时 A.next 已经不是 B 了，可能指向已被回收的内存）。线程 1 恢复，CAS 发现栈顶「还是 A」，成功！于是把 top 设成了一个<strong>悬空/错误的 B</strong>，
+          数据结构被破坏。这就是 C/C++ 无锁编程里臭名昭著的 ABA。解药就是下面的版本号。
+        </p>
+      </Callout>
 
       <KeyIdea title="ABA 的解药：加版本号">
         <p>
@@ -124,6 +161,11 @@ export default function Ch2() {
           各自 CAS 互不打架，要取总和时再把所有 Cell 加起来。这是用「空间换并发」，把热点分散开。
           所以<strong>写多读少、追求高并发吞吐</strong>就选 LongAdder；要求每次读都拿到精确实时值、或竞争不高，
           才用 AtomicLong。
+        </p>
+        <p>
+          补一个底层细节：LongAdder 的多个 Cell 之所以快，还因为它做了<strong>缓存行填充</strong>（<code>@Contended</code>），
+          让相邻 Cell 落在不同缓存行，避免「<strong>伪共享</strong>」——多个核更新同一缓存行里的不同变量却互相导致缓存失效。
+          伪共享是高性能并发里很隐蔽的杀手，这点拿出来说能让面试官眼前一亮。
         </p>
       </Callout>
 
@@ -151,11 +193,12 @@ export default function Ch2() {
 
       <Summary
         points={[
-          'CAS（比较并交换）是一条 CPU 原子指令（cmpxchg）：值等于期望旧值才更新，是无锁的乐观锁。',
-          'AtomicInteger 等原子类用 Unsafe 调 CAS，再套一层自旋（失败就重读重试）实现原子更新。',
-          'CAS 三大问题：ABA、自旋开销、只能保证一个变量。',
+          'CAS（比较并交换）是一条 CPU 原子指令（cmpxchg + lock 前缀锁缓存行），值等于期望旧值才更新，是无锁的乐观锁。',
+          'CAS 的原子性由硬件保证，Java 入口是 Unsafe（JDK 9+ 用 VarHandle），原子类是其封装。',
+          'AtomicInteger 等原子类用 CAS + 自旋实现；还有 AtomicReference、数组类、FieldUpdater（省内存更新 volatile 字段）。',
+          'CAS 三大问题：ABA、自旋开销、只能保证一个变量；ABA 在无锁栈等结构里会真正破坏数据。',
           'ABA 用 AtomicStampedReference 加版本号解决；多变量用 AtomicReference 打包；高竞争自旋大可改用锁。',
-          'LongAdder 把值分段成多个 Cell、分散热点，高并发写场景比 AtomicLong 吞吐更高（空间换并发）。',
+          'LongAdder 把值分段成多个 Cell、分散热点，并用缓存行填充避免伪共享，高并发写比 AtomicLong 吞吐高。',
           '选型：低竞争或要精确实时值用 AtomicLong，写多读少追求吞吐用 LongAdder。',
         ]}
       />

@@ -59,6 +59,54 @@ short-link:
 # 然后在任意 Bean 里直接注入，开箱即用：
 # @Autowired ShortLinkService shortLinkService;`
 
+const metadataPomCode = `<!-- autoconfigure 模块 pom：加上这个，IDE 才有 yml 配置提示 -->
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-configuration-processor</artifactId>
+  <optional>true</optional>   <!-- optional：不传递给使用方 -->
+</dependency>
+
+<!-- 同时把对 spring-boot-autoconfigure 的依赖标成 optional，
+     避免把整套 Boot 依赖硬塞给使用方，让使用方自己决定版本 -->`
+
+const enableImportCode = `// 方式二：不走 imports 清单，改用 @EnableXxx 显式开启
+// 适合「希望使用方手动 import、而非自动加载」的组件
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Import(ShortLinkAutoConfiguration.class)   // 直接 @Import 配置类
+public @interface EnableShortLink {}
+
+// 使用方在启动类上加 @EnableShortLink 才生效，控制权交回给使用方`
+
+const testCode = `// 用 ApplicationContextRunner 单测自动配置：不用真起整个应用
+class ShortLinkAutoConfigurationTest {
+
+    private final ApplicationContextRunner runner =
+        new ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(ShortLinkAutoConfiguration.class));
+
+    @Test
+    void 默认情况下应装配ShortLinkService() {
+        runner.run(ctx ->
+            assertThat(ctx).hasSingleBean(ShortLinkService.class));
+    }
+
+    @Test
+    void enabled为false时不应装配() {
+        runner.withPropertyValues("short-link.enabled=false")
+              .run(ctx ->
+                  assertThat(ctx).doesNotHaveBean(ShortLinkService.class));
+    }
+
+    @Test
+    void 用户自定义Bean时应让位() {
+        runner.withUserConfiguration(UserConfig.class)
+              .run(ctx -> assertThat(ctx)
+                  .getBean(ShortLinkService.class)
+                  .isSameAs(ctx.getBean(UserConfig.class).custom()));
+    }
+}`
 export default function Ch2() {
   return (
     <>
@@ -85,6 +133,14 @@ export default function Ch2() {
         这样做的好处是「依赖管理」和「配置逻辑」职责分离，使用方引 starter 就会顺带把 autoconfigure 拉进来。
       </p>
       <CodeBlock lang="text" title="模块结构" code={moduleLayoutCode} />
+      <Callout variant="info" title="为什么非要拆两个模块">
+        <p>
+          只用一个模块当然也能跑，但官方坚持拆开是有道理的：使用方有时<strong>想要自动配置类，但不想被强加某些可选依赖</strong>。
+          拆开后，<code>autoconfigure</code> 模块把可选依赖都标成 <code>optional</code>，
+          <code>starter</code> 模块再按「典型场景」把常用依赖打包进去。这样既能「引 starter 一步到位」，
+          也允许高级用户「只引 autoconfigure、自己挑依赖」。<strong>职责分离</strong>带来的是使用上的灵活度。
+        </p>
+      </Callout>
 
       <h2>自己写一个 starter 的四步</h2>
       <p>把上一章学到的机制反过来用，写 starter 就是这四步：</p>
@@ -109,6 +165,15 @@ export default function Ch2() {
         会把所有 <code>short-link.</code> 开头的配置项，按字段名自动绑定到这个 POJO 的属性上（靠 setter 注入），还能给默认值。
       </p>
       <CodeBlock lang="java" title="ShortLinkProperties.java" code={propertiesCode} />
+      <Callout variant="info" title="加 configuration-processor，让 yml 有自动补全">
+        <p>
+          一个让 starter 显得「专业」的小细节：在 autoconfigure 模块引入
+          <code>spring-boot-configuration-processor</code>。它在编译期扫描你的
+          <code>@ConfigurationProperties</code> 类，生成一份 <code>META-INF/spring-configuration-metadata.json</code>，
+          于是使用方在 IDE 里写 <code>short-link.</code> 时就有<strong>自动补全和注释提示</strong>，体验跟官方 starter 一样：
+        </p>
+        <CodeBlock lang="xml" title="autoconfigure 模块 pom（元数据 + optional）" code={metadataPomCode} />
+      </Callout>
 
       <h3>第二关：@Conditional 家族实现按需装配</h3>
       <p>
@@ -126,6 +191,18 @@ export default function Ch2() {
         <code>META-INF/spring/...AutoConfiguration.imports</code>，一行一个全限定类名。
       </p>
       <CodeBlock lang="text" title="AutoConfiguration.imports" code={importsCode} />
+      <Callout variant="info" title="另一条路：@EnableXxx 显式开启">
+        <p>
+          注册到 imports 清单是「自动加载、引了就生效」；但有些组件作者更希望<strong>把开关交给使用方</strong>——
+          引了依赖还得在启动类上加个 <code>@EnableXxx</code> 才生效（早期很多框架都这风格，如
+          <code>@EnableAsync</code>、<code>@EnableScheduling</code>）。做法是不放 imports，而是自定义注解里
+          <code>@Import</code> 你的配置类：
+        </p>
+        <CodeBlock lang="java" title="EnableShortLink.java（显式开启）" code={enableImportCode} />
+        <p>
+          选型：通用基础能力（日志、监控）适合自动加载；有副作用、需用户明确意图开启的能力（定时任务、异步线程池）适合 <code>@EnableXxx</code>。
+        </p>
+      </Callout>
 
       <Example title="自定义一个 short-link-spring-boot-starter">
         <p>
@@ -157,8 +234,29 @@ export default function Ch2() {
             <strong>自动配置类被 @ComponentScan 扫到了</strong>：自动配置类应靠 imports 清单加载，
             而<strong>不该</strong>放在使用方启动类的扫描包路径下，否则可能重复装配或绕过条件判断。把它放到独立的包名里。
           </li>
+          <li>
+            <strong>imports 文件路径或类名写错</strong>：路径是固定的
+            <code>META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports</code>，
+            一个字母都不能错，类名必须是全限定名。这是「写了却不生效」的头号原因。
+          </li>
+          <li>
+            <strong>把 Boot 依赖硬塞给使用方</strong>：autoconfigure 对 <code>spring-boot-autoconfigure</code>
+            和第三方库的依赖应尽量标 <code>optional</code>，由 starter 模块或使用方决定版本，避免版本冲突（依赖地狱）。
+          </li>
         </ul>
       </Callout>
+
+      <Example title="给 starter 写自动配置单元测试">
+        <p>
+          专业的 starter 一定带测试。Spring Boot 提供了 <code>ApplicationContextRunner</code>，
+          能在<strong>不启动整个应用</strong>的情况下，模拟各种条件验证「该装配时装配、该让位时让位」：
+        </p>
+        <CodeBlock lang="java" title="ShortLinkAutoConfigurationTest.java" code={testCode} />
+        <p>
+          三个用例正好覆盖了 starter 的三大契约：默认生效、开关可关、用户可覆盖。
+          这种测试比手动起两个项目对接快得多，也更适合放进 CI。
+        </p>
+      </Example>
 
       <h2>实战 / 面试怎么答</h2>
       <p>
@@ -189,6 +287,9 @@ export default function Ch2() {
           '@Conditional 家族（OnClass / OnProperty / OnMissingBean）实现按需装配，并给使用方留出覆盖空间。',
           '自动配置类必须在 META-INF/spring/...AutoConfiguration.imports（旧版 spring.factories）注册，否则不生效。',
           '常见坑：忘注册 imports、或把自动配置类放进了使用方的组件扫描路径。',
+          '加 spring-boot-configuration-processor 生成元数据，使用方写 yml 时能获得 IDE 自动补全；依赖标 optional 避免硬塞给使用方。',
+          '除 imports 自动加载外，还可用 @EnableXxx + @Import 把开启权交给使用方，适合有副作用、需明确意图的能力。',
+          '用 ApplicationContextRunner 单测自动配置，覆盖默认生效/开关可关/用户可覆盖三大契约，无需启动整个应用。',
         ]}
       />
     </>

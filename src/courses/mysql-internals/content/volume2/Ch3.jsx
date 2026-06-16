@@ -24,6 +24,26 @@ EXPLAIN SELECT * FROM users WHERE name = '张三';
 EXPLAIN SELECT id FROM users WHERE name = '张三';
 -- Extra 会出现 Using index（覆盖索引，下一章详细讲）`
 
+const mrrSql = `-- 当回表行数很多时，MRR（Multi-Range Read）能把“随机回表”优化成“近似顺序回表”
+SHOW VARIABLES LIKE 'optimizer_switch';   -- 看 mrr=on / mrr_cost_based=on
+
+-- 命中 MRR 时 EXPLAIN 的 Extra 会出现 Using MRR
+EXPLAIN SELECT * FROM users WHERE name BETWEEN '张三' AND '李四';
+-- 原理：先把二级索引扫到的主键收集、排序，再按主键有序去聚簇索引回表，
+-- 把杂乱的随机 IO 变成大致顺序的 IO，减少 Buffer Pool 抖动`
+
+const deepPageSql = `-- 深分页之痛：OFFSET 越大，回表浪费越多（前 100000 行全要回表后丢弃）
+SELECT * FROM users ORDER BY name LIMIT 100000, 20;   -- 慢
+
+-- 优化一：延迟回表（先用覆盖索引拿到主键，再 JOIN 回表只取这 20 行）
+SELECT u.* FROM users u
+JOIN (
+  SELECT id FROM users ORDER BY name LIMIT 100000, 20
+) t ON u.id = t.id;
+
+-- 优化二：游标式分页（记住上一页最后一个 name，彻底干掉 OFFSET）
+SELECT * FROM users WHERE name > ? ORDER BY name LIMIT 20;`
+
 export default function Ch3() {
   return (
     <>
@@ -73,6 +93,20 @@ export default function Ch3() {
         </p>
       </Example>
 
+      <h3>回表的代价到底有多大：随机 IO 的诅咒</h3>
+      <p>
+        回表慢，慢在它是<strong>随机 IO</strong>。二级索引上扫到的主键值是按二级索引的列排序的，但这些主键在聚簇索引里的物理位置却是乱的，
+        于是每回一次表，就要去聚簇索引的一个“随机位置”下探。命中 100 行就是 100 次可能未命中 Buffer Pool 的随机读盘。
+        这就是为什么<strong>优化器在估算到“回表行数太多”时，宁愿放弃二级索引、直接全表扫描</strong>——全表扫是顺序 IO，
+        当回表占比超过某个阈值（经验上约 20%~30%），顺序全扫反而更快。这条规律解释了大量“我建了索引但优化器不走”的困惑。
+      </p>
+      <p>
+        InnoDB 对这种“扫一批二级索引、回一批表”的场景有个优化叫 <em>MRR</em>（Multi-Range Read）：
+        先把二级索引扫出来的主键<strong>攒起来排序</strong>，再按主键顺序去聚簇索引回表，把随机 IO 拉成近似顺序 IO。
+        命中时 <code>EXPLAIN</code> 的 Extra 会显示 <code>Using MRR</code>。
+      </p>
+      <CodeBlock lang="sql" title="mrr.sql" code={mrrSql} />
+
       <ClusteredIndex />
 
       <KeyIdea title="二级索引指向的是主键，不是物理地址">
@@ -104,6 +138,27 @@ export default function Ch3() {
         UUID，那这 36 字节就在五棵树里各存了一遍。<strong>用短小的自增整型主键</strong>，
         既减少页分裂（上一章），又让所有二级索引都更紧凑，是一举多得的最佳实践。
       </p>
+
+      <Example title="深分页：回表代价的放大器">
+        <p>
+          <code>SELECT * FROM users ORDER BY name LIMIT 100000, 20</code> 为什么慢得离谱？因为 InnoDB 要沿
+          <code>idx_name</code> 扫描并<strong>回表前 100020 行</strong>，然后把前 100000 行直接丢弃，只留最后 20 行。
+          那 10 万次回表全是白干的随机 IO。
+        </p>
+        <ul>
+          <li><strong>延迟回表</strong>：先在覆盖索引里只取主键、走 LIMIT，把 10 万次回表压缩成 20 次。</li>
+          <li><strong>游标分页</strong>：记住上一页最后的 name 值，用 <code>WHERE name {'>'} ?</code> 接着翻，彻底消灭 OFFSET 的扫描浪费。</li>
+        </ul>
+        <CodeBlock lang="sql" title="deep_page.sql" code={deepPageSql} />
+      </Example>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“为什么 InnoDB 二级索引存主键而不是物理地址？”</strong>——因为聚簇索引会因页分裂移动行的物理位置，存物理地址就得全部跟着改；存主键则行怎么动都不影响二级索引。代价是回表和每个二级索引多存一份主键。</li>
+          <li><strong>“一张表能有几个聚簇索引？”</strong>——只能有一个，因为它就是数据本身的物理排列，数据不能同时按两种顺序物理存放。</li>
+          <li><strong>“回表一定慢吗，怎么消除？”</strong>——回表多了才慢。消除手段是覆盖索引（下一章），把查询需要的列都纳入二级索引，免去回聚簇索引。</li>
+        </ul>
+      </Callout>
 
       <Practice title="用 EXPLAIN 观察回表（Extra 无 Using index）">
         <p>

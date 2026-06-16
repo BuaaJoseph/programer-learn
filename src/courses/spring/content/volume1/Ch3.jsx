@@ -153,6 +153,22 @@ export default function Ch3() {
           通过<strong>继承</strong>目标类、生成一个子类来做代理，在子类里重写方法插入增强。
         </li>
       </ul>
+      <table>
+        <thead>
+          <tr><th>对比项</th><th>JDK 动态代理</th><th>CGLIB 代理</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>实现原理</td><td>实现目标接口</td><td>继承目标类生成子类</td></tr>
+          <tr><td>前提条件</td><td>目标必须有接口</td><td>目标不能是 final 类</td></tr>
+          <tr><td>注入类型</td><td>只能按接口注入</td><td>可按接口或实现类注入</td></tr>
+          <tr><td>final 方法</td><td>不涉及（按接口）</td><td>无法增强（不能重写）</td></tr>
+          <tr><td>依赖</td><td>JDK 内置</td><td>需 CGLIB/ASM（Spring 已内置）</td></tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>为什么有接口默认走 JDK？</strong>历史原因是 JDK 代理是标准库能力、生成更轻；
+        而 CGLIB 早期对 final 限制多、生成子类开销大。不过现代 JVM 上两者性能差距已很小，
+        所以 Spring Boot 才敢统一切到 CGLIB。</p>
 
       <Example title="@Transactional 内部调用为什么失效">
         <p>
@@ -193,6 +209,24 @@ export default function Ch3() {
           能改返回值、甚至决定要不要放行（通过 <code>ProceedingJoinPoint.proceed()</code>）。
         </li>
       </ul>
+      <Callout variant="info" title="通知的执行顺序（必背）">
+        <p>
+          单个切面里，正常返回时顺序是：<code>@Around</code> 前段 → <code>@Before</code> → 目标方法 →
+          <code>@Around</code> 后段 → <code>@After</code> → <code>@AfterReturning</code>；
+          抛异常时把 <code>@AfterReturning</code> 换成 <code>@AfterThrowing</code>。
+          注意 Spring 5.2.7 之后才严格保证了这个顺序（早期版本 <code>@After</code> 和 <code>@AfterReturning</code> 顺序有坑）。
+          多个切面叠加时，用 <code>@Order</code> 控制，数字小的在<strong>外层</strong>，进入最早、退出最晚，像剥洋葱。
+        </p>
+      </Callout>
+
+      <Example title="切点表达式与多切面顺序">
+        <p>
+          实战里切点不止 <code>execution</code> 一种，<code>@annotation</code>（按注解拦）配合自定义注解最常用：
+        </p>
+        <CodeBlock lang="java" title="AnnotationAspect.java（切点写法）" code={pointcutCode} />
+        <p>多个切面作用在同一方法上时，用 <code>@Order</code> 明确顺序，否则顺序不确定：</p>
+        <CodeBlock lang="java" title="多切面 @Order 控制" code={orderCode} />
+      </Example>
 
       <Callout variant="warn" title="两个容易栽的坑">
         <p>
@@ -213,6 +247,15 @@ export default function Ch3() {
         并点出 Spring Boot 默认强制 CGLIB。最后主动抛出那个高频坑——「同类内部自调用导致
         <code>@Transactional</code> 失效」，并给出修复方案，面试官基本就满意了。
       </p>
+      <Callout variant="warn" title="自调用的本质 & 更优雅的修复">
+        <p>
+          很多人把「注入自身（<code>self</code>）」当标准答案，但它有循环依赖嫌疑、可读性也差。
+          其实根因是<strong>代理与目标对象是两个不同对象</strong>，<code>this</code> 永远指向被代理的原始对象。
+          更推荐的修复有三种：(1) <strong>拆类</strong>——把需要独立事务的方法搬到另一个 Bean，从外部调用自然过代理（最干净）；
+          (2) 用 <code>{'AopContext.currentProxy()'}</code> 拿到当前代理再调用（需开启 <code>exposeProxy=true</code>）；
+          (3) 注入 <code>ApplicationContext</code> 临时 getBean。优先选拆类，它顺带改善了设计。
+        </p>
+      </Callout>
 
       <Practice title="自定义 @Aspect 切面记录方法耗时">
         <p>
@@ -235,6 +278,9 @@ export default function Ch3() {
           'Spring Boot 默认强制使用 CGLIB（proxy-target-class=true），即使有接口也不走 JDK 代理。',
           '通知类型：@Before/@AfterReturning/@AfterThrowing/@After/@Around，其中 @Around 最灵活，可控制是否放行。',
           '两大坑：同类内部自调用绕过代理导致 AOP 失效（用 self 代理调用修复）；final 方法/类无法被 CGLIB 代理。',
+          'Spring AOP 基于运行时动态代理、只拦容器 Bean 的方法执行；AspectJ 是独立框架，能编译期/加载期织入，Spring 只借用其注解语法。',
+          '单切面顺序：@Around前→@Before→目标→@Around后→@After→@AfterReturning/@AfterThrowing；多切面用 @Order，小号在外层。',
+          '切点表达式除 execution 外，@annotation 配自定义注解最常用；自调用失效的根因是代理与目标是两个对象，拆类是最优解。',
         ]}
       />
     </>

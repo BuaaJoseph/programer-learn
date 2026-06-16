@@ -43,6 +43,45 @@ public class DataSourceAutoConfiguration {
     }
 }`
 
+const selectorCode = `// AutoConfigurationImportSelector 的核心（简化）
+public String[] selectImports(AnnotationMetadata metadata) {
+    // 1. 从所有 jar 的清单文件里读出全部候选自动配置类
+    List<String> configs = getCandidateConfigurations(metadata, attrs);
+    // 2. 去重
+    configs = removeDuplicates(configs);
+    // 3. 去掉用户用 spring.autoconfigure.exclude 排除的
+    Set<String> exclusions = getExclusions(metadata, attrs);
+    configs.removeAll(exclusions);
+    // 4. 用 AutoConfigurationImportFilter（OnClassCondition 等）先做一轮粗筛，
+    //    classpath 上根本没有相关类的直接刷掉，避免无谓加载
+    configs = getConfigurationClassFilter().filter(configs);
+    return StringUtils.toStringArray(configs);
+}`
+
+const orderCode = `@AutoConfiguration(
+    after = DataSourceAutoConfiguration.class)   // 我要在数据源配好之后再配
+public class MyBatisAutoConfiguration {
+    // @AutoConfigureAfter / @AutoConfigureBefore / @AutoConfigureOrder
+    // 控制自动配置类之间的相对顺序——比如 MyBatis 必须等 DataSource 就绪
+}`
+
+const customConditionCode = `// 自定义条件：实现 Condition 接口
+public class OnLinuxCondition implements Condition {
+    @Override
+    public boolean matches(ConditionContext ctx,
+                           AnnotatedTypeMetadata metadata) {
+        return ctx.getEnvironment()
+                  .getProperty("os.name", "")
+                  .toLowerCase().contains("linux");
+    }
+}
+
+@Configuration
+public class FileWatcherConfig {
+    @Bean
+    @Conditional(OnLinuxCondition.class)   // 只在 Linux 上才装配这个 Bean
+    public FileWatcher inotifyWatcher() { return new InotifyWatcher(); }
+}`
 export default function Ch1() {
   return (
     <>
@@ -99,6 +138,23 @@ export default function Ch1() {
         选择器把这些类名全部读出来，作为「候选配置类」交给容器。但注意——候选不等于全部生效，
         到底用不用，还要过下一道关卡：条件注解。
       </p>
+      <p>
+        <strong>源码里这个 selector 做了不止「读清单」一件事。</strong>它还要去重、处理用户的
+        <code>exclude</code> 排除项，并用一组 <code>AutoConfigurationImportFilter</code> 先做<strong>粗筛</strong>——
+        在真正解析配置类之前，就把 classpath 上压根没有相关类的候选直接刷掉。这一步很关键：一个 Spring Boot 应用
+        的候选自动配置类有上百个，若每个都老老实实加载、解析、跑条件，启动会明显变慢。
+        粗筛让大多数用不上的配置「连门都进不来」，这就是 Spring Boot 启动还算快的原因之一：
+      </p>
+      <CodeBlock lang="java" title="AutoConfigurationImportSelector.selectImports（简化）" code={selectorCode} />
+      <Callout variant="info" title="@Import 的三种姿势别混">
+        <p>
+          <code>@EnableAutoConfiguration</code> 用的是 <code>ImportSelector</code> 这种动态导入，
+          它和你平时直接 <code>@Import(SomeConfig.class)</code> 不是一回事。<code>@Import</code> 能导入三类东西：
+          普通 <code>@Configuration</code> 类（直接当配置）、<code>ImportSelector</code>（返回一批类名，自动配置走这条）、
+          <code>ImportBeanDefinitionRegistrar</code>（手写代码往容器注册 BeanDefinition，MyBatis 的 <code>@MapperScan</code> 就靠它）。
+          理解这三种，很多框架的「神奇装配」就不神奇了。
+        </p>
+      </Callout>
 
       <h3>@Conditional：按条件决定生不生效</h3>
       <p>
@@ -107,6 +163,39 @@ export default function Ch1() {
         <code>@ConditionalOnMissingBean</code>（容器里没有同类型 Bean 才生效）、<code>@ConditionalOnProperty</code>（配置项满足条件才生效）。
         正是这套条件判断，让「引了才配、没引不配、你配了我就让位」成为可能。
       </p>
+      <table>
+        <thead>
+          <tr><th>条件注解</th><th>生效条件</th><th>典型用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>@ConditionalOnClass</td><td>classpath 上存在指定类</td><td>「引了某库才配」</td></tr>
+          <tr><td>@ConditionalOnMissingClass</td><td>classpath 上不存在指定类</td><td>互斥实现二选一</td></tr>
+          <tr><td>@ConditionalOnBean</td><td>容器里已有某 Bean</td><td>依赖前置 Bean 才装配</td></tr>
+          <tr><td>@ConditionalOnMissingBean</td><td>容器里没有同类型 Bean</td><td>留出用户覆盖空间（最常用）</td></tr>
+          <tr><td>@ConditionalOnProperty</td><td>配置项满足条件</td><td>开关控制功能开启</td></tr>
+          <tr><td>@ConditionalOnWebApplication</td><td>当前是 Web 应用</td><td>Web 专属配置</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="warn" title="@ConditionalOnBean / OnMissingBean 的顺序陷阱">
+        <p>
+          这俩条件判断的是「容器<strong>此刻</strong>有没有那个 Bean」，所以<strong>极度依赖装配顺序</strong>：
+          如果被依赖的 Bean 还没被注册，<code>@ConditionalOnBean</code> 就会误判为「没有」而跳过。
+          这也是为什么自动配置类之间要用 <code>@AutoConfigureAfter</code> / <code>@AutoConfigureBefore</code>
+          / <code>@AutoConfigureOrder</code> 明确相对顺序——比如 MyBatis 的自动配置必须排在 DataSource 之后：
+        </p>
+        <CodeBlock lang="java" title="自动配置类之间的排序" code={orderCode} />
+        <p>
+          经验法则：<code>@ConditionalOnMissingBean</code> 要放在<strong>用户配置之后</strong>判断才靠谱，
+          而 Spring 正是用「自动配置整体晚于用户配置」的策略来保证它生效。
+        </p>
+      </Callout>
+      <Example title="写一个自定义条件 @Conditional">
+        <p>
+          内置条件不够用时，可以实现 <code>Condition</code> 接口自定义判断逻辑。所有 <code>@ConditionalOnXxx</code>
+          本质都是它的封装。比如「只在 Linux 上装配某个文件监听器」：
+        </p>
+        <CodeBlock lang="java" title="OnLinuxCondition.java（自定义条件）" code={customConditionCode} />
+      </Example>
 
       <Example title="引入 spring-boot-starter-web 就有了内嵌 Tomcat">
         <p>当你在 pom 里加上 <code>spring-boot-starter-web</code>，一连串自动配置被悄悄触发：</p>
@@ -158,6 +247,16 @@ export default function Ch1() {
         然后<strong>刷新容器</strong>（<code>refresh()</code>，在这一步触发上面讲的自动配置、实例化所有 Bean）；
         web 应用在刷新过程中会<strong>创建并启动内嵌 Tomcat</strong>，绑定端口开始对外服务。
       </p>
+      <Callout variant="info" title="run() 里还藏着这些扩展点">
+        <p>
+          想答出深度，可以补几个细节：启动时会用 <code>SpringFactoriesLoader</code> 加载并触发一系列
+          <strong>SpringApplicationRunListener</strong> 和 <strong>ApplicationListener</strong>，
+          按 starting → environmentPrepared → contextPrepared → contextLoaded → started → ready 发布事件，
+          各种监控、链路追踪组件就挂在这些事件上。容器刷新完、Bean 都就绪后，还会回调所有
+          <code>ApplicationRunner</code> / <code>CommandLineRunner</code>——这是「应用启动后跑一段初始化逻辑」
+          （预热缓存、注册到注册中心）的官方入口，比塞进 <code>@PostConstruct</code> 更合适，因为此刻整个上下文已完全就绪。
+        </p>
+      </Callout>
 
       <h2>实战 / 面试怎么答</h2>
       <p>
@@ -187,6 +286,10 @@ export default function Ch1() {
           '@EnableAutoConfiguration 通过 @Import(AutoConfigurationImportSelector) 读取 spring.factories（新版 AutoConfiguration.imports）里的候选配置类。',
           '@Conditional 家族（OnClass / OnMissingBean / OnProperty 等）按条件决定每个自动配置和 Bean 是否生效。',
           'run() 主干：创建 IoC 容器 -> 准备环境 -> 刷新容器（触发自动配置）-> 启动内嵌 Tomcat。',
+          'selector 不止读清单，还会去重、处理 exclude，并用 ImportFilter 在解析前粗筛掉 classpath 没有的候选，加快启动。',
+          '@Import 可导入配置类、ImportSelector（自动配置走这条）、ImportBeanDefinitionRegistrar（@MapperScan 走这条）三类。',
+          '@ConditionalOnBean/OnMissingBean 依赖装配顺序，靠 @AutoConfigureAfter/Before 排序与「自动配置晚于用户配置」来保证正确。',
+          'run() 还会发布 starting→ready 系列事件并回调 ApplicationRunner/CommandLineRunner，是启动后初始化的官方入口。',
           '排查神器：启动加 --debug 看 Conditions Evaluation Report，确认哪些自动配置生效及原因。',
         ]}
       />

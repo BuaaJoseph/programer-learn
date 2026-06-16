@@ -36,6 +36,30 @@ EXPLAIN SELECT * FROM t_auto WHERE id BETWEEN 100 AND 200;
 -- 对比单点等值查询：type=const（主键唯一），一次下探到底
 EXPLAIN SELECT * FROM t_auto WHERE id = 150;`
 
+const fillFactorSql = `-- 看页填充率相关的全局开关（决定页“留多满”才分裂、删多空才合并）
+SHOW VARIABLES LIKE 'innodb_fill_factor';        -- 批量建索引时的目标填充率，默认 100
+SHOW VARIABLES LIKE 'merge_threshold';           -- 注意：这是表/索引级 COMMENT，不是全局变量
+
+-- 给某个索引单独设置合并阈值（页利用率低于 30% 才尝试合并，默认 50）
+ALTER TABLE t_auto
+  ALTER INDEX \`PRIMARY\` COMMENT 'MERGE_THRESHOLD=30';
+
+-- 估算碎片：对比表实际占用与“理论紧凑大小”
+SELECT
+  table_name,
+  ROUND(data_length/1024/1024, 1) AS data_mb,
+  ROUND(data_free/1024/1024, 1)   AS free_mb     -- data_free 大说明有空洞/碎片
+FROM information_schema.tables
+WHERE table_schema = DATABASE() AND table_name IN ('t_auto', 't_uuid');`
+
+const rebuildSql = `-- 重建表整理碎片（8.0 默认 ALGORITHM=INPLACE，会重排聚簇索引、紧凑页）
+ALTER TABLE t_uuid ENGINE=InnoDB;     -- 等价于一次 null 重建，最常用
+
+-- 或者显式 OPTIMIZE（InnoDB 下内部也是转成上面的重建）
+OPTIMIZE TABLE t_uuid;
+
+-- 重建期间想避免长时间锁表，可借助 pt-online-schema-change / gh-ost 在线改`
+
 export default function Ch2() {
   return (
     <>
@@ -92,6 +116,26 @@ export default function Ch2() {
         <code>OPTIMIZE TABLE</code> 来整理。
       </p>
 
+      <h3>页分裂的真实代价：不只是慢</h3>
+      <p>
+        页分裂带来的不止是一次写入变慢，它有连锁后果，理解了才能解释“UUID 表为什么又大又慢”：
+      </p>
+      <ul>
+        <li><strong>页利用率下降</strong>：分裂后两个页各填一半，原本一页能装的数据现在占两页，<strong>磁盘和内存都浪费近一倍</strong>，相同数据量下 Buffer Pool 能缓存的行变少、命中率下降。</li>
+        <li><strong>随机 IO 暴涨</strong>：随机主键的插入点遍布全树，要先把目标叶子页读进内存（很可能未命中，一次随机读盘）才能插，写入从“顺序追加”退化成“随机读 + 随机写”。</li>
+        <li><strong>父节点连锁更新</strong>：分裂要在父节点插入新的指针项，父节点也满了就继续向上分裂，极端情况下一路裂到根、树长高一层。</li>
+        <li><strong>二级索引被波及</strong>：聚簇索引里行因分裂移动虽不改二级索引（二级索引存的是主键），但二级索引本身若键随机也会各自分裂。</li>
+      </ul>
+
+      <Callout variant="note" title="顺带认识：页合并不总是立刻发生">
+        <p>
+          删除一行不会立即把它从页里抠走、也不会马上触发合并。InnoDB 先打个“删除标记”（delete-mark），
+          真正的物理清理交给后台 <em>purge</em> 线程（它还要确认没有 MVCC 版本还需要这行）。只有当页内有效记录少于
+          <em>MERGE_THRESHOLD</em>（默认 50%）时，才会尝试和相邻页合并。所以“删了很多行表却没变小”是正常的——
+          空间留作后续插入复用，要真正回收得重建表。这也解释了为什么 <code>DELETE</code> 大量数据后，磁盘占用纹丝不动。
+        </p>
+      </Callout>
+
       <KeyIdea title="为什么自增主键比随机主键好">
         <p>
           <strong>自增主键</strong>的值单调递增，新记录永远插在 B+Tree 的<strong>最右端</strong>，
@@ -110,6 +154,27 @@ export default function Ch2() {
           有序的雪花算法 ID、或把时间戳放在高位的有序 UUID（如 UUIDv7），让它仍然<strong>大致递增</strong>，
           从而保留“总是插在末尾”的好处，避开页分裂的代价。
         </p>
+      </Callout>
+
+      <Example title="批量导入为什么要先排序">
+        <p>
+          一个常见误区：用 <code>LOAD DATA</code> 或批量 <code>INSERT</code> 往自增主键表里灌千万行数据，却乱序灌。结果：
+        </p>
+        <ul>
+          <li>如果按主键<strong>升序</strong>灌，每条都追加到最右页，页填满了再开新页，几乎零分裂，导入飞快、表紧凑。</li>
+          <li>如果<strong>乱序</strong>灌（哪怕主键是自增的，但导入文件没排序），插入点到处跳，页分裂频发，导入慢几倍、表还胖。</li>
+        </ul>
+        <p>
+          所以大批量导入前<strong>先按目标主键排好序</strong>，能省下大量页分裂。同理，迁移数据时按主键顺序 dump/load 比随机顺序好得多。
+        </p>
+      </Example>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“自增主键有没有缺点？”</strong>——有：高并发插入时多个连接抢 <code>AUTO-INC</code> 锁/计数器（8.0 默认 <code>innodb_autoinc_lock_mode=2</code> 已大幅缓解）；分库分表时自增会冲突，需要全局发号器。</li>
+          <li><strong>“UUIDv7 / 雪花 ID 为什么能避免页分裂？”</strong>——它们把时间戳放高位，整体单调递增，插入点始终在右端附近，保留了“末尾追加”的特性。</li>
+          <li><strong>“OPTIMIZE TABLE 会锁表吗？”</strong>——InnoDB 下 8.0 用 INPLACE，大部分时间不阻塞读写，但最后有个短暂的元数据锁；超大表仍建议用 gh-ost/pt-osc 在线工具。</li>
+        </ul>
       </Callout>
 
       <h2>这对排查性能问题意味着什么</h2>
@@ -131,6 +196,11 @@ export default function Ch2() {
           把两张表各批量插入几十万行，对比 <code>information_schema.TABLES</code> 里的 <code>DATA_LENGTH</code>，
           UUID 表通常明显更大、更碎——这就是页分裂的代价被你亲眼看见了。
         </p>
+        <p>
+          再进一步：观察两张表的 <code>data_free</code>（碎片空间），然后对 UUID 表做一次重建，看它能瘦多少。
+        </p>
+        <CodeBlock lang="sql" title="fill_factor.sql" code={fillFactorSql} />
+        <CodeBlock lang="sql" title="rebuild.sql" code={rebuildSql} />
       </Practice>
 
       <Summary

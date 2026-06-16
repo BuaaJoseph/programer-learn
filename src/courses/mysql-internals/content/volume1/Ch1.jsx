@@ -35,6 +35,34 @@ WHERE table_schema = DATABASE()
 -- 把一张老的 MyISAM 表转成 InnoDB
 ALTER TABLE legacy_logs ENGINE=InnoDB;`
 
+const traceSql = `-- 一条 SQL 在 Server 层都经历了什么？打开 optimizer_trace 看优化器的决策
+SET optimizer_trace = 'enabled=on';
+
+SELECT * FROM orders WHERE user_id = 10086 AND status = 1;
+
+-- 看优化器对每个候选索引的代价估算、为什么选了这个索引、扫描行数预估
+SELECT * FROM information_schema.optimizer_trace\\G
+
+SET optimizer_trace = 'enabled=off';
+
+-- 查看连接层的现状：当前连接数、最大连接数、被拒绝过几次
+SHOW STATUS LIKE 'Threads_connected';
+SHOW VARIABLES LIKE 'max_connections';
+SHOW STATUS LIKE 'Connection_errors_max_connections';`
+
+const scanEnginesSql = `-- 体检脚本：一次性列出全库非 InnoDB 的表，以及它们的大小，便于评估迁移工作量
+SELECT
+  table_schema,
+  table_name,
+  engine,
+  ROUND((data_length + index_length) / 1024 / 1024, 2) AS size_mb,
+  table_rows
+FROM information_schema.tables
+WHERE engine IS NOT NULL
+  AND engine NOT IN ('InnoDB')
+  AND table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
+ORDER BY size_mb DESC;`
+
 export default function Ch1() {
   return (
     <>
@@ -72,6 +100,22 @@ export default function Ch1() {
         而 SQL 语法、优化器这些是公共的。
       </p>
 
+      <h3>一条 SELECT 的完整旅程</h3>
+      <p>
+        把这三层串成一条时间线，你会更清楚每个组件的职责边界：
+      </p>
+      <ul>
+        <li><strong>① 连接 / 鉴权</strong>：客户端建立 TCP 连接，三次握手后做账号密码与权限校验，分配一个工作线程。MySQL 8.0 前还有一层<em>查询缓存</em>（query cache），命中就直接返回结果——但它在高并发下争用严重，8.0 已彻底移除，别再依赖它。</li>
+        <li><strong>② 解析（parser）</strong>：词法分析 + 语法分析，把 SQL 文本变成一棵语法树，顺便做关键字、列名是否存在等语义检查。SQL 写错（少写逗号、列名拼错）就在这一步报错。</li>
+        <li><strong>③ 优化（optimizer）</strong>：这是 Server 层最“聪明”的部分。它基于<em>代价模型</em>（cost model）和表的统计信息，决定走哪个索引、多表 JOIN 的连接顺序、是否用临时表/文件排序。同一条 SQL，统计信息变了，优化器选的执行计划就可能变——这是很多“昨天还好好的，今天突然变慢”的根源。</li>
+        <li><strong>④ 执行（executor）</strong>：拿着优化器给的执行计划，逐行调用存储引擎的 handler 接口（如「读下一行」「按索引定位」），把数据取上来、做聚合/排序、最终返回客户端，同时写 binlog。</li>
+      </ul>
+      <p>
+        想看优化器到底是怎么想的，可以打开 <code>optimizer_trace</code>，它会把代价估算、候选索引、最终决策全部吐出来——
+        这是排查“为什么没走我建的索引”最硬核的工具。
+      </p>
+      <CodeBlock lang="sql" title="optimizer_trace.sql" code={traceSql} />
+
       <h3>存储引擎到底负责什么</h3>
       <p>
         用一句话概括：存储引擎是“<strong>怎么存、怎么读、怎么加锁</strong>”的实现。具体落到三件事上：
@@ -105,6 +149,15 @@ export default function Ch1() {
         </li>
       </ul>
 
+      <h3>handler 接口：Server 层和引擎的「插座」</h3>
+      <p>
+        Server 层和存储引擎之间隔着一组抽象接口（C++ 里就是 <code>handler</code> 基类），定义了一堆方法：
+        <code>{'rnd_init() / rnd_next()'}</code>（全表顺序扫）、<code>{'index_read() / index_next()'}</code>（按索引读）、
+        <code>{'write_row() / update_row() / delete_row()'}</code>（增删改）等。InnoDB、MyISAM 各自实现这套接口。
+        正因为有这层抽象，优化器在估算代价时调用的是统一接口，至于底层是 B+ 树还是别的结构，它通过接口返回的“扫描行数估算”“是否支持事务”等能力位来感知。
+        理解这层接口，你就明白为什么<strong>引擎能插拔，而 SQL 语法和优化逻辑可以复用</strong>。
+      </p>
+
       <Example title="同样一条 UPDATE，两种引擎下的并发表现">
         <p>
           假设两个会话同时更新 <code>orders</code> 表里<strong>不同的两行</strong>：
@@ -133,6 +186,20 @@ export default function Ch1() {
         </p>
       </KeyIdea>
 
+      <h3>其它引擎：知道它们存在就够了</h3>
+      <p>
+        除了 InnoDB 和 MyISAM，MySQL 还内置了几个特殊引擎，日常很少用，但面试和排查时偶尔会遇到：
+      </p>
+      <ul>
+        <li><strong>MEMORY（HEAP）</strong>：数据全放内存，重启即丢，只支持表锁、用哈希索引。曾用来做临时缓存表，但内存里的临时表用途已基本被应用层缓存（Redis）取代。</li>
+        <li><strong>CSV</strong>：数据以纯文本 CSV 文件存储，可直接用 Excel 打开，适合做数据交换，但不支持索引，性能差。</li>
+        <li><strong>ARCHIVE</strong>：高压缩比、只支持 INSERT 和 SELECT，适合归档冷数据（如日志），不能更新删除。</li>
+        <li><strong>BLACKHOLE</strong>：写进去的数据直接丢弃（像 /dev/null），但会照常写 binlog，过去用在主从复制的中继转发节点上。</li>
+      </ul>
+      <p>
+        注意：MySQL 内部执行 JOIN、GROUP BY 时会自动创建<em>内部临时表</em>，小的用 MEMORY 引擎、超过 <code>tmp_table_size</code> 就落盘转成 InnoDB（8.0 起）或 MyISAM（旧版本）。这是“某个聚合查询突然变慢”的常见隐藏原因。
+      </p>
+
       <Callout variant="warn" title="老库里最常见的两个坑">
         <ul>
           <li>
@@ -147,6 +214,14 @@ export default function Ch1() {
         </ul>
       </Callout>
 
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“为什么 InnoDB 的 count(*) 慢，怎么优化？”</strong>——慢是因为 MVCC 下行数不固定，必须实时统计。优化思路：优化器会自动选最小的二级索引来扫（扫得行少），所以保证有一个窄索引比对主键 count 快；要更快就单独维护计数表或用近似值 <code>SHOW TABLE STATUS</code> 里的 Rows（注意它是估算）。</li>
+          <li><strong>“同一个 JOIN 在两台机器上一个走索引一个全表扫，为什么？”</strong>——大概率是统计信息不同。统计信息是采样估算的，可用 <code>ANALYZE TABLE</code> 重新采样校准。</li>
+          <li><strong>“查询缓存为什么被移除？”</strong>——任何对表的写操作都会让该表所有缓存失效，写多读多的场景命中率低还要维护缓存，得不偿失，8.0 直接删掉。</li>
+        </ul>
+      </Callout>
+
       <h2>这对实际开发意味着什么</h2>
       <p>
         理解了“引擎是表级、可插拔”，你排查问题时就有了清晰的分层思路：SQL 解析报错、执行计划不对，去查 Server 层（优化器）；
@@ -154,6 +229,10 @@ export default function Ch1() {
         日常建表请<strong>显式写上 <code>ENGINE=InnoDB</code></strong>，别赌默认值；接手任何一个库，第一件事就是确认没有遗留的 MyISAM 表。
         除非你有明确的、引擎相关的理由（极少），否则答案永远是 InnoDB。
       </p>
+      <p>
+        迁移 MyISAM 到 InnoDB 不是无脑 <code>ALTER</code> 就完事：要先评估表大小（大表 ALTER 会长时间持锁或占大量临时空间）、确认没有依赖 MyISAM 全文索引的老代码（InnoDB 5.6+ 才支持全文索引）、留意自增列在两种引擎下的计数行为差异。下面这个体检脚本能帮你一眼看清全库还有哪些非 InnoDB 的表、各占多大，按大小排序好排迁移计划。
+      </p>
+      <CodeBlock lang="sql" title="scan_non_innodb.sql" code={scanEnginesSql} />
 
       <Practice title="盘一遍你手上库的引擎现状">
         <p>

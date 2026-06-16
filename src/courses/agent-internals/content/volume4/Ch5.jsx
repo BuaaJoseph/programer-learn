@@ -139,6 +139,33 @@ def run(task):
 if __name__ == '__main__':
     run('在当前目录建一个 hello.txt，写入「你好，Agent」，然后用命令读出来确认。')`
 
+const verifyCode = `# 给最小 Agent 加一道「验证循环」：模型说完成，先别信，跑一遍测试
+def run_with_verify(task, verify_cmd='pytest -q'):
+    messages = [{'role': 'user', 'content': task}]
+    verified = False                 # 这一轮的「完成」有没有过校验
+
+    while True:
+        resp = client.messages.create(
+            model=MODEL, max_tokens=2048,
+            system='你是一个动手能力很强的编程助手，会用工具完成任务。',
+            tools=TOOLS, messages=messages,
+        )
+        messages.append({'role': 'assistant', 'content': resp.content})
+
+        if resp.stop_reason != 'tool_use':
+            if verified:
+                return               # 校验过了，真退出
+            # 模型说完成，但还没过校验 -> 自动跑一遍，把结果回灌
+            out = run_bash(verify_cmd)
+            verified = ('failed' not in out.lower() and 'error' not in out.lower())
+            messages.append({'role': 'user', 'content': [{
+                'type': 'text',
+                'text': '自动校验结果（' + verify_cmd + '）:\\n' + out +
+                        ('\\n校验通过。' if verified else '\\n校验未过，请继续修。'),
+            }]})
+            continue                 # 带着校验结果再转一圈，让模型自己改
+        # ……（工具执行与回灌同前，略）`
+
 export default function Ch5() {
   return (
     <>
@@ -157,6 +184,13 @@ export default function Ch5() {
         一份描述工具的 <strong>schema</strong>（告诉模型「你有什么、怎么调」）、一条<strong>消息历史</strong>
         （Agent 的全部记忆）、以及一个<strong>主循环</strong>（把上面三样串起来反复转）。下面我们一样样写。
       </p>
+      <p>
+        <strong>为什么恰好是这四样、不多不少？</strong>因为它们一一对应着「让一个只会出文本的模型能在世界里行动」
+        所必需的四个环节：工具是<em>手</em>（能改变世界）、schema 是<em>说明书</em>（让模型知道有哪些手、怎么用）、
+        消息历史是<em>记忆</em>（模型本身无状态，记忆得由你维护）、主循环是<em>心跳</em>（把感知→决策→行动→再感知
+        串成持续的节奏）。少任何一样，这套就转不起来：没工具模型只能空谈，没 schema 模型不知道能干啥，
+        没历史模型每轮都失忆，没循环就只是一次性的问答而非「持续完成任务」。
+      </p>
 
       <h3>第一步：定义工具和它们的 schema</h3>
       <p>
@@ -165,16 +199,32 @@ export default function Ch5() {
         模型看的是 schema，执行的是函数。
       </p>
       <CodeBlock lang="python" title="tools.py" code={toolsCode} />
+      <p>
+        <strong>这里有个新手最常踩、却又最隐蔽的坑：schema 的 description 不是写给人看的注释，而是模型唯一的
+        「使用说明」。</strong>模型决定<em>什么时候、用什么参数</em>调一个工具，完全依赖你这段描述。
+        如果 <code>{'description'}</code> 含糊（比如只写「处理文件」），模型就会乱用、传错参数、或该用时不用。
+        反过来，把描述写清楚（「读取一个<em>文本</em>文件并返回<em>全部</em>内容；不要用于二进制文件」）
+        就是最廉价、最有效的「调教」。<strong>写好工具描述，是 Agent 工程里性价比最高的功夫之一</strong>，
+        其重要性常被低估。
+      </p>
 
       <h3>第二步：写主循环</h3>
       <p>
         主循环就是 Agent 的全部。它维护一条 <code>messages</code> 历史，反复调用模型：
-        如果模型的 <code>stop_reason</code> 是 <code>tool_use</code>，说明它想用工具——我们逐个执行，
-        把结果作为一条 <code>tool_result</code> 消息回灌历史，然后<strong>带着更新后的完整上下文再转一圈</strong>；
+        如果模型的 <code>stop_reason</code> 是 <code>{'tool_use'}</code>，说明它想用工具——我们逐个执行，
+        把结果作为一条 <code>{'tool_result'}</code> 消息回灌历史，然后<strong>带着更新后的完整上下文再转一圈</strong>；
         如果模型不再请求工具，说明它认为任务完成了，打印文本、收工。我们还顺手加了最朴素的权限：
         危险命令先暂停问人一句。
       </p>
       <CodeBlock lang="python" title="agent.py" code={loopCode} />
+      <p>
+        <strong>几个容易被一眼略过、但全是设计要点的细节</strong>：其一，工具结果是用一条
+        <code>role: 'user'</code> 的消息回灌的——在工具调用协议里，「工具的输出」被建模成「用户发来的新信息」，
+        因为对模型而言它就是「外部世界给我的反馈」。其二，<code>{'tool_use_id'}</code> 必须原样带回，
+        模型才能把这条结果对应回它发起的<em>那一次</em>调用（一轮里可能同时调了好几个工具）。其三，
+        工具<strong>出错也要把错误信息回灌</strong>，而不是直接抛异常崩掉——让模型看到 <code>error: ...</code>，
+        它往往能自己换个路子重试，这正是 Agent「有韧性」的来源。
+      </p>
 
       <Example title="跑起来是什么样">
         <p>
@@ -209,18 +259,38 @@ export default function Ch5() {
         </p>
       </Callout>
 
+      <Callout variant="info" title="为什么关键词黑名单注定挡不住">
+        <p>
+          这里用 <code>DANGER</code> 关键词来拦危险命令，是教学上够直观、工程上却注定漏的做法。原因很根本：
+          shell 的表达力太强，绕过黑名单的方式无穷无尽——比如把命令 base64 编码后再 <code>{'eval'}</code>、
+          用变量拼接、用别名、用等价但不含关键词的命令。任何<strong>黑名单</strong>（列出「不许做什么」）
+          在面对开放空间时都守不住，正确方向是<strong>白名单</strong>（只许做这几件）加<strong>沙箱</strong>
+          （就算被绕过，能造成的破坏也被关在隔离环境里）。这是安全设计的一条通则，不止于 Agent。
+        </p>
+      </Callout>
+
       <h2>从最小到更强：接下来加什么</h2>
       <p>
         这个最小循环是个干净的地基，往上加能力的方向，恰好对应前几章讲过的东西：
       </p>
       <ul>
         <li><strong>验证循环</strong>：在「模型说完成」之后，别急着退出——自动跑一遍测试或 lint，
-          把结果作为新的 <code>tool_result</code> 回灌，让模型看到失败就接着改。这是质量的关键一环。</li>
+          把结果作为新的 <code>{'tool_result'}</code> 回灌，让模型看到失败就接着改。这是质量的关键一环。</li>
         <li><strong>记忆 / 压缩</strong>：消息历史会越来越长。当它快撑满上下文窗口时，把早期内容
           总结压缩成一小段再继续，长任务才不会断（正是 Cognition 推荐的「单线程 + 上下文压缩」）。</li>
         <li><strong>子代理</strong>：遇到噪音大的子任务（翻一大堆文件找一处定义），派一个独立的小循环去做，
           只把一句结论回灌主线——子代理作为上下文隔离器，主循环保持干净。</li>
       </ul>
+      <p>
+        其中<strong>验证循环</strong>最值得马上动手，因为它把质量从「靠模型自觉」变成「结构上兜底」。
+        核心改动只有一处：模型说完成时不立刻退出，而是先自动跑一遍校验命令，把结果回灌，
+        只有真过了才退出。下面是骨架：
+      </p>
+      <CodeBlock lang="python" title="给最小 Agent 加一道验证循环" code={verifyCode} />
+      <p>
+        体会一下这个改动的分量：加了它之后，Agent 不再是「写完就拍胸脯说好了」，而是「写完→自己验→没过接着改」。
+        这正是把<strong>反馈</strong>显式接进循环——Agent 的能力上限，很大程度上取决于你给它接了多紧的反馈回路。
+      </p>
 
       <h2>这对你意味着什么</h2>
       <p>
@@ -239,10 +309,12 @@ export default function Ch5() {
             <strong>加一个工具</strong>：实现 <code>list_dir</code>（列出某个目录下的文件），写好它的实现、
             schema，并登记进 <code>TOOL_IMPL</code> 和 <code>TOOLS</code>。然后给模型一个需要先列目录、
             再读其中某个文件的任务，看它会不会自己先调 <code>list_dir</code>。
+            做完后特意把 schema 的 description 改得很含糊，再跑一次，观察模型用错或不用它——
+            亲手感受「描述就是模型唯一的说明书」。
           </li>
           <li>
             <strong>加一个验证步骤</strong>：当模型说完成时，先自动跑一遍 <code>run_bash('pytest -q')</code>
-            （或任意一条校验命令），把结果回灌成一条 <code>tool_result</code>；只有校验通过了才真正退出循环，
+            （或任意一条校验命令），把结果回灌成一条 <code>{'tool_result'}</code>；只有校验通过了才真正退出循环，
             否则让模型看着失败信息继续改。体会一下「验证循环」是怎么把质量兜住的。
           </li>
         </ul>
@@ -250,12 +322,12 @@ export default function Ch5() {
 
       <Summary
         points={[
-          '一个最小 Agent 只需四样东西：工具、描述工具的 schema、消息历史（记忆）、以及把它们串起来反复转的主循环。',
+          '一个最小 Agent 只需四样东西：工具（手）、schema（说明书）、消息历史（记忆）、主循环（心跳）；少任何一样这套都转不起来。',
           '主循环就是 Agent 的心脏：发 messages 给模型 -> 模型请求 tool_use 就执行并把 tool_result 回灌 -> 模型不再请求工具就停。',
           '工具有两部分：真正干活的函数，和告诉模型「有什么、怎么调」的 schema；模型只出意图，真正动手执行的是宿主代码。',
-          '最朴素的权限就是危险命令先暂停问人一句；但教学版裸跑可以，碰生产必须加沙箱、收紧权限、做白名单。',
-          '几十行就能让只会输出文本的模型变成能读写文件、跑命令的 Agent，Claude Code/opencode 剥到最里层也是这颗心脏。',
-          '往上增强的方向对应前几章：验证循环保质量、上下文压缩/记忆保长任务连续、子代理作隔离器保主上下文干净。',
+          'schema 的 description 是模型唯一的使用说明（不是注释），写清楚它是性价比最高的「调教」；工具出错也要回灌，模型才能自己重试、有韧性。',
+          '最朴素的权限是危险命令先问人一句；但关键词黑名单注定被 shell 绕过，正确方向是白名单 + 沙箱，这是安全设计通则。',
+          '往上增强对应前几章：验证循环（模型说完先自动跑测试再回灌）把质量从靠自觉变成结构兜底，是最该先加的一环；再是上下文压缩保长任务、子代理作隔离器。',
         ]}
       />
     </>

@@ -32,6 +32,32 @@ UPDATE account SET balance = balance + 100 WHERE id = 2;
 ROLLBACK TO SAVEPOINT after_debit;  -- 只回滚到保存点，扣款仍保留
 COMMIT;`
 
+const longTrxSql = `-- 揪出当前最“老”的活跃事务（长事务排查第一步）
+SELECT
+  trx_id,
+  trx_state,
+  trx_started,
+  TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS running_secs,
+  trx_rows_locked,
+  trx_rows_modified,
+  trx_mysql_thread_id
+FROM information_schema.INNODB_TRX
+ORDER BY trx_started ASC;       -- 最早开始的排最前，往往就是元凶
+
+-- 看 undo 历史链有多长（长事务会让它居高不下，拖慢 purge）
+SHOW ENGINE INNODB STATUS\\G    -- 关注 TRANSACTIONS 段的 History list length
+
+-- 找到罪魁线程后，必要时强制干掉它（生产慎用）
+-- KILL <trx_mysql_thread_id>;`
+
+const ddlTrxSql = `-- 坑：DDL 会隐式提交当前事务！
+START TRANSACTION;
+INSERT INTO account VALUES (3, 0);
+CREATE TABLE tmp_t (id INT);   -- ← 这条 DDL 触发隐式 COMMIT，上面的 INSERT 已落地
+ROLLBACK;                       -- 这个 ROLLBACK 回滚不了 INSERT，它早被提交了
+
+-- 结论：事务里别夹 DDL（CREATE/ALTER/DROP/TRUNCATE 等都会隐式提交）`
+
 export default function Ch1() {
   return (
     <>

@@ -30,6 +30,31 @@ const usageCode = `public class SyncDemo {
     }
 }`
 
+const reentrantCode = `// synchronized 是可重入锁：同一线程已持有锁，再次进入同一把锁的同步块无需重新竞争
+public class Reentrant {
+    public synchronized void a() {
+        System.out.println("a");
+        b();   // a 已经持有 this 锁，调 b 时直接重入，不会自己把自己锁死
+    }
+    public synchronized void b() {
+        System.out.println("b");
+    }
+}
+// monitor 内部维护一个计数器：重入一次 +1，退出一次 -1，归零才真正释放锁`
+
+const wrongLockCode = `// 反例 1：锁了一个会变的引用，等于没锁
+public class WrongLock {
+    private Integer lock = 0;             // Integer 不可变，++ 会换新对象
+    public void bad() {
+        synchronized (lock) {
+            lock++;                       // 每次都换了一个新的锁对象！互斥失效
+        }
+    }
+}
+
+// 反例 2：锁了字符串常量，可能和别的无关代码撞同一把锁
+private static final String LOCK = "lock";   // 字符串常量池里全局唯一，极易误共享`
+
 export default function Ch1() {
   return (
     <>
@@ -55,6 +80,15 @@ export default function Ch1() {
         最容易踩的坑：实例方法的锁和静态方法的锁是<strong>两把不同的锁</strong>（一个是实例、一个是类对象），
         它们之间不会互斥。两个线程一个调实例方法、一个调静态方法，可以同时进入。
       </p>
+      <Callout variant="warn" title="锁对象千万别选错：可变引用 / 字符串常量">
+        <p>
+          锁对象有两条铁律：<strong>必须是 final 的</strong>（不能中途被换成另一个对象，否则不同线程锁的是不同对象，互斥直接失效），
+          以及<strong>不要锁字符串常量或包装类缓存对象</strong>（如 <code>"lock"</code>、<code>Integer.valueOf(1)</code>）。
+          字符串常量在常量池里全局唯一，你这里锁它、别处某段毫不相干的代码也锁了同一个字面量，就会莫名其妙互相阻塞，
+          排查起来极其痛苦。最佳实践：用一个 <code>private final Object lock = new Object();</code> 专门当锁。
+        </p>
+        <CodeBlock lang="java" title="两个经典反例" code={wrongLockCode} />
+      </Callout>
 
       <Example title="同一把锁才会互斥">
         <p>
@@ -68,6 +102,15 @@ export default function Ch1() {
         </p>
       </Example>
 
+      <h2>synchronized 是可重入的</h2>
+      <p>
+        一个常被追问的特性：<code>synchronized</code> 是<strong>可重入锁</strong>。同一个线程已经持有某把锁，
+        再次进入用同一把锁保护的代码时，<strong>不需要重新竞争</strong>，直接放行。如果不可重入，会怎样？看下面 <code>a()</code> 调 <code>b()</code> 的例子：
+        a 已经拿着 this 锁，调 b 又要 this 锁——若不可重入，线程就会等一把<strong>自己已经持有</strong>的锁，<strong>把自己锁死</strong>（自锁死锁）。
+        可重入正是为了避免这种荒谬的自我死锁。实现上 monitor 内部有个<strong>重入计数器</strong>：重入 +1、退出 -1，减到 0 才真正释放锁。
+      </p>
+      <CodeBlock lang="java" title="Reentrant.java" code={reentrantCode} />
+
       <h2>底层实现：monitor 与对象头</h2>
       <p>
         编译后，同步代码块会生成一对字节码指令 <code>monitorenter</code> 和 <code>monitorexit</code>，
@@ -75,9 +118,16 @@ export default function Ch1() {
         由 JVM 隐式完成加解锁）。它们操作的对象叫 <em>monitor</em>（监视器锁），是每个 Java 对象都自带的一把锁。
       </p>
       <p>
+        细节追问：为什么字节码里常看到<strong>一个 monitorenter 配两个 monitorexit</strong>？因为 JVM 要保证<strong>异常路径也能释放锁</strong>——
+        正常退出走第一个 monitorexit，一旦同步块内抛异常，则走编译器自动生成的异常处理 monitorexit。这就是为什么 synchronized
+        即使临界区抛异常也<strong>不会死锁</strong>（锁一定被释放），而手写 Lock 必须自己在 finally 里 unlock。
+      </p>
+      <p>
         锁信息存在对象的<em>对象头</em>里，具体是其中一块叫 <em>Mark Word</em> 的区域。Mark Word 会随着锁状态
         复用同一段内存：无锁时存哈希码和分代年龄，加锁后则改存指向锁记录或 monitor 的指针、以及标记当前锁的级别。
-        正是因为 Mark Word 能记录「当前是哪一级锁」，才有了下面要讲的锁升级。
+        正是因为 Mark Word 能记录「当前是哪一级锁」，才有了下面要讲的锁升级。重量级锁状态下，monitor 对应一个 C++ 的
+        <code>ObjectMonitor</code> 对象，里面有 <code>_owner</code>（持锁线程）、<code>_EntryList</code>（抢锁阻塞队列）、
+        <code>_WaitSet</code>（调用 wait 后的等待队列）三个关键结构——这也解释了 wait/notify 为什么必须在 synchronized 里：它们操作的就是这个 monitor 的 WaitSet。
       </p>
 
       <LockUpgrade />
@@ -105,6 +155,14 @@ export default function Ch1() {
           抢不到的线程被<em>挂起</em>（阻塞、让出 CPU），等持锁线程释放后再被唤醒。
         </li>
       </ul>
+      <Callout variant="info" title="偏向锁撤销为什么贵：StopTheWorld">
+        <p>
+          偏向锁看着省，但它的<strong>撤销</strong>代价不小。撤销时 JVM 要找到当前持有偏向锁的线程、把它停在一个安全点（safepoint），
+          检查它是否还活着、是否还在同步块里，再改写 Mark Word。在到达安全点这一刻会有一次轻量的「STW」。
+          如果应用里大量对象先被一个线程偏向、随后又被别的线程访问（撤销频繁），偏向锁带来的撤销开销反而超过它省下的 CAS。
+          这正是 JDK 15 把偏向锁<strong>默认关闭并标记废弃</strong>的现实原因：现代服务端应用普遍多线程高竞争，偏向锁性价比变低了。
+        </p>
+      </Callout>
 
       <KeyIdea title="只升不降，按竞争强度演进">
         <p>
@@ -119,8 +177,24 @@ export default function Ch1() {
           轻量级锁的 CAS 自旋适合「锁持有时间很短」的场景：空转一会儿就能拿到，比线程切换划算。
           但如果持锁线程长时间不放，自旋就是在<strong>白白烧 CPU</strong>。所以竞争一旦变激烈、自旋达到阈值，
           JVM 就果断升级成重量级锁，让抢不到的线程睡过去，而不是继续空转。这正是「只升不降」的合理性所在。
+          JVM 还有<strong>自适应自旋</strong>：根据上一次在同一把锁上自旋成功与否，动态调整下次自旋的次数，让自旋更聪明。
         </p>
       </Callout>
+
+      <h2>锁优化：锁消除与锁粗化</h2>
+      <p>
+        除了锁升级，JIT 编译器还会做两类自动优化：
+      </p>
+      <ul>
+        <li>
+          <strong>锁消除</strong>：通过逃逸分析发现某把锁保护的对象<strong>根本不可能被多线程访问</strong>（比如方法内局部创建、没逃逸出去的 <code>StringBuffer</code>），
+          就直接把加锁去掉。所以单线程里用 StringBuffer，那些 synchronized 其实被消除了，不必为此换 StringBuilder。
+        </li>
+        <li>
+          <strong>锁粗化</strong>：发现循环体里反复对同一把锁加解锁（如循环里每次 append），就把锁的范围<strong>扩大到整个循环外</strong>，
+          避免反复加解锁的开销。
+        </li>
+      </ul>
 
       <h2>实战 / 面试怎么答</h2>
       <p>
@@ -147,11 +221,13 @@ export default function Ch1() {
       <Summary
         points={[
           'synchronized 锁的是对象：实例方法锁 this，静态方法锁 类.class，代码块锁括号里指定的对象。',
-          '只有抢同一个对象的锁才会互斥；线程不安全往往是锁错了对象（本该共用却各锁各的）。',
-          '底层靠 monitorenter/monitorexit 指令操作对象自带的 monitor，锁状态记在对象头的 Mark Word 里。',
-          '锁升级路径：无锁→偏向锁→轻量级锁（CAS 自旋）→重量级锁（OS 挂起），按竞争强度逐级演进。',
-          '锁升级只升不降，遵循“先乐观再悲观”的设计，在低竞争场景下避免昂贵的内核态切换。',
-          'JDK 6 之后因偏向锁、自旋等优化 synchronized 不再慢；偏向锁在 JDK 15+ 已被废弃。',
+          '只有抢同一个对象的锁才会互斥；线程不安全往往是锁错了对象；锁对象要 final，别锁可变引用/字符串常量。',
+          'synchronized 可重入：monitor 内部用重入计数器，重入 +1 退出 -1，归零才释放，避免自我死锁。',
+          '底层靠 monitorenter/monitorexit 指令操作对象自带的 monitor；多一个 monitorexit 保证异常路径也释放锁。',
+          'monitor 对应 ObjectMonitor，含 owner/EntryList/WaitSet，wait/notify 操作的就是 WaitSet，故须在 synchronized 内。',
+          '锁升级路径：无锁→偏向锁→轻量级锁（CAS 自旋）→重量级锁（OS 挂起），只升不降，按竞争强度演进。',
+          '偏向锁撤销有 STW 代价，现代高竞争应用性价比低，JDK 15+ 默认关闭并废弃；自适应自旋让自旋更聪明。',
+          'JIT 还会做锁消除（去掉不逃逸对象的锁）和锁粗化（合并循环内反复加解锁）。',
         ]}
       />
     </>

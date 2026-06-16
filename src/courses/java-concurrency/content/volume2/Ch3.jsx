@@ -38,6 +38,23 @@ public class SimpleMutex {
     public void unlock() { sync.release(1); }   // 模板方法，内部调 tryRelease
 }`
 
+const reentrantSourceCode = `// ReentrantLock 公平/非公平版 tryAcquire 的核心差异（简化）
+// 非公平：上来直接 CAS 抢，不看队列
+final boolean nonfairTryAcquire(int acquires) {
+    int c = getState();
+    if (c == 0) {
+        if (compareAndSetState(0, acquires)) {   // 直接抢，无视排队的人
+            setExclusiveOwnerThread(Thread.currentThread());
+            return true;
+        }
+    } else if (getExclusiveOwnerThread() == Thread.currentThread()) {
+        setState(c + acquires);                  // 重入：state 累加
+        return true;
+    }
+    return false;
+}
+// 公平：抢之前先 hasQueuedPredecessors() 检查有没有人排在前面`
+
 export default function Ch3() {
   return (
     <>
@@ -68,6 +85,14 @@ export default function Ch3() {
         只把「<code>state</code> 怎么算才叫拿到/释放成功」这一小块留给子类去填（重写 <code>tryAcquire</code> /
         <code>tryRelease</code> 等）。子类只管定义规则，排队和阻塞的脏活累活 AQS 全包。
       </p>
+      <Callout variant="info" title="为什么叫 CLH，它和原版有何不同">
+        <p>
+          CLH（Craig、Landin、Hagersten 三位作者名字缩写）原本是一种<strong>自旋锁</strong>队列：每个节点在自己的本地变量上自旋，
+          等前驱节点通知。AQS 借用了它「FIFO 队列管理等待者」的骨架，但做了关键改造——把<strong>自旋改成 <code>LockSupport.park</code> 阻塞</strong>，
+          线程入队后直接挂起让出 CPU，而不是空转。每个 Node 还有一个 <code>waitStatus</code> 字段（如 <code>SIGNAL</code> 表示「我释放时要唤醒后继」），
+          靠前驱节点的状态来决定要不要唤醒后继。理解「队列 + park + waitStatus」这三件套，就摸到 AQS 的骨架了。
+        </p>
+      </Callout>
 
       <Aqs />
 
@@ -79,6 +104,14 @@ export default function Ch3() {
         <code>tryRelease</code> 改 <code>state</code> 成功后，<code>unpark</code> <strong>唤醒队首</strong>
         那个等待的线程，让它醒来再去抢。这套「失败入队 park、释放唤醒队首」就是 AQS 的核心节奏。
       </p>
+      <Callout variant="info" title="为什么用 LockSupport 而不是 wait/notify">
+        <p>
+          AQS 阻塞线程用的是 <code>LockSupport.park/unpark</code>，而不是 <code>Object.wait/notify</code>，这是有讲究的。
+          <code>wait/notify</code> 必须先持有对象监视器（synchronized），且 notify 不能「先于」wait 发出（否则信号丢失）；
+          而 <code>park/unpark</code> 不需要任何锁，且 <strong>unpark 可以先于 park 调用</strong>——它基于一个「许可」语义：
+          unpark 发一个许可，park 时若已有许可就直接返回。这种「许可先发后用也不丢」的特性，正是构建可靠同步器所必需的，wait/notify 做不到。
+        </p>
+      </Callout>
 
       <h3>独占模式 vs 共享模式</h3>
       <p>
@@ -86,6 +119,8 @@ export default function Ch3() {
         <code>ReentrantLock</code>；<strong>共享</strong>（shared）——允许多个线程同时拿到，比如
         <code>Semaphore</code>、<code>CountDownLatch</code>、读写锁里的读锁。两种模式对应不同的方法
         （<code>tryAcquire</code> / <code>tryAcquireShared</code>），区别在于「拿到后是否还允许后面的线程继续拿」。
+        共享模式有个独占模式没有的动作：<strong>传播唤醒</strong>（propagate）——一个共享节点拿到锁后，会接着唤醒后面的共享节点，
+        像多米诺骨牌一样，让一批读线程同时放行，这正是「读读并发」的实现机理。
       </p>
 
       <Example title="ReentrantLock 是怎么用 AQS 的">
@@ -95,6 +130,7 @@ export default function Ch3() {
           发现持锁的是自己，就把 state 加 1（这就是「可重入」）；解锁则把 state 减 1，减到 0 才算真正释放、
           才唤醒队列里等待的线程。
         </p>
+        <CodeBlock lang="java" title="ReentrantLock 的 tryAcquire（简化）" code={reentrantSourceCode} />
         <p>
           顺着这个思路，其他同步器只是把 <code>state</code> 的含义换了：<code>Semaphore</code> 用 state 记
           <strong>剩余许可数</strong>，acquire 减、release 加；<code>CountDownLatch</code> 用 state 记
@@ -117,8 +153,13 @@ export default function Ch3() {
         <p>
           AQS 队列默认可以是<strong>非公平</strong>的：一个线程来抢锁时，会先「插队」直接 CAS 试一把，
           抢到就走，根本不看队列里有没有人等——这会让排队的线程「饿」一会儿，但减少了线程切换、吞吐更高，
-          所以 <code>ReentrantLock</code> 默认就是非公平。<strong>公平</strong>模式则相反：抢锁前先检查队列，
-          有人排在前面就乖乖去队尾排队，严格 FIFO、不插队，更公平但吞吐略低。绝大多数场景用非公平就好。
+          所以 <code>ReentrantLock</code> 默认就是非公平。<strong>公平</strong>模式则相反：抢锁前先检查队列
+          （<code>hasQueuedPredecessors</code>），有人排在前面就乖乖去队尾排队，严格 FIFO、不插队，更公平但吞吐略低。
+        </p>
+        <p>
+          为什么非公平反而更快？因为公平锁每次都要唤醒队首线程、等它从 park 中醒来再去拿锁，这中间有<strong>线程切换的真空期</strong>，
+          锁可能空着没人用；非公平锁允许刚好在这个真空期路过的线程「插队」直接拿走，省掉了一次唤醒+切换。代价是排队线程可能饥饿。
+          绝大多数场景用非公平就好，只有对「请求顺序公平性」有强诉求（如某些限流、任务调度）才用公平锁。
         </p>
       </Callout>
 
@@ -146,11 +187,12 @@ export default function Ch3() {
       <Summary
         points={[
           'AQS 是 JUC 的基石：ReentrantLock、Semaphore、CountDownLatch、读写锁全都建在它之上。',
-          '两大件：一个 volatile int state 表示同步状态（含义由子类定），一个 CLH 双向 FIFO 等待队列。',
-          '获取失败的线程入队并 park 阻塞；释放时 unpark 唤醒队首线程，再去争抢。',
-          '支持独占与共享两种模式；用模板方法把通用逻辑封装，子类只重写 tryAcquire/tryRelease 等。',
+          '两大件：一个 volatile int state 表示同步状态（含义由子类定），一个 CLH 变体双向 FIFO 等待队列。',
+          'CLH 原是自旋锁，AQS 改成 park 阻塞 + waitStatus，靠前驱状态决定是否唤醒后继。',
+          '获取失败的线程入队并 park 阻塞；释放时 unpark 唤醒队首线程；用 LockSupport 而非 wait/notify，许可先发不丢。',
+          '支持独占与共享两种模式；共享模式有传播唤醒，是读读并发的机理；用模板方法封通用逻辑，子类只重写 tryAcquire/tryRelease。',
           '各同步器只是 state 含义不同：ReentrantLock 记重入次数、Semaphore 记许可、CountDownLatch 记计数、读写锁高低位拆读写。',
-          '公平锁严格 FIFO 排队，非公平锁允许插队抢、吞吐更高（ReentrantLock 默认非公平）。',
+          '公平锁严格 FIFO 排队，非公平锁允许插队抢、省掉唤醒切换真空期、吞吐更高（ReentrantLock 默认非公平）。',
         ]}
       />
     </>

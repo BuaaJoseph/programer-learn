@@ -123,6 +123,13 @@ export default function Ch1() {
         方法越来越臃肿、改一个分支可能误伤别的分支、新增分支必须修改老代码（违反<em>开闭原则</em>）。
         策略模式把每个分支抽成一个类，让它们实现同一个接口，调用方只面向接口编程，至于具体用哪个，留到运行时再决定。
       </p>
+      <p>
+        用 GoF 的话说，策略模式的意图是：<strong>定义一系列算法，把它们各自封装起来，并使它们可以互相替换</strong>，
+        让算法的变化独立于使用它的客户端。它直接落地了两条核心原则——
+        <strong>开闭原则</strong>（加算法不改老代码）和<strong>合成复用原则</strong>（Context 用组合持有策略，而非继承一堆子类）。
+        判断「该不该上策略」有个简单信号：当你发现一段 <code>if-else</code>/<code>switch</code>
+        是在<strong>按类型选择「做同一件事的不同做法」</strong>时，它就是策略的候选。
+      </p>
 
       <h3>三个角色</h3>
       <ul>
@@ -158,12 +165,74 @@ export default function Ch1() {
         </p>
       </KeyIdea>
 
+      <h2>Spring 与函数式：策略的两种现代写法</h2>
+      <p>
+        在 Spring 里，策略模式几乎是「零样板」的：把每个策略声明为 Bean，
+        Context 直接注入 <code>List</code> 或 <code>Map</code>，容器自动收集所有实现。
+        以后新增渠道，只是多加一个 <code>@Component</code>，主流程一行不动：
+      </p>
+      <CodeBlock lang="java" title="Spring 自动收集策略" code={springStrategyCode} />
+      <p>
+        而当策略接口<strong>只有一个方法</strong>（函数式接口）时，连「一种算法一个类」都可以省掉——
+        直接用 Lambda 或方法引用充当策略，把策略表做成 <code>Map&lt;String, 函数&gt;</code>：
+      </p>
+      <CodeBlock lang="java" title="函数式策略（Lambda）" code={lambdaStrategyCode} />
+      <p>
+        这也解释了为什么 JDK 里 <code>Comparator</code>、<code>Runnable</code>、
+        Stream 的各种 <code>Function</code>/<code>Predicate</code> 本质都是策略——
+        它们就是「把一个可替换的算法当参数传进去」。简单场景用 Lambda，
+        策略内部状态复杂、需要依赖注入时才用完整的策略类。
+
+      </p>
+
       <Callout variant="warn" title="别和状态模式搞混">
         <p>
           策略模式和状态模式（<em>State</em>）结构几乎一样，都是「接口 + 多个实现 + 上下文委托」，区别在<strong>意图</strong>：
           策略模式里各算法是平等、互斥的，由<strong>外部</strong>选择一个，彼此之间不会互相切换；
           状态模式里各状态有先后流转关系，是<strong>状态自己</strong>决定下一步切到哪个状态（如订单：待支付 → 已支付 → 已发货）。
           一句话：策略是「让你挑一个」，状态是「它自己会变」。
+        </p>
+      </Callout>
+
+      <h2>策略 vs 相近模式速辨</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>结构</th>
+            <th>关键区别</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>策略</td>
+            <td>接口 + 多实现 + Context 委托</td>
+            <td>算法互斥平等，外部选一个</td>
+          </tr>
+          <tr>
+            <td>状态</td>
+            <td>同上</td>
+            <td>状态间有流转，自己切换下一个</td>
+          </tr>
+          <tr>
+            <td>工厂方法</td>
+            <td>接口 + 多实现 + 工厂</td>
+            <td>解决「造哪个对象」，不是「执行哪个算法」</td>
+          </tr>
+          <tr>
+            <td>模板方法</td>
+            <td>抽象类 + 子类填步骤</td>
+            <td>用继承复用流程骨架，策略用组合换算法</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <Callout variant="warn" title="策略模式的两个常见坑">
+        <p>
+          其一，<strong>策略数量爆炸</strong>：如果只有两三个分支、且几乎不变，硬拆成策略类反而比 if-else 更难读，
+          这是过度设计。其二，<strong>策略的选择逻辑没真正消灭</strong>：很多人拆了策略类，
+          却还在 Context 里写 <code>if(type==a) new A() else new B()</code>，等于白拆——
+          真正的关键是用 Map 路由或交给容器收集，把「选哪个」也变成查表。
         </p>
       </Callout>
 
@@ -199,6 +268,8 @@ export default function Ch1() {
           '彻底去掉 if-else 的关键是用 Map<类型, 策略> 路由，或让 Spring 把策略注入成 List/Map 自动收集。',
           '典型应用：支付方式、促销规则、不同渠道，以及 JDK 的 Comparator 排序。',
           '与状态模式结构相同但意图不同：策略是外部挑一个且互斥，状态是自身按流转规则切换。',
+          'Spring 里把策略声明为 Bean、注入 List/Map 自动收集；策略接口只有一个方法时可用 Lambda 代替策略类。',
+          '两个坑：分支少且不变时硬拆是过度设计；拆了类却仍用 if-else 选 new 等于白拆，要用 Map/容器路由。',
           '扩展时只加新类、注册一次，主流程不改，天然符合开闭原则。',
         ]}
       />

@@ -55,6 +55,36 @@ class B {
     @Autowired private A a;
 }`
 
+const getSingletonCode = `// AbstractBeanFactory.doGetBean 取 Bean 的核心逻辑（简化）
+protected Object getSingleton(String beanName, boolean allowEarlyReference) {
+    // 1. 先查一级缓存：成品
+    Object singletonObject = this.singletonObjects.get(beanName);
+    if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
+        // 2. 一级没有、且该 Bean 正在创建中（说明撞上了循环依赖）
+        singletonObject = this.earlySingletonObjects.get(beanName);   // 查二级
+        if (singletonObject == null && allowEarlyReference) {
+            // 3. 二级也没有，从三级缓存拿工厂，调 getObject() 产出早期引用
+            ObjectFactory<?> factory = this.singletonFactories.get(beanName);
+            if (factory != null) {
+                singletonObject = factory.getObject();   // 这里可能产出 AOP 代理
+                this.earlySingletonObjects.put(beanName, singletonObject); // 升二级
+                this.singletonFactories.remove(beanName);                  // 删三级
+            }
+        }
+    }
+    return singletonObject;
+}`
+
+const setterFixCode = `// 推荐：用 setter 注入，或拆掉双向依赖
+@Component
+class A {
+    private B b;
+    @Autowired               // setter 注入：A 先实例化，再回填 b，可被缓存救活
+    public void setB(B b) { this.b = b; }
+}
+
+// 更好的做法是直接消除循环：引入第三个 Bean C 承接公共逻辑，
+// 让 A、B 都只依赖 C，单向依赖，根本不会循环。`
 export default function Ch1() {
   return (
     <>
@@ -88,6 +118,21 @@ export default function Ch1() {
         <li><strong>三级缓存 singletonFactories</strong>：放<em>对象工厂</em> <code>ObjectFactory</code>，调用它的 <code>getObject()</code> 才真正产出早期引用。</li>
       </ul>
       <CodeBlock lang="java" title="DefaultSingletonBeanRegistry 三级缓存" code={cacheCode} />
+
+      <h3>源码视角：getSingleton 怎么逐级查缓存</h3>
+      <p>
+        Spring 取一个单例时，走的是「<strong>一级 → 二级 → 三级</strong>」的逐级回查。
+        关键在判断条件 <code>isSingletonCurrentlyInCreation</code>——只有当某个 Bean
+        「正在创建中」时（即撞上了循环依赖），才会去翻二级、三级缓存；正常创建根本不碰早期缓存。
+        这保证了三级缓存只在真正需要时才介入，不给常规流程添负担：
+      </p>
+      <CodeBlock lang="java" title="getSingleton 逐级回查（简化）" code={getSingletonCode} />
+      <p>
+        注意第 3 步那行 <code>factory.getObject()</code>：这是整个机制的<strong>命门</strong>。
+        三级缓存放的不是对象而是工厂，工厂内部封装了 <code>getEarlyBeanReference()</code>，
+        它会问所有 <code>SmartInstantiationAwareBeanPostProcessor</code>：「这个 Bean 需要被 AOP 代理吗？」
+        需要就当场生成代理返回，并把结果升到二级缓存——这样无论之后是谁来引用，拿到的都是同一个代理对象。
+      </p>
 
       <Example title="A 依赖 B、B 依赖 A 的解决流程">
         <p>把上面那段 A、B 代码丢给 Spring，它的解决步骤是这样的：</p>
@@ -131,6 +176,27 @@ export default function Ch1() {
         <p>另外，Spring Boot 2.6 起默认禁止循环依赖，遇到会启动失败，需显式开启 <code>allow-circular-references</code>，但更推荐重构掉。</p>
       </Callout>
 
+      <Callout variant="info" title="二级缓存为什么不能省，三级为什么不能合并">
+        <p>
+          这是面试官逼问到底时的杀招，分两层理解：
+        </p>
+        <ul>
+          <li>
+            <strong>为什么不能只留一级 + 三级（去掉二级）？</strong>因为同一个早期 Bean 可能被多个其它 Bean 引用。
+            如果每次都从三级缓存的工厂现造，<code>getObject()</code> 可能<strong>每次都生成新代理</strong>，
+            导致不同引用者持有不同代理对象，破坏单例语义。二级缓存的作用就是「<strong>缓存工厂的产物</strong>」——
+            第一次造完就升到二级，后续引用直接复用，保证全程同一个对象。
+          </li>
+          <li>
+            <strong>为什么不能只留一级 + 二级（去掉三级）？</strong>那样就得在 Bean 实例化后<strong>立刻无条件生成代理</strong>
+            放进二级。但绝大多数 Bean 根本不需要代理、也不在循环依赖里，提前代理纯属浪费，还改变了「代理在初始化后生成」的语义。
+            三级缓存用「工厂 + 延迟」把「要不要代理」这个决定<strong>推迟到真有人来引用的那一刻</strong>，
+            没循环依赖就永远不会触发。
+          </li>
+        </ul>
+        <p>一句话：三级缓存负责「<strong>延迟决定是否代理</strong>」，二级缓存负责「<strong>缓存这个决定的结果保证唯一</strong>」。</p>
+      </Callout>
+
       <h2>实战 / 面试怎么答</h2>
       <p>
         被问到时，先一句话点题：「Spring 用三级缓存解决<strong>单例</strong>的<strong>字段/setter 注入</strong>循环依赖」。
@@ -150,7 +216,19 @@ export default function Ch1() {
           进阶：给 A 加一个 <code>@Transactional</code> 方法，在字段注入的循环依赖下，断点查看 B 持有的 <code>a</code>
           是不是代理对象（类名带 <code>$$EnhancerBySpringCGLIB</code> 或 <code>$Proxy</code>），体会三级缓存提前暴露代理的意义。
         </p>
+        <p>再练一手「正确姿势」：把构造器注入改成 setter 注入即可救活，或干脆抽出第三个 Bean 消除双向依赖：</p>
+        <CodeBlock lang="java" title="SetterFix.java（修复与消除）" code={setterFixCode} />
       </Practice>
+
+      <Callout variant="warn" title="工程上更该问的：要不要靠三级缓存兜底">
+        <p>
+          三级缓存能解循环依赖，但它解决的是「<strong>能不能跑起来</strong>」，没解决「<strong>设计是不是健康</strong>」。
+          一对互相依赖的 Bean 往往意味着职责划分模糊、模块边界混乱。真实项目里遇到循环依赖，
+          首选不是去开 <code>allow-circular-references</code>，而是：抽出公共依赖到第三个 Bean、
+          用事件（<code>ApplicationEvent</code>）解耦、或引入接口让依赖单向化。
+          把三级缓存当成「框架的安全网」去理解，而不是「日常该依赖的特性」，才是正确态度。
+        </p>
+      </Callout>
 
       <Summary
         points={[
@@ -160,6 +238,9 @@ export default function Ch1() {
           '必须三级而非两级，是为了把「是否生成 AOP 代理」延迟到被引用那一刻，保证早期引用与最终代理一致。',
           '解决不了的情况：构造器注入（实例化前就要依赖）、prototype 作用域（不进缓存）。',
           '面试落点：单例 + 字段/setter 注入才有效；循环依赖多是耦合信号，能重构尽量重构。',
+          'getSingleton 逐级回查一级→二级→三级，仅当 Bean「正在创建中」才触发，常规流程不碰早期缓存。',
+          '三级缓存负责延迟决定是否生成代理；二级缓存缓存该结果保证同一引用者拿到同一对象，二者缺一不可。',
+          '工程态度：三级缓存是框架安全网而非日常依赖，遇循环优先抽公共 Bean、用事件解耦或让依赖单向化。',
         ]}
       />
     </>

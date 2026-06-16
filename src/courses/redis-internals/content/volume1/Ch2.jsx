@@ -53,6 +53,42 @@ const encCmd = `# ZSet 小的时候是 listpack，大了切「跳表 + 字典」
 1) "zset-max-listpack-entries"
 2) "128"`
 
+const moreZsetCmd = `# ZSet 的范围与排名命令全家桶
+# 按排名取区间（0 到 -1 表示全部，从低到高）
+ZRANGE game:rank 0 -1 WITHSCORES
+
+# 按分数区间取，( 表示开区间，+inf/-inf 表示无穷
+ZRANGEBYSCORE game:rank 1000 (1800        # [1000, 1800)
+ZRANGEBYSCORE game:rank -inf +inf         # 全量
+
+# 分页：取分数 1000~2000 内的第 0~9 个（LIMIT offset count）
+ZRANGEBYSCORE game:rank 1000 2000 LIMIT 0 10
+
+# 统计某分数区间内有几个成员
+ZCOUNT game:rank 1500 2000
+
+# 字典序区间（同分场景，要求所有成员同分才有意义）
+ZRANGEBYLEX names [a [c
+
+# Redis 6.2+ 统一新命令：ZRANGE 支持 REV / BYSCORE / BYLEX
+ZRANGE game:rank 0 9 REV WITHSCORES       # 等价 ZREVRANGE`
+
+const skiplistStruct = `# 跳表节点的简化结构（zskiplistNode）
+struct zskiplistNode {
+    sds        ele;        // 成员名 member
+    double     score;      // 分值，用于排序
+    struct zskiplistNode *backward;   // 后退指针，支持反向遍历
+    struct zskiplistLevel {
+        struct zskiplistNode *forward; // 每一层的前进指针
+        unsigned long span;            // 跨度：到下个节点跨过几个节点(算排名用)
+    } level[];             // 柔性数组，层数随机决定
+}
+
+# 关键点：
+# 1. 排序键是 (score, ele)：score 相同则按成员字典序排，保证全序
+# 2. span 累加 = 排名，所以 ZRANK / ZREVRANK 也是 O(log N)
+# 3. 层高随机生成，期望 1/4 概率升一层(Redis 默认 p=0.25)，最高 32 层`
+
 export default function Ch2() {
   return (
     <>
@@ -76,6 +112,7 @@ export default function Ch2() {
       <p>
         两个结构的成员对象是<strong>共享</strong>的（指针指向同一份），所以不会双倍存数据。一句话：
         字典负责「按名字找分数」，跳表负责「按分数找排序」，配合起来 ZSet 才能既快查分又快排序。
+        没有字典，<code>ZSCORE</code> 就得在跳表里 O(N) 找成员；没有跳表，<code>ZRANGE</code> 就得给字典全量排序——缺一不可。
       </p>
 
       <h3>跳表是什么：给链表加「快速通道」</h3>
@@ -92,6 +129,19 @@ export default function Ch2() {
 
       <SkipList />
 
+      <h3>层高怎么定？为什么是随机的</h3>
+      <p>
+        跳表不靠旋转、变色这类复杂操作维持平衡，而是靠<strong>随机层高</strong>。每插入一个新节点，就抛硬币决定它的层数：
+        Redis 用概率 <code>p = 0.25</code>，即一个节点有 1/4 概率多升一层，期望层高约 1.33，最高 32 层（足以支撑约 2³² 个元素）。
+        随机化让整张表在统计意义上保持「上稀下密」的平衡，避免了树结构那套旋转逻辑。下面是跳表节点的真实结构，
+        注意 <code>span</code> 字段——它是查排名（<code>ZRANK</code>）能做到 O(log N) 的关键：
+      </p>
+      <CodeBlock lang="text" title="zskiplistNode 结构与排序键" code={skiplistStruct} />
+      <p>
+        一个易被忽略的点：跳表的排序键是 <strong>(score, member)</strong> 二元组。分数相同时按成员名的<strong>字典序</strong>排，
+        这样保证全序、排名唯一，也让 <code>ZRANGEBYLEX</code>（同分时按字典序取区间）有了意义。
+      </p>
+
       <Example title="游戏排行榜 Top10 怎么落地">
         <p>
           一个有上万玩家的游戏排行榜，用 ZSet 只需要几条命令就搞定，而且全是 O(log N) 级别：
@@ -106,6 +156,15 @@ export default function Ch2() {
           ZSet 因为数据天然按分数有序，取 Top10 几乎零成本。
         </p>
       </Example>
+
+      <Callout variant="info" title="实战进阶：同分如何按时间排序">
+        <p>
+          排行榜常有个需求：分数相同时，<strong>先达到的人排前面</strong>。但 ZSet 同分是按成员字典序排的，不满足这个需求。
+          经典技巧是把<strong>时间编码进 score</strong>：用一个 double，整数部分放分数、小数部分放
+          「（最大时间戳 - 当前时间戳）/ 一个大常数」，让早到的时间换算出更大的 score。或者更稳妥地用
+          <code>score * 10^13 + (maxTs - ts)</code> 这种「高位放分、低位放时间」的复合分值。这是排行榜面试的高频追问。
+        </p>
+      </Callout>
 
       <h2>为什么用跳表，不用红黑树？</h2>
       <p>
@@ -122,6 +181,9 @@ export default function Ch2() {
         </li>
         <li>
           <strong>更易做并发/演进</strong>：跳表的局部修改特性，让它在需要并发或迭代时比树结构更容易处理。
+        </li>
+        <li>
+          <strong>内存可调</strong>：通过调小概率 p 可以减少层数、省内存；树结构的内存开销是固定的。
         </li>
       </ul>
 
@@ -147,6 +209,9 @@ export default function Ch2() {
           <li>
             轮询有延迟和空转开销，对实时性极高或量极大的场景，更适合用专门的消息队列（如 Kafka、RabbitMQ 延迟插件）。
           </li>
+          <li>
+            单个 ZSet 太大时操作会变慢，可按「到期时间分桶」拆成多个 ZSet（如每分钟一个 key），分摊压力。
+          </li>
         </ul>
       </Callout>
 
@@ -156,12 +221,21 @@ export default function Ch2() {
         跳表保证 O(log N) 排序和范围查询；二是<strong>排行榜的核心操作（加分、取 Top N、查名次）正好都被跳表覆盖</strong>，
         而数据库要全表排序扛不住高并发；三是<strong>跳表相比红黑树更适合范围查询、实现也更简单</strong>。
       </p>
+      <p>
+        常见追问：「跳表怎么查排名？」——靠每层指针上的 <code>span</code>（跨度），查找路径上把 span 累加起来就是排名。
+        「层高怎么定？」——随机，Redis 用 p=0.25、最高 32 层。「同分怎么排？」——按成员字典序，要按时间排需把时间编码进 score。
+        「为什么不用 B+ 树？」——B+ 树为磁盘 IO 优化（减少树高），而 ZSet 全在内存，跳表实现更简单、范围扫描同样高效。
+      </p>
 
       <Practice title="动手做一个排行榜 + 延时队列">
         <p>
           先用几条命令把游戏排行榜跑起来，体会 <code>ZINCRBY</code> / <code>ZREVRANGE</code> / <code>ZREVRANK</code> 的配合：
         </p>
         <CodeBlock lang="bash" title="排行榜" code={rankCmd} />
+        <p>
+          再把范围、排名、分页命令都摸一遍，这是 ZSet 真正的威力所在：
+        </p>
+        <CodeBlock lang="bash" title="范围与排名命令全家桶" code={moreZsetCmd} />
         <p>
           再用同一个 ZSet 实现延时队列，把到期时间戳当分数：
         </p>
@@ -176,10 +250,11 @@ export default function Ch2() {
         points={[
           'ZSet 底层是「跳表 skiplist + 字典 dict」的组合：字典管 O(1) 按成员查分，跳表管 O(log N) 排序与范围查询。',
           '跳表是给有序链表加多层稀疏索引，查找时从高层「能跳就跳」逐层下降，复杂度 O(log N)。',
+          '层高随机生成(Redis 用 p=0.25、最高32层)，靠随机化保持平衡，无需旋转变色；span 跨度让查排名也是 O(log N)。',
+          '排序键是 (score, member)：同分按成员字典序，要按时间排需把时间编码进 score。',
           '范围查询是跳表强项：定位起点后沿最底层链表顺扫，这是 ZRANGE/ZRANGEBYSCORE 高效的根本。',
-          '选跳表不选红黑树：范围查询更友好、实现更简单、更易做并发与演进。',
-          '排行榜用 ZADD/ZINCRBY 加分、ZREVRANGE 取 TopN、ZREVRANK 查名次，全是 O(log N)。',
-          '延时队列把到期时间戳当 score，ZRANGEBYSCORE 捞到期任务，取出与删除要用 Lua 保证原子。',
+          '选跳表不选红黑树/B+树：范围查询更友好、实现更简单、内存可调、更易并发与演进。',
+          '排行榜用 ZADD/ZINCRBY 加分、ZREVRANGE 取 TopN、ZREVRANK 查名次；延时队列把到期时间戳当 score，取删用 Lua 保证原子。',
         ]}
       />
     </>
