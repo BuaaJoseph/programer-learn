@@ -242,6 +242,26 @@ export default function Ch2() {
         如果面试官追问初始化方法的执行顺序，记住：
         <code>@PostConstruct</code> 早于 <code>InitializingBean</code> 早于 <code>init-method</code>。
       </p>
+      <Callout variant="warn" title="三种初始化方式怎么选 & 常见误区">
+        <ul>
+          <li>
+            <strong>选型</strong>：<code>@PostConstruct</code> 注解最简洁、最常用，但它属于 JSR-250，
+            JDK 9+ 模块化后从核心库移除，需额外引依赖；<code>InitializingBean</code> 会让你的类<strong>耦合 Spring 接口</strong>，
+            写框架可用、写业务不推荐；<code>{'@Bean(initMethod=...)'}</code> 最干净，能给<strong>第三方类</strong>指定初始化方法而不改其源码。
+          </li>
+          <li>
+            <strong>误区一</strong>：以为构造器里能拿到 <code>@Autowired</code> 的依赖——不能，构造在属性填充之前。
+          </li>
+          <li>
+            <strong>误区二</strong>：以为加了 <code>@PostConstruct</code> 还能保证拿到「别的 Bean 完全初始化好」的状态——
+            不一定，跨 Bean 的初始化顺序由依赖关系决定，强依赖请用 <code>@DependsOn</code> 显式声明。
+          </li>
+          <li>
+            <strong>误区三</strong>：把耗时长、易失败的逻辑（连数据库、拉远程配置）放进初始化又不做超时和降级，
+            一旦卡住整个容器启动就被它拖死。
+          </li>
+        </ul>
+      </Callout>
 
       <Practice title="实现 InitializingBean 与 BeanPostProcessor 观察顺序">
         <p>
@@ -269,6 +289,9 @@ export default function Ch2() {
           'AOP 代理在 BeanPostProcessor 的后置处理（postProcessAfterInitialization）里织入，容器最终存的是代理对象。',
           'BeanPostProcessor 是 Spring 的扩展核心，AOP、@Autowired、@Async 等都靠它在 Bean 初始化前后插手。',
           '单例 Bean 默认在容器启动时就预先创建（可用 @Lazy 延迟），prototype Bean 每次获取才新建且不被容器销毁。',
+          'Aware 回调（BeanNameAware/ApplicationContextAware 等）在属性填充后、初始化前把容器资源喂给 Bean，仅基础设施类用。',
+          'BeanFactoryPostProcessor 改 BeanDefinition（图纸）且早于实例化；BeanPostProcessor 改实例，二者别混。',
+          '销毁回调（@PreDestroy → DisposableBean → destroyMethod）只对 singleton 生效，prototype 与 kill -9 都不触发。',
         ]}
       />
     </>

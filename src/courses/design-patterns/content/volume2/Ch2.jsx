@@ -185,7 +185,25 @@ export default function Ch2() {
           <strong>InputStreamReader</strong>——它把面向<strong>字节</strong>的 <code>InputStream</code>
           适配成面向<strong>字符</strong>的 <code>Reader</code>，中间顺带做编码转换，是 JDK 里的标准适配器。
         </li>
+        <li>
+          <strong>Spring MVC 的 HandlerAdapter</strong>——Controller 写法五花八门（注解式、实现接口式），
+          DispatcherServlet 用 HandlerAdapter 把它们统一适配成同一种调用方式。
+        </li>
       </ul>
+
+      <h3>对象适配器 vs 类适配器</h3>
+      <p>
+        适配器有两种实现方式。<strong>对象适配器</strong>用「组合」持有被适配者，是首选——
+        它不受单继承限制，能适配被适配者的子类，耦合也更低：
+      </p>
+      <CodeBlock lang="java" title="对象适配器（组合，推荐）" code={objectAdapterCode} />
+      <p>
+        <strong>类适配器</strong>用「继承」实现，受 Java 单继承限制、和被适配者强耦合，一般不推荐：
+      </p>
+      <CodeBlock lang="java" title="类适配器（继承，少用）" code={classAdapterCode} />
+      <p>
+        这其实又是「合成复用原则」的一次体现：能用组合就别用继承。所以工程里绝大多数适配器都是对象适配器。
+      </p>
 
       <h2>外观模式：给复杂子系统一个统一入口</h2>
       <p>
@@ -197,6 +215,52 @@ export default function Ch2() {
         <code>HandlerMapping</code>、<code>HandlerAdapter</code>、<code>ViewResolver</code> 等一堆组件，
         但对你来说，复杂流程都被这一个「前端控制器」挡在了后面。你只管写 Controller，剩下的调度它全包了。
       </p>
+      <p>
+        下面用一个「下单」场景把外观落到代码上——库存、支付、物流三个子系统的协作，全藏到一个 <code>OrderFacade</code> 后面：
+      </p>
+      <CodeBlock lang="java" title="OrderFacade.java" code={facadeCode} />
+      <p>
+        要点是：外观<strong>不阻止</strong>客户端在需要时直接访问子系统（它只是提供便利入口，不像代理那样控制访问），
+        也不应该往里塞业务逻辑——它只负责「编排调用顺序、屏蔽复杂度」。
+        典型应用还有：SLF4J 作为日志门面、各种 SDK 的 Client 类、微服务里的 BFF（聚合层）。
+        外观是<strong>迪米特法则</strong>的直接产物：客户端只和门面这一个「直接朋友」打交道。
+      </p>
+
+      <h2>三者对比表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>意图</th>
+            <th>接口是否变</th>
+            <th>关注点</th>
+            <th>代表例子</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>装饰器</td>
+            <td>动态增强功能</td>
+            <td>不变</td>
+            <td>能力叠加</td>
+            <td>Java IO 流</td>
+          </tr>
+          <tr>
+            <td>适配器</td>
+            <td>转换不兼容接口</td>
+            <td>变（A→B）</td>
+            <td>兼容协作</td>
+            <td>InputStreamReader</td>
+          </tr>
+          <tr>
+            <td>外观</td>
+            <td>简化子系统入口</td>
+            <td>收敛（多→一）</td>
+            <td>降低耦合</td>
+            <td>DispatcherServlet</td>
+          </tr>
+        </tbody>
+      </table>
 
       <KeyIdea title="三者意图区别（一句话记牢）">
         <p>

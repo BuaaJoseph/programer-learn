@@ -63,6 +63,38 @@ public class TimingAspect {
     }
 }`
 
+const pointcutCode = `@Aspect
+@Component
+public class AnnotationAspect {
+
+    // 1. 自定义注解切点：拦所有打了 @Loggable 的方法
+    @Pointcut("@annotation(com.demo.anno.Loggable)")
+    public void loggable() {}
+
+    // 2. execution 表达式拆解：
+    //    修饰符  返回值     包.类.方法(参数)
+    //    public  *          com.demo.service.*.*(..)
+    @Pointcut("execution(public * com.demo.service.*.*(..))")
+    public void servicePublic() {}
+
+    // 3. 组合：两个切点取交集 / 并集
+    @Before("loggable() && servicePublic()")
+    public void before(JoinPoint jp) {
+        System.out.println("命中：" + jp.getSignature().getName());
+    }
+}`
+
+const orderCode = `// 多个切面作用于同一方法时，用 @Order 控制顺序
+@Aspect @Component @Order(1)   // 数字越小越靠外层
+public class TxAspect { /* 事务 */ }
+
+@Aspect @Component @Order(2)
+public class LogAspect { /* 日志 */ }
+
+// 执行像洋葱：
+// Tx.before -> Log.before -> 目标方法 -> Log.after -> Tx.after
+// 外层最先进入、最后退出（环绕的嵌套顺序）`
+
 export default function Ch3() {
   return (
     <>
