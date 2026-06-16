@@ -41,6 +41,18 @@ npm run build     # 构建通过：bin 能正常打包
 npm version patch
 npm publish`
 
+const loopRecap = `// 整个 forge，剥到最里层，就是这么一个循环：
+while (true) {
+  const reply = await model.send(messages)   // 1. 把历史发给模型
+  if (reply.toolCalls.length === 0) break     // 2. 没要调工具 = 收敛，结束
+  for (const call of reply.toolCalls) {        // 3. 模型要调工具
+    await confirmIfDangerous(call)             //    危险动作先问人（卷3）
+    const result = await runTool(call)         //    执行工具（卷1）
+    messages.push(toolResult(call, result))    //    结果喂回历史
+  }
+  // 回到循环顶，带着新结果再问模型一次
+}`
+
 export default function Ch4() {
   return (
     <article>
@@ -78,6 +90,26 @@ export default function Ch4() {
         每一个加号，都是你亲手写过的一卷。
       </p>
 
+      <h2>把心脏再看一眼：那个循环</h2>
+      <p>
+        九卷读下来，细节多得吓人。但如果只让你带走一段代码，就是下面这个循环——它是 forge 的心脏，
+        也是市面上所有编码 Agent 的心脏。所有的工具、权限、上下文压缩、子代理，都是挂在这个循环上的零件：
+      </p>
+
+      <CodeBlock lang="ts" title="Agent 的本质（伪代码）" code={loopRecap} />
+
+      <p>
+        盯着它看十秒钟，你会发现一件让人踏实的事：<strong>这里没有魔法。</strong>
+        「智能」全在 <code>model.send</code> 那一行里，是模型贡献的；你写的这一圈——发历史、收工具调用、
+        执行、把结果喂回去、再问一次——纯粹是「脚手架」，是普通到不能再普通的工程代码。
+        你这九卷干的事，本质就是把这个循环越做越结实、越做越安全、越做越好用。
+      </p>
+
+      <KeyIdea>
+        Agent = 模型 + 脚手架。模型负责思考与决策（你没写它），脚手架负责让它能感知和行动（你全写了）。
+        看穿这一层，市面上任何「神秘」的 Agent 你都能拆开看懂——因为你亲手搭过那圈脚手架。
+      </KeyIdea>
+
       <h2>毕业项目：用 forge 给 forge 加一个新工具</h2>
 
       <p>
@@ -85,6 +117,13 @@ export default function Ch4() {
         一晚上能做完的题目：<strong>新增一个只读工具 <code>tree</code></strong> —— 递归打印目录树。
         题目刻意选「只读」，因为它安全、好验收，又足够碰到工具系统的每一层。
       </p>
+
+      <Callout variant="note">
+        为什么偏偏选「自举」（用 forge 改 forge）作为毕业项目，而不是随便找个别的项目练手？
+        因为自举是一道<strong>同时考所有能力的综合题</strong>：它要 forge 读懂自己的代码（卷1的工具）、
+        按你的计划推进（卷5的计划模式）、改完自己验证（卷7的测试）、改的还是它自己赖以运行的内核——
+        任何一环不靠谱，这道题都过不了。能可靠自举，等于给前八卷一次性签收。
+      </Callout>
 
       <Example title="毕业任务书">
         <p><strong>目标</strong>：给 forge 增加一个内置工具 <code>tree</code>，递归打印目录结构，自动跳过 <code>node_modules</code> 与 <code>.git</code>。</p>
@@ -118,6 +157,13 @@ export default function Ch4() {
         <strong>跑测试验证</strong>（卷 1 的 bash 工具、卷 7 的测试）让它在交活之前自己先检查一遍。
       </p>
 
+      <Callout variant="tip">
+        这里藏着一条今后让 Agent 干活都通用的方法论：<strong>先读后写、先计划后执行、改完自验</strong>。
+        别一上来就让它「直接给我加个 tree 工具」——那样它容易凭空臆造一套和你项目不一致的写法。
+        正确姿势是先让它 <code>read</code> 现有的同类文件（这里是 <code>list.ts</code>）摸清你的约定，
+        再 <code>/plan</code> 出方案让你过目，最后才动手并跑测试。这套节奏，比模型本身聪不聪明更决定成败。
+      </Callout>
+
       <KeyIdea>
         当 forge 能可靠地参与改进它自己 —— 读懂自己的代码、按你的计划动手、改完自己验证 ——
         它就从一个「跑得起来的玩具」，变成了一件「敢交给它干活的工具」。
@@ -139,6 +185,15 @@ export default function Ch4() {
         下一次你用的，就是它刚帮你升级过的自己。这就是自举。
       </p>
 
+      <Callout variant="warn">
+        自举很爽，但别把「人在回路」也一起省掉。Agent 改自己的内核时风险最高——
+        改坏了主循环，下一次它可能连启动都启动不了。所以这一章特意保留了三道闸门：
+        <strong>计划模式</strong>先让你看方案、<strong>每次写盘都确认</strong>、最后<strong>你亲手跑 test/build</strong>再发布。
+        越是让 Agent 干要紧的活，这几道人类把关越不能松——「敢交给它」的前提，永远是「我能随时叫停并复核」。
+      </Callout>
+
+      <h2>毕业之后，往哪走</h2>
+
       <Callout variant="tip">
         毕业不是终点，是你可以自由发挥的起点。几个值得继续往下走的方向：
         <ul>
@@ -147,7 +202,10 @@ export default function Ch4() {
           <li><strong>更多内置工具</strong>：grep、apply-patch、运行单个测试文件……工具越好用，Agent 越能干。</li>
           <li><strong>复用同一个内核做 Web / IDE 前端</strong>：CLI 只是一层皮，主循环可以接任何界面。</li>
           <li><strong>接更多 Provider 与 MCP server</strong>：换模型、连数据库、调外部 API，能力随插随用。</li>
+          <li><strong>子代理并行</strong>：把一个大任务拆给多个子 Agent 同时跑，主 Agent 汇总——卷5那套再往前一步。</li>
+          <li><strong>评测与回归</strong>：攒一批「典型任务」当基准，每次改完跑一遍，量化 forge 到底变强还是变弱了。</li>
         </ul>
+        挑一个你最想要的，让 forge 自己帮你把它实现出来——你已经有了能这么干的工具。
       </Callout>
 
       <Callout variant="note">
@@ -155,6 +213,8 @@ export default function Ch4() {
         市面上那些编码 Agent —— Claude Code 也好、别的也好 —— 拆开看，本质都是这一套
         <strong>「模型 + 脚手架」</strong>：一个会调用工具的模型，外加一圈循环、工具、权限和上下文管理。
         模型不是你写的，但那圈脚手架，你已经从头到尾亲手搭过一遍了。
+        往后再看到任何「黑科技 Agent」，你都能下意识地问出对的问题：它的主循环长什么样？
+        工具契约怎么定的？权限在哪一层卡？上下文怎么管？——会问这些问题，你就已经在圈内了。
       </Callout>
 
       <p>
@@ -167,11 +227,13 @@ export default function Ch4() {
 
       <Summary points={[
         'Agent 的本质是「模型 + 脚手架」：模型负责思考与决策，脚手架负责让它能感知和行动。',
-        '主循环是整个 Agent 的心脏：发消息 → 收工具调用 → 执行工具 → 把结果喂回去，循环到收敛。',
+        '主循环是整个 Agent 的心脏：发消息 → 收工具调用 → 执行工具 → 把结果喂回去，循环到收敛——这里没有魔法。',
         '工具契约（name / description / 参数 schema / execute）是模型与你的代码之间清晰的接口。',
-        '安全闸门（权限分级、危险确认、审计）是让 Agent 敢进真实项目的前提。',
+        '安全闸门（权限分级、危险确认、审计）是让 Agent 敢进真实项目的前提；越要紧的活，人类把关越不能松。',
         '上下文工程（system prompt、AGENTS.md、token 预算、自动压缩）决定了它聪明还是健忘。',
         '可扩展（配置、Provider、MCP）与可交付（打包、发布、测试），让它从脚本长成产品 —— 最终能自举改进自己。',
+        '让 Agent 干活的通用方法论：先读后写、先计划后执行、改完自验；自举是检验全部能力的综合题。',
+        '毕业是起点：更聪明的压缩、实时进度、更多工具、多前端复用内核、子代理并行、评测回归——挑一个让 forge 自己帮你做。',
       ]} />
     </article>
   )
