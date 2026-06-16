@@ -51,6 +51,7 @@ export function loadConfig(cwd: string): ForgeConfig {
 
 const exampleJson = `{
   "provider": "claude",
+  "apiKey": "sk-ant-xxxxxxxx",
   "model": "claude-opus-4-8",
   "maxTokens": 8192,
   "contextWindow": 200000,
@@ -60,6 +61,12 @@ const exampleJson = `{
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]
     }
   }
+}`
+
+const bailianJson = `{
+  "provider": "bailian",
+  "apiKey": "sk-百炼的-API-KEY",
+  "model": "qwen-max"
 }`
 
 const indexTs = `const config = loadConfig(process.cwd())
@@ -140,6 +147,10 @@ export default function Ch1() {
         <p>
           这份配置指定了 claude 供应商和具体模型，把单轮输出限制在 8192 token，声明 200000 的上下文窗口，并接入了一个名为 <code>filesystem</code> 的 MCP server——它会通过 <code>npx</code> 拉起文件系统 server。MCP 的接入细节我们留到本卷后面讲。
         </p>
+        <p>
+          换一个完全不同的平台也只是改几行配置。比如用<strong>阿里云百炼（Qwen 系列）</strong>：把 <code>provider</code> 设为 <code>bailian</code>、填上百炼的 key、选一个 Qwen 模型即可——它走的是百炼的 OpenAI 兼容接口（这个 Provider 的实现是下一章的内容）：
+        </p>
+        <CodeBlock lang="json" title="~/.forge/config.json（用百炼）" code={bailianJson} />
       </Example>
 
       <h2>四、把配置接进入口</h2>
