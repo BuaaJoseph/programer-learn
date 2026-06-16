@@ -5,13 +5,10 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 
-const SET_KEY = `export DASHSCOPE_API_KEY=sk-xxxxxxxx`
-
-const BARE_CALL = `import os
+const bareCode = `import os
 
 from openai import OpenAI
 
-# 百炼 OpenAI 兼容端点（北京区）。国际区把 dashscope 换成 dashscope-intl。
 BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 client = OpenAI(api_key=os.environ["DASHSCOPE_API_KEY"], base_url=BASE_URL)
@@ -32,181 +29,125 @@ def main() -> None:
 if __name__ == "__main__":
     main()`
 
-const RUN_IT = `pip install openai
-python bare_openai_compatible.py`
+const exportKeyCode = `# 从百炼控制台拿到 API Key 后，导出环境变量（不要写进代码！）
+export DASHSCOPE_API_KEY="sk-你的真实key"
+
+# 验证（Linux / macOS）
+echo $DASHSCOPE_API_KEY`
 
 export default function Ch3() {
   return (
     <article>
-      <h1>统一前提：用百炼(Qwen)作模型后端</h1>
-
       <Lead>
-        这门课要讲七个框架，如果每个框架都换一个模型、换一套 key、换一个调用方式，那对比起来就乱成一锅粥了。
-        所以我们先定一个规矩：全课统一用阿里云百炼（DashScope）上的 Qwen 作为模型后端。本章不讲任何框架，
-        只把这个「底座」夯实——拿 key、记端点、选模型，再写一段完全不借助框架的「裸兼容调用」。
-        把这一段吃透，后面每个框架你都会发现，它们无非是在这段调用外面套了层脚手架。
+        要公平地横向对比七个框架，必须先钉死一个变量：<strong>底层模型</strong>。本课全程用阿里云百炼（Qwen）作模型后端，
+        靠的是它兼容 OpenAI 的接口。这一章把这个统一前提讲透——为什么选百炼、什么是"OpenAI 兼容端点"、怎么准备、
+        以及所有框架最终都会落到同一行 <code>chat.completions</code> 调用上。
       </Lead>
 
-      <h2>为什么统一用百炼 / Qwen</h2>
-
-      <KeyIdea>
-        几乎所有主流 Agent 框架都支持自定义 <code>base_url</code>，把模型调用指向任意一个「OpenAI 兼容端点」。
-        既然如此，与其各选各的模型，不如挑一个国产、可直接注册就用的后端——这样七个框架站在同一条起跑线上，
-        对比才公平，也更贴近国内团队真实的落地环境。百炼（DashScope）正好提供了 OpenAI 兼容端点，
-        而 Qwen 是它上面的主力模型，能力与生态都成熟，是这个统一底座的理想人选。
+      <h2>一、为什么统一用百炼 / Qwen</h2>
+      <p>把后端固定下来，对比才有意义。选阿里云百炼（Qwen）有三个实在理由：</p>
+      <ul>
+        <li><strong>OpenAI 兼容</strong>：百炼提供 OpenAI 兼容端点，绝大多数框架都能用"换 base_url + 换 model 名"的方式直接接入，改动极小。</li>
+        <li><strong>国产可直接用</strong>：国内网络直连、注册即用、计费透明，不需要折腾代理就能跑通本课所有示例。</li>
+        <li><strong>公平对比</strong>：所有框架共用同一个模型、同一个端点，框架之间的差异才能真正归因到"框架本身"，而不是模型强弱。</li>
+      </ul>
+      <KeyIdea title="控制变量">
+        本课比的是"框架的工程能力与风格"，不是"模型谁更聪明"。所以模型这一项必须锁死——这就是统一用百炼的全部出发点。
       </KeyIdea>
 
+      <h2>二、什么是"OpenAI 兼容端点"</h2>
       <p>
-        说白了，本课关心的是「各个框架的范式与写法」，而不是「哪个模型更聪明」。固定后端，就把模型这个变量摁住了，
-        你看到的每一处差异都来自框架本身，而不是模型不同带来的噪声。
+        OpenAI 的 <strong>Chat Completions</strong> 接口（<code>/v1/chat/completions</code>，请求体里有 messages、model、tools 等字段）
+        已经成为业界<strong>事实标准</strong>。于是各家模型服务（包括百炼）都额外提供一套"长得和 OpenAI 一模一样"的端点。
+      </p>
+      <p>
+        这就是为什么这么多框架都允许你设置<strong>自定义 <code>base_url</code></strong>：只要把请求地址从 OpenAI 换成百炼的兼容地址、
+        把 model 名换成 <code>qwen-plus</code>，同一套客户端代码就能无缝改用 Qwen。框架们也正是借这一点，才能"一份代码、任意后端"。
       </p>
 
-      <h2>准备工作：拿 key、设环境变量、记住端点</h2>
-
-      <p>
-        第一步，去阿里云百炼控制台注册并开通服务，创建一个 API Key（形如 <code>sk-</code> 开头的字符串）。
-        拿到之后，最稳妥的用法是把它放进环境变量，让代码从环境里读，而不是硬编码：
-      </p>
-
-      <CodeBlock lang="bash" code={SET_KEY} />
-
-      <p>
-        第二步，记住端点和模型名。百炼的 OpenAI 兼容端点（北京区）是
-        <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code>；如果你在海外、需要走国际区，
-        把其中的 <code>dashscope</code> 换成 <code>dashscope-intl</code> 即可。常用模型名有三个梯度：
-        <code>qwen-plus</code>（均衡，日常首选）、<code>qwen-max</code>（最强，复杂推理）、
-        <code>qwen-turbo</code>（最快最省，简单任务）。本课大多数示例默认用 <code>qwen-plus</code>。
-      </p>
-
-      <Callout variant="warn" title="key 是钱，别泄露">
-        <p>
-          API Key 直接关联你的账单。<strong>绝不要</strong>把 key 写进源码、也<strong>绝不要</strong>提交进 git。
-          一律走环境变量（或 <code>.env</code> 文件，并把它加进 <code>.gitignore</code>）。一旦怀疑泄露，
-          立刻去控制台吊销重建。
-        </p>
+      <h2>三、准备工作</h2>
+      <ul>
+        <li><strong>拿 Key</strong>：登录阿里云百炼控制台，开通服务并创建 API Key。</li>
+        <li><strong>设置环境变量</strong>：把 Key 导出为 <code>DASHSCOPE_API_KEY</code>，代码里只读环境变量，绝不硬编码。</li>
+        <li><strong>端点 / 区域</strong>：OpenAI 兼容地址为 <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code>（注意结尾带 <code>/v1</code>）。</li>
+        <li>
+          <strong>常用模型名</strong>：<code>qwen-plus</code>（均衡，推荐默认）、<code>qwen-max</code>（最强、最贵）、
+          <code>qwen-turbo</code>（最快、最省）。
+        </li>
+      </ul>
+      <CodeBlock lang="bash" title="导出 API Key" code={exportKeyCode} />
+      <Callout variant="warn" title="千万别提交 Key">
+        <strong>永远不要</strong>把 API Key 写进源码或提交到 Git。用环境变量读取（<code>os.environ["DASHSCOPE_API_KEY"]</code>），
+        并把 <code>.env</code> 加进 <code>.gitignore</code>。一旦泄露，立刻去控制台吊销并重建。
       </Callout>
 
-      <h2>裸兼容调用打底</h2>
-
+      <h2>四、裸调用打底：一段最小完整代码</h2>
       <p>
-        现在写一段「不带任何框架」的最小调用，把整条链路跑通。它用的是官方 <code>openai</code> SDK，
-        但通过 <code>base_url</code> 把请求指向百炼的兼容端点——这就是所有框架接百炼的本质做法：
+        在碰任何框架之前，先把"不依赖框架、纯 SDK 直连百炼"的调用跑通。这段代码是本课所有示例的地基：
       </p>
-
       <CodeBlock
         lang="python"
         title="examples/agent-frameworks/00-intro/bare_openai_compatible.py"
-        code={BARE_CALL}
+        code={bareCode}
       />
 
-      <p>逐行看清楚它在干什么：</p>
+      <h2>五、逐行讲解</h2>
       <ul>
+        <li><code>BASE_URL</code>：百炼的 OpenAI 兼容端点，结尾的 <code>/v1</code> 不能少——它就是"换后端"的开关。</li>
+        <li><code>client = OpenAI(api_key=..., base_url=BASE_URL)</code>：用官方 openai SDK，但把请求指向百炼；api_key 从环境变量读取。</li>
+        <li><code>model="qwen-plus"</code>：指定 Qwen 模型；想更强换 <code>qwen-max</code>，想更快换 <code>qwen-turbo</code>。</li>
         <li>
-          <code>from openai import OpenAI</code>：用的是 OpenAI 官方 SDK，
-          百炼提供的是「兼容接口」，所以客户端代码与连真正的 OpenAI 完全一样，只是端点不同。
+          <code>messages=[...]</code>：标准的角色化对话——<code>system</code> 设定人设与约束，<code>user</code> 是用户输入；这正是 Chat Completions 的核心结构。
         </li>
-        <li>
-          <code>BASE_URL = "...compatible-mode/v1"</code>：把请求指向百炼兼容端点。
-          这一行就是整段代码的「灵魂」——换掉它，就换了后端。
-        </li>
-        <li>
-          <code>OpenAI(api_key=..., base_url=BASE_URL)</code>：key 从环境变量读出，端点显式指定。
-        </li>
-        <li>
-          <code>client.chat.completions.create(model="qwen-plus", messages=[...])</code>：
-          标准的 chat completions 调用，<code>messages</code> 是 system / user 两条消息。
-        </li>
-        <li>
-          <code>resp.choices[0].message.content</code>：模型的回答就在这里取。
-        </li>
-        <li>
-          <code>resp.usage.prompt_tokens</code> 与 <code>resp.usage.completion_tokens</code>：
-          本次调用的输入 / 输出 token 用量。<strong>各框架的成本统计，归根结底都来自这个 usage 字段</strong>。
-        </li>
+        <li><code>resp.choices[0].message.content</code>：取出模型回复文本。<code>choices</code> 是个列表（可要求多条候选），通常取第 0 条。</li>
+        <li><code>resp.usage.prompt_tokens / completion_tokens</code>：本次调用的输入 / 输出 token 数，用来估算成本与监控用量。</li>
       </ul>
 
-      <p>跑起来也只有两步：</p>
-
-      <CodeBlock lang="bash" code={RUN_IT} />
-
-      <h2>这段「裸调用」与框架的关系</h2>
-
-      <KeyIdea>
-        无论后面哪个框架，最终落到模型上的，都是这种 <code>chat.completions</code> 调用。
-        框架做的事情，是在这一行调用<strong>外面</strong>包一层：工具循环（让模型反复「思考-调用工具-再思考」）、
-        多 Agent 协作、状态与记忆、RAG 检索……理解了这个底座，你再看任何框架，问题都会变成同一个——
-        「它在这层调用外面，到底加了什么？」答案清楚了，框架也就不神秘了。
-      </KeyIdea>
-
-      <h2>各框架怎么接同一个百炼</h2>
-
+      <h2>六、这段代码与框架的关系</h2>
       <p>
-        下面把七个框架接百炼的关键写法先列出来，让你心里有个数。现在不必看懂细节，
-        每条都会在对应的卷里展开——你只需要确认一件事：它们接的都是同一个端点、同一个 Qwen。
+        无论后面用 smolagents、LangGraph 还是 Spring AI，<strong>它们最终都会落到这种 <code>chat.completions</code> 调用上</strong>。
+        框架做的是在它外面包一圈：自动拼 messages、生成 tools 的 Schema、解析 tool_calls、跑循环、管理状态。
+        但最底下那一次"发 messages、收 message"的请求，本质和这段裸代码一模一样。
       </p>
+      <Callout variant="tip" title="先懂底座，再看抽象">
+        把这段裸调用吃透，后面读任何框架的 tracing / 日志时，你都能一眼认出"哦，它这一步其实就是在调 chat.completions"。
+        这会让框架的黑盒瞬间变透明。
+      </Callout>
 
-      <Example title="七种接法，一个后端">
+      <h2>七、七框架接百炼的写法预告</h2>
+      <p>下面是每个框架接百炼后端的关键写法与关键类，细节在各自章节展开，这里先建立全局印象：</p>
+      <table>
+        <thead>
+          <tr><th>框架</th><th>关键写法</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>smolagents</td><td><code>OpenAIServerModel(model_id="qwen-plus", api_base=BASE_URL, api_key=...)</code></td></tr>
+          <tr><td>OpenAI Agents SDK</td><td>用 <code>AsyncOpenAI</code> 自定义 client + <code>OpenAIChatCompletionsModel</code>（须切到 chat_completions）</td></tr>
+          <tr><td>PydanticAI</td><td><code>OpenAIModel("qwen-plus", provider=OpenAIProvider(base_url=BASE_URL, api_key=...))</code></td></tr>
+          <tr><td>LangGraph</td><td>底层用 <code>ChatOpenAI(model="qwen-plus", base_url=BASE_URL, api_key=...)</code></td></tr>
+          <tr><td>CrewAI</td><td><code>LLM(model="openai/qwen-plus", base_url=BASE_URL, api_key=...)</code>（经 LiteLLM）</td></tr>
+          <tr><td>LlamaIndex</td><td><code>OpenAILike(model="qwen-plus", api_base=BASE_URL, is_chat_model=True)</code></td></tr>
+          <tr><td>Spring AI</td><td>配置 <code>spring.ai.openai.base-url</code> + <code>api-key</code> + <code>chat.options.model</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2>八、易踩坑预告</h2>
+      <Example title="几个一踩一个准的坑">
         <ul>
-          <li>
-            <strong>smolagents</strong>：
-            <code>OpenAIServerModel(model_id="qwen-plus", api_base=..., api_key=...)</code>
-          </li>
-          <li>
-            <strong>OpenAI Agents SDK</strong>：
-            <code>AsyncOpenAI(base_url=...)</code> 配合
-            <code>set_default_openai_client(...)</code> 和
-            <code>set_default_openai_api("chat_completions")</code>
-          </li>
-          <li>
-            <strong>PydanticAI</strong>：
-            <code>OpenAIChatModel("qwen-max", provider=OpenAIProvider(base_url=...))</code>
-          </li>
-          <li>
-            <strong>LangGraph</strong>：
-            <code>ChatOpenAI(base_url=..., model="qwen-plus")</code>
-          </li>
-          <li>
-            <strong>CrewAI</strong>：
-            <code>LLM(model="openai/qwen-plus", base_url=...)</code>
-          </li>
-          <li>
-            <strong>LlamaIndex</strong>：
-            <code>OpenAILike(model="qwen-plus", api_base=..., is_chat_model=True)</code>
-          </li>
-          <li>
-            <strong>Spring AI</strong>：在 <code>application.yml</code> 里配
-            <code>spring.ai.openai.base-url</code>（注意只写到 <code>compatible-mode</code> 为止、
-            <strong>不带 /v1</strong>）
-          </li>
+          <li><strong>OpenAI Agents SDK</strong>：默认走 Responses API，百炼不支持，必须显式切到 <strong>chat_completions</strong> 模型。</li>
+          <li><strong>LlamaIndex</strong>：用 <code>OpenAILike</code> 时记得设 <code>is_chat_model=True</code>，否则会当成补全模型调错接口。</li>
+          <li><strong>Spring AI</strong>：<code>base-url</code> 填到 <code>compatible-mode</code> 即可，<strong>不要带 <code>/v1</code></strong>（Spring AI 会自动补路径），多写一段反而 404。</li>
+          <li><strong>CrewAI / LiteLLM</strong>：model 名要带 <code>openai/</code> 前缀（如 <code>openai/qwen-plus</code>），LiteLLM 靠前缀识别这是 OpenAI 兼容协议。</li>
         </ul>
       </Example>
 
-      <Callout variant="note" title="经兼容层接入时，留意 provider 前缀">
-        <p>
-          像 CrewAI 这类经 LiteLLM / 兼容层路由的框架，模型名往往要带 provider 前缀
-          （例如 <code>openai/qwen-plus</code>），不同版本的写法偶有出入。建议拿到真实 key 后，
-          照对应章节先自测一次跑通再继续——课程会在相关章节明确标注当时验证过的写法。
-        </p>
-      </Callout>
-
-      <Callout variant="tip" title="配套代码在哪">
-        <p>
-          本课的可运行示例放在 <code>examples/agent-frameworks/</code> 下，每个框架一个目录。
-          本章这段裸调用在 <code>00-intro/</code> 里（即上面 <code>bare_openai_compatible.py</code>）。
-          之后每一章都会有对应目录，clone 下来照着跑即可。
-        </p>
-      </Callout>
-
-      <Summary
-        points={[
-          '全课统一用百炼(DashScope)的 OpenAI 兼容端点跑 Qwen，把「模型」这个变量摁住，让七个框架的对比只反映框架本身的差异。',
-          '准备三件事：注册百炼拿 key 并设进环境变量 DASHSCOPE_API_KEY；记住端点 compatible-mode/v1（国际区用 dashscope-intl）；模型名 qwen-plus / qwen-max / qwen-turbo。',
-          'key 绝不写进代码、绝不提交 git，一律走环境变量。',
-          '裸兼容调用是底座：用 openai SDK + 自定义 base_url 调 chat.completions，回答取自 choices[0].message.content，token 用量在 usage 里——框架的成本统计都来自这里。',
-          '所有框架最终都落到这种 chat.completions 调用上，区别只在外面包的工具循环/多Agent/状态/RAG；理解底座后，看每个框架都只剩一个问题：它在外面加了什么。',
-          '七个框架接同一个百炼的写法已先行预告，细节在各卷展开；经 LiteLLM/兼容层接入时注意 provider 前缀，建议用真实 key 自测一次。',
-        ]}
-      />
+      <Summary points={[
+        '全程统一用百炼(Qwen)作后端：OpenAI 兼容、国产可直接用、能公平对比框架本身。',
+        'OpenAI Chat Completions 已是事实标准，各框架都支持自定义 base_url，所以一份代码可任意切后端。',
+        '准备：百炼控制台拿 Key → export DASHSCOPE_API_KEY → 端点结尾带 /v1 → 模型用 qwen-plus/max/turbo；Key 绝不入库。',
+        '裸调用打底要会逐行读：base_url 是换后端开关，model 选 Qwen，messages 角色化，choices[0].message.content 取回复，usage 看 token。',
+        '所有框架最终都落到 chat.completions；接百炼各有关键类与坑：Agents SDK 切 chat_completions、LlamaIndex 设 is_chat_model、Spring AI base-url 不带 /v1、LiteLLM 加 openai/ 前缀。',
+      ]} />
     </article>
   )
 }

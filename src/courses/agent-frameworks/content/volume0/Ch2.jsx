@@ -1,152 +1,146 @@
 import Lead from '@/components/cards/Lead.jsx'
 import KeyIdea from '@/components/cards/KeyIdea.jsx'
 import Callout from '@/components/cards/Callout.jsx'
+import CodeBlock from '@/components/cards/CodeBlock.jsx'
+import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import ParadigmMap from '@/courses/agent-frameworks/illustrations/ParadigmMap.jsx'
 
 export default function Ch2() {
   return (
     <article>
-      <h1>全景地图：主流框架与范式分类</h1>
-
       <Lead>
-        市面上的 Agent 框架多到让人眼花，光是「主流」级别的就有十几个，每隔几个月还会冒出新的。
-        如果你打算一个一个去啃它们的 API，很快就会淹没在文档里。本章想先帮你登上高处，把这门课要讲的
-        七个框架按「范式」摆到同一张地图上——先看清楚森林，再走进每一棵树。
+        框架的 API 几个月就改一茬，但它背后的<strong>范式</strong>——也就是"该怎么组织一个 Agent 去想问题"——却相当稳定。
+        学会按范式归类，你就能在看到一个新框架时一眼判断"它属于哪一类、解决什么、和谁重叠"。
+        这一章给你一张全景地图：七个主流范式逐个拆解，再用一张对比表帮你对号入座。
       </Lead>
 
-      <h2>框架很多，范式就那么几类</h2>
-
+      <h2>一、为什么范式比 API 更重要</h2>
       <p>
-        框架之间的差异，表面上是 API 不同、命名不同、配置方式不同；但往下挖一层，真正决定一个框架「长什么样、
-        适合干什么」的，是它背后的<strong>范式（paradigm）</strong>——也就是它对「Agent 该如何行动、如何被编排、
-        如何与你的系统协作」这个根本问题给出的答案。
+        如果你只背 API，框架一升级你就得重学；但如果你抓住范式，就抓住了不变量。
+        本课覆盖的 7 个框架，恰好对应 7 种典型范式，互相之间既有重叠、又各有主场。先看地图，再逐个深入。
       </p>
-      <p>
-        同一个范式下的框架，API 再不一样，骨架也是相通的；不同范式的框架，哪怕都叫「Agent 框架」，
-        写出来的代码结构可能天差地别。所以与其记 API，不如先记范式。
-      </p>
-
-      <KeyIdea>
-        选型的本质不是「选框架」，而是「选范式」。先想清楚你的任务属于哪一类——是要写代码跑流程，
-        还是要画状态机控制长流程，还是要连数据做问答——范式定了，候选框架自然就收敛到一两个，
-        剩下的只是工程口味的差别。
+      <KeyIdea title="地图先于路线">
+        别急着记"哪个框架的类叫什么"。先问三件事：<strong>它怎么驱动循环？它把控制权交给模型还是交给你？它最擅长哪类任务？</strong>
+        这三问答完，框架的归类就清楚了。
       </KeyIdea>
 
-      <h2>先交互浏览这张范式地图</h2>
-
+      <h2>二、全景地图：七大范式一图看清</h2>
       <p>
-        下面这张地图把本课的七个范式和它们的代表框架放在一起。先动手点一点、连一连，建立一个大致的方位感，
-        再往下看每个范式的文字简介——你会发现读起来轻松很多。
+        下面这张交互图把七个范式摆在一起。<strong>把鼠标移到任意节点上</strong>，可以看到该范式的代表框架与核心机制；
+        从左到右大致是"控制权从模型主导 → 开发者主导"的光谱，越往右流程越显式、越可控。
       </p>
-
       <ParadigmMap />
 
-      <h2>七个范式逐个看</h2>
+      <h2>三、七个范式逐个详解</h2>
 
-      <p>每个范式只点到为止，目的是让你记住「它解决什么问题、长什么样」，细节都留给后面对应的卷。</p>
-
-      <ul>
-        <li>
-          <h3>代码行动：smolagents</h3>
-          <p>
-            它的核心主张是：让 Agent 直接<strong>写并执行 Python 代码</strong>作为它的「动作」，
-            而不是像传统做法那样输出一段 JSON 工具调用再由框架解析执行。一段代码里可以连续调用多个工具、
-            做循环、做条件判断，于是同样一个任务往往用更少的步数就能完成，工具之间的组合也更自然。
-            范式越「贴近代码」，表达力越强。
-          </p>
-        </li>
-        <li>
-          <h3>轻量循环 + handoff：OpenAI Agents SDK</h3>
-          <p>
-            它刻意把抽象压到极少，核心只有四件东西：<code>Agent</code>、
-            <code>Handoff</code>（把控制权整个交给另一个 Agent）、
-            <code>Guardrail</code>（与主流程并行运行的校验，可以中断不合规的请求），
-            以及 <code>Session</code> / <code>Tracing</code>（会话记忆与可观测）。
-            它是 OpenAI 早期实验性项目 Swarm 的生产级继任者，思路一脉相承，但更稳、更可用于线上。
-          </p>
-        </li>
-        <li>
-          <h3>类型安全 / 结构化：PydanticAI</h3>
-          <p>
-            出自 Pydantic 团队，把「类型安全」这件事带进了 Agent 世界。它提供泛型化的
-            <code>Agent</code>，用 <code>output_type</code> 约束模型必须返回结构化、可校验的输出，
-            用 <code>deps</code> 做依赖注入。整体是一种 FastAPI 式的工程化风格：强类型、好测试、好维护。
-          </p>
-        </li>
-        <li>
-          <h3>图 / 状态机：LangGraph</h3>
-          <p>
-            它是 LangChain 生态的编排层，1.0 已经 GA。把 Agent 流程建模成一张图：
-            <code>StateGraph</code> 定义状态与节点，条件边决定走向，
-            <code>checkpointer</code> 负责持久化与记忆，<code>interrupt</code> 实现人工审核的中断点。
-            在所有范式里它的<strong>控制力最强</strong>，最适合分支多、回路多的复杂长流程。
-          </p>
-        </li>
-        <li>
-          <h3>角色协作：CrewAI</h3>
-          <p>
-            它已经脱离 LangChain，成为独立框架。核心概念是把任务拆成多个有「角色」的 Agent 来协作：
-            <code>Agent</code>（角色）+ <code>Task</code>（任务）+ <code>Crew</code>（团队），
-            由 <code>Process</code> 决定协作方式（<code>sequential</code> 顺序、
-            <code>hierarchical</code> 层级），再加上 <code>Flows</code> 做事件驱动的编排。
-            最适合研究、创作这类需要多视角碰撞的任务。
-          </p>
-        </li>
-        <li>
-          <h3>数据 / RAG 驱动：LlamaIndex</h3>
-          <p>
-            它的出发点始终是「<strong>连接 LLM 与你自己的数据</strong>」。一边是索引与检索能力，
-            另一边是 <code>FunctionAgent</code> / <code>AgentWorkflow</code> 这样的 Agent 抽象，
-            底层由事件驱动的 Workflows 1.0 支撑。如果你的目标是知识库、文档问答这类场景，它最对口。
-          </p>
-        </li>
-        <li>
-          <h3>企业 Java 集成：Spring AI</h3>
-          <p>
-            Spring 官方推出的框架，1.0 已经 GA，把 AI 能力融进了熟悉的 Spring 风格：
-            <code>ChatClient</code> 提供 fluent 链式 API，配合自动配置与依赖注入；
-            <code>Advisors</code> 挂载记忆、RAG 等横切能力；<code>@Tool</code> 注解暴露工具；
-            <code>{'.entity()'}</code> 直接拿到结构化输出。对于「在 Spring Boot 后端里加 AI」的团队，它是最自然的选择。
-          </p>
-        </li>
-      </ul>
-
-      <Callout variant="note" title="还有一些被点名但本课不展开的框架">
-        <p>
-          除了上面七个，还有几个同样主流：Google ADK、Microsoft Agent Framework
-          （由 AutoGen 与 Semantic Kernel 合并而来的继任者）、Strands Agents（AWS 出品）、
-          以及 AG2（AutoGen 的社区分叉）。它们都很有分量，但范式与上面这七个存在不少重叠。
-          本课为了覆盖面更完整、互补性更强，选了这七个作为主线；它们的定位会在卷 8 里再专门提及。
-        </p>
-      </Callout>
-
-      <Callout variant="tip" title="贯穿全课的一条副线：统一底座">
-        <p>
-          这七个框架长得各不相同，但有一个关键共性：它们都允许通过自定义 <code>base_url</code>
-          接到同一个兼容 OpenAI 接口的后端——本课统一用阿里云百炼（Qwen）作为这个后端。
-          下一章我们先把这条「统一底座」打好，之后每一章在介绍框架时，都会顺带对比它各自的接入写法，
-          让你看清同一个模型在不同范式下是怎么被「接进去」的。
-        </p>
-      </Callout>
-
-      <h2>本课的学习顺序</h2>
-
+      <h3>1. 代码即行动（Code-as-Action）</h3>
       <p>
-        我们按「由轻到重」来安排：先从抽象最少、最容易上手的框架开始，逐步过渡到控制力强、工程量大的框架，
-        顺序是 smolagents → OpenAI Agents SDK → PydanticAI → LangGraph → CrewAI → LlamaIndex → Spring AI，
-        最后再做一次横向对比，把选型的思路收口。这样走下来，你既能积累实战手感，又能在对比中逐渐看清每个范式的边界。
+        <strong>定位</strong>：让模型直接<strong>写并执行 Python 代码</strong>来完成动作，而不是输出结构化的 tool_calls。<br />
+        <strong>代表框架</strong>：smolagents（Hugging Face）。<br />
+        <strong>核心机制</strong>：模型生成一段代码 → 在受控沙箱里执行 → 把执行结果回灌 → 再生成。一个工具就是一个可被代码调用的函数，组合工具靠"写代码"而非"填 JSON"。<br />
+        <strong>典型场景</strong>：数据处理、计算密集、需要把多个工具灵活拼接的探索性任务——代码本身就是最自然的"行动语言"。
       </p>
 
-      <Summary
-        points={[
-          '框架数量很多，但背后的范式就那么几类——理解范式比死记 API 更重要，选型本质是选范式。',
-          '七个主线范式：代码行动(smolagents)、轻量循环+handoff(OpenAI Agents SDK)、类型安全/结构化(PydanticAI)、图/状态机(LangGraph)、角色协作(CrewAI)、数据/RAG(LlamaIndex)、企业Java集成(Spring AI)。',
-          'Google ADK、Microsoft Agent Framework、Strands、AG2 等也主流，但范式有重叠，本课选了互补性更强的七个，卷8再提。',
-          '一条贯穿全课的副线：七个框架都能用自定义 base_url 接同一个百炼(Qwen)后端，下一章先打好这条统一底座。',
-          '学习顺序由轻到重：smolagents → OpenAI SDK → PydanticAI → LangGraph → CrewAI → LlamaIndex → Spring AI，最后横向对比选型。',
-        ]}
-      />
+      <h3>2. 轻量循环 + Handoff</h3>
+      <p>
+        <strong>定位</strong>：最小化的 Agent 抽象，核心只有"循环"和"把任务交给另一个 Agent"。<br />
+        <strong>代表框架</strong>：OpenAI Agents SDK。<br />
+        <strong>核心机制</strong>：<code>Agent</code> + <code>tools</code> + <code>handoff</code>。一个 Agent 处理不了就 handoff 给更专的 Agent，配合 guardrails 与内置 tracing。极薄抽象，几行就能跑起来。<br />
+        <strong>典型场景</strong>：客服分流、多专家路由、想要"轻装上阵又不丢可观测"的生产原型。
+      </p>
+
+      <h3>3. 类型安全 / 结构化输出</h3>
+      <p>
+        <strong>定位</strong>：把 Pydantic 的类型系统搬进 Agent，让输入输出都<strong>强类型、可校验</strong>。<br />
+        <strong>代表框架</strong>：PydanticAI。<br />
+        <strong>核心机制</strong>：用 <code>result_type</code> 声明输出模型，框架强制模型返回合法结构并自动校验 / 重试；依赖注入式地传递上下文。<br />
+        <strong>典型场景</strong>：要把 LLM 输出灌进数据库 / 下游 API、对数据契约要求严格的工程化场景。
+      </p>
+
+      <h3>4. 图 / 状态机（Graph / State Machine）</h3>
+      <p>
+        <strong>定位</strong>：把 Agent 流程显式建成<strong>有向图</strong>，节点是步骤、边是转移条件，状态在图中流动。<br />
+        <strong>代表框架</strong>：LangGraph。<br />
+        <strong>核心机制</strong>：定义 <code>State</code> + 节点函数 + 条件边，支持循环、分支、检查点、人在回路、断点续跑。控制权牢牢在开发者手里。<br />
+        <strong>典型场景</strong>：复杂多步骤工作流、需要严格流程控制、可回放、可中断恢复的生产级 Agent。
+      </p>
+
+      <h3>5. 角色协作（Role-based Multi-Agent）</h3>
+      <p>
+        <strong>定位</strong>：用"组建一支团队"的隐喻——给每个 Agent 设定角色、目标、背景，让它们分工协作。<br />
+        <strong>代表框架</strong>：CrewAI。<br />
+        <strong>核心机制</strong>：<code>Agent</code>（角色）+ <code>Task</code>（任务）+ <code>Crew</code>（编排）。任务可顺序或层级执行，Agent 间传递产出，像项目组一样跑流程。<br />
+        <strong>典型场景</strong>：内容生产流水线（调研 → 撰写 → 审校）、把人类组织分工直接映射成 Agent 协作。
+      </p>
+
+      <h3>6. 数据 / RAG（Data-centric）</h3>
+      <p>
+        <strong>定位</strong>：以<strong>数据与检索</strong>为中心，先把你的知识喂进去，Agent 围绕这些数据回答与行动。<br />
+        <strong>代表框架</strong>：LlamaIndex。<br />
+        <strong>核心机制</strong>：文档加载 → 切块 → 索引（向量 / 关键词）→ 检索 → 合成；在此之上提供 Query Engine、Agent 与工作流。<br />
+        <strong>典型场景</strong>：企业知识库问答、文档 / PDF 助手、任何"答案必须基于私有资料"的 RAG 应用。
+      </p>
+
+      <h3>7. 企业 Java 集成</h3>
+      <p>
+        <strong>定位</strong>：把 Agent 能力以 Spring 的方式带进 <strong>Java 企业后端</strong>。<br />
+        <strong>代表框架</strong>：Spring AI。<br />
+        <strong>核心机制</strong>：<code>ChatClient</code> 流式 API、<code>@Tool</code> 注解工具、Advisors（记忆 / RAG）、Spring Boot 自动配置与依赖注入，天然融入现有 Java 服务。<br />
+        <strong>典型场景</strong>：已有 Spring Boot 体系的企业，要在不换语言栈的前提下接入 LLM 与 Agent。
+      </p>
+
+      <h2>四、范式对比表</h2>
+      <table>
+        <thead>
+          <tr><th>范式</th><th>代表框架</th><th>控制力</th><th>上手难度</th><th>最适合</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>代码即行动</td><td>smolagents</td><td>中</td><td>低</td><td>数据处理、灵活拼接工具</td></tr>
+          <tr><td>轻量循环 + Handoff</td><td>OpenAI Agents SDK</td><td>中</td><td>低</td><td>多专家路由、轻量生产原型</td></tr>
+          <tr><td>类型安全 / 结构化</td><td>PydanticAI</td><td>中高</td><td>中</td><td>强类型输出、对接下游系统</td></tr>
+          <tr><td>图 / 状态机</td><td>LangGraph</td><td>高</td><td>高</td><td>复杂工作流、严格流程控制</td></tr>
+          <tr><td>角色协作</td><td>CrewAI</td><td>中</td><td>低</td><td>多 Agent 分工、内容流水线</td></tr>
+          <tr><td>数据 / RAG</td><td>LlamaIndex</td><td>中</td><td>中</td><td>知识库问答、文档助手</td></tr>
+          <tr><td>企业 Java 集成</td><td>Spring AI</td><td>中高</td><td>中</td><td>Spring 体系内接入 LLM</td></tr>
+        </tbody>
+      </table>
+
+      <h2>五、被点名但不展开的框架</h2>
+      <Callout variant="note" title="范式重叠，卷 8 再提">
+        下面这几个框架同样重要，但范式与上面七个高度重叠，本卷不单独展开，留到<strong>卷 8</strong> 做补充对比：
+        <ul>
+          <li><strong>Google ADK</strong>：Google 的 Agent 开发套件，定位接近轻量循环 + 多 Agent 编排。</li>
+          <li><strong>Microsoft Agent Framework</strong>：由 AutoGen 与 Semantic Kernel 合并而来的继任者，覆盖多 Agent 与编排范式。</li>
+          <li><strong>Strands Agents</strong>：AWS 推出，强调模型驱动的工具循环。</li>
+          <li><strong>AG2</strong>：AutoGen 的社区分叉，延续多 Agent 对话范式。</li>
+        </ul>
+      </Callout>
+
+      <h2>六、一条贯穿全课的副线</h2>
+      <Callout variant="tip" title="同一个后端，七种写法">
+        无论范式多不同，这七个框架都支持<strong>自定义 <code>base_url</code></strong>，因此都能接到同一个阿里云百炼（Qwen）后端。
+        这意味着我们可以在完全相同的模型条件下横向对比它们的风格差异——这正是下一章要打通的统一前提。
+      </Callout>
+
+      <h2>七、建议的学习顺序</h2>
+      <p>本课按"由轻到重"组织，让抽象负担逐步加码，循序渐进：</p>
+      <Example title="从轻到重">
+        <p>
+          <strong>smolagents</strong>（代码即行动，最直观）→ <strong>OpenAI Agents SDK</strong>（轻量循环 + handoff）→
+          <strong>PydanticAI</strong>（加上类型约束）→ <strong>LangGraph</strong>（显式图，控制力最强）→
+          <strong>CrewAI</strong>（多 Agent 协作）→ <strong>LlamaIndex</strong>（数据 / RAG）→
+          <strong>Spring AI</strong>（切到 Java 企业栈）→ 最后做<strong>对比选型</strong>，给出决策树。
+        </p>
+      </Example>
+
+      <Summary points={[
+        '范式比 API 更稳定：抓住"怎么驱动循环、控制权在谁、最擅长什么"三问，就能给任何新框架归类。',
+        '七大范式：代码即行动(smolagents)、轻量循环+handoff(OpenAI Agents SDK)、类型安全(PydanticAI)、图/状态机(LangGraph)、角色协作(CrewAI)、数据/RAG(LlamaIndex)、企业 Java 集成(Spring AI)。',
+        '控制力光谱从模型主导到开发者主导：smolagents/CrewAI 居中，LangGraph 控制力最高，Spring AI / PydanticAI 偏工程化。',
+        'Google ADK、Microsoft Agent Framework、Strands Agents、AG2 范式重叠，留到卷 8 补充。',
+        '七框架都能用自定义 base_url 接同一个百炼后端，从而在相同模型下公平对比；学习顺序由轻到重。',
+      ]} />
     </article>
   )
 }
