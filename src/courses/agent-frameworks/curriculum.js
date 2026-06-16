@@ -53,8 +53,8 @@ export const VOLUMES = [
     subtitle: 'Graphs & State Machines',
     theme: 'LangChain 生态的编排层，1.0 已 GA。用显式状态图掌控复杂、长流程、可持久、可人审的 Agent。',
     chapters: [
-      { slug: 'af4-c1', title: 'LangGraph 原理：StateGraph/条件边/checkpointer/interrupt', topic: '原理', hook: '把 Agent 建成一张带类型状态的图：节点改状态、条件边做路由、checkpointer 给持久与记忆、interrupt 做人审闸门。', minutes: 150, hasContent: false },
-      { slug: 'af4-c2', title: '实战：带记忆与人工审批的 ReAct 图（接百炼）', topic: '实战', hook: 'ChatOpenAI 接百炼 + create_react_agent + checkpointer 演示多轮记忆，再加一个 interrupt 审批节点，体会「控制力」。', minutes: 150, hasContent: false },
+      { slug: 'af4-c1', title: 'LangGraph 原理：StateGraph/条件边/checkpointer/interrupt', topic: '原理', hook: '把 Agent 建成一张带类型状态的图：节点改状态、条件边做路由、checkpointer 给持久与记忆、interrupt 做人审闸门。', minutes: 150, hasContent: true },
+      { slug: 'af4-c2', title: '实战：带记忆与人工审批的 ReAct 图（接百炼）', topic: '实战', hook: 'ChatOpenAI 接百炼 + create_react_agent + checkpointer 演示多轮记忆，再加一个 interrupt 审批节点，体会「控制力」。', minutes: 150, hasContent: true },
     ],
   },
   {
