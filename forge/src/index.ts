@@ -19,17 +19,25 @@ const RESET = '\x1b[0m'
 
 // forge 的入口：装配 Provider + 工具 + Agent，挂上事件渲染器，启动 REPL。
 async function main(): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('请先设置环境变量 ANTHROPIC_API_KEY')
-    process.exit(1)
-  }
-
   const args = process.argv.slice(2)
   const debug = args.includes('--debug') || args.includes('--verbose')
   const resume = args.includes('--resume')
 
   const config = loadConfig(process.cwd())
-  const provider = createProvider({ provider: config.provider, model: config.model, contextWindow: config.contextWindow })
+
+  // API key 可来自配置文件(apiKey) 或环境变量(ANTHROPIC_API_KEY)，二者有其一即可。
+  if (!config.apiKey && !process.env.ANTHROPIC_API_KEY) {
+    console.error('未找到 API 密钥。请在 ~/.forge/config.json 配置 apiKey，或设置环境变量 ANTHROPIC_API_KEY。')
+    process.exit(1)
+  }
+
+  const provider = createProvider({
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
+    contextWindow: config.contextWindow,
+  })
   const sessionId = new Date().toISOString().replace(/[:.]/g, '-')
   const audit = new FileAuditLog(process.cwd(), sessionId)
   const session = new SessionStore(process.cwd(), sessionId)

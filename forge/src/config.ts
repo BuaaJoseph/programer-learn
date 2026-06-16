@@ -13,6 +13,10 @@ export interface McpServerConfig {
 export interface ForgeConfig {
   /** Provider 名称，默认 claude。 */
   provider?: string
+  /** API 密钥（也可用环境变量 ANTHROPIC_API_KEY）。 */
+  apiKey?: string
+  /** API 基址 URL（接入代理或兼容端点时用；留空走官方默认）。 */
+  baseURL?: string
   /** 模型标识。 */
   model?: string
   /** 单轮最大输出 token。 */

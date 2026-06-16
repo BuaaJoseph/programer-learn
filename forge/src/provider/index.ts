@@ -6,6 +6,8 @@ import { ClaudeProvider } from './claude.js'
 export interface ProviderConfig {
   provider?: string
   model?: string
+  apiKey?: string
+  baseURL?: string
   contextWindow?: number
 }
 
@@ -13,7 +15,7 @@ export function createProvider(cfg: ProviderConfig = {}): Provider {
   const name = cfg.provider ?? 'claude'
   switch (name) {
     case 'claude':
-      return new ClaudeProvider({ model: cfg.model, contextWindow: cfg.contextWindow })
+      return new ClaudeProvider({ model: cfg.model, apiKey: cfg.apiKey, baseURL: cfg.baseURL, contextWindow: cfg.contextWindow })
     default:
       throw new Error(`未知 provider「${name}」。目前内置：claude。新增 provider 只需实现 Provider 接口并在 createProvider 注册。`)
   }

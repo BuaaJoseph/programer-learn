@@ -12,12 +12,16 @@ export class ClaudeProvider implements Provider {
   readonly contextWindow: number
   private client: Anthropic
 
-  constructor(opts: { model?: string; apiKey?: string; contextWindow?: number } = {}) {
+  constructor(opts: { model?: string; apiKey?: string; baseURL?: string; contextWindow?: number } = {}) {
     this.model = opts.model ?? DEFAULT_MODEL
     // Claude 4.x 系列上下文窗口为 1M token；保守留作默认，可由配置覆盖。
     this.contextWindow = opts.contextWindow ?? 1_000_000
-    // 不传 apiKey 时，SDK 会自动读取环境变量 ANTHROPIC_API_KEY。
-    this.client = new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : {})
+    // 不传 apiKey 时，SDK 会自动读取环境变量 ANTHROPIC_API_KEY；
+    // baseURL 用于接入代理或 Anthropic 兼容端点，留空走官方默认。
+    const clientOpts: ConstructorParameters<typeof Anthropic>[0] = {}
+    if (opts.apiKey) clientOpts.apiKey = opts.apiKey
+    if (opts.baseURL) clientOpts.baseURL = opts.baseURL
+    this.client = new Anthropic(clientOpts)
   }
 
   async countTokens(params: Omit<CompleteParams, 'onTextDelta' | 'maxTokens'>): Promise<number> {
