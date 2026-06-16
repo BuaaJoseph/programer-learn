@@ -189,6 +189,55 @@ def handle(session_id, user_id, query, mem: Memory, kb: KnowledgeBase) -> str:
         mem.append_turn(session_id, 'assistant', reply)   # 回写短期记忆
         return reply`
 
+const dataflowCode = `# 一条请求在系统里流动的「数据契约」长什么样
+# 每一层只认上一层产出的结构，层与层之间靠契约解耦（第 7 卷思想）。
+
+# 1) 路由层产出：结构化意图（小模型 + JSON 输出）
+intent = {
+    'type': 'refund',          # faq / order / refund / unknown
+    'order_id': 'A1023',
+    'amount': 150.0,
+    'confidence': 0.92,        # 置信度低可触发「请你确认一下」的澄清话术
+}
+
+# 2) 专家层产出：统一回复契约（成败显式，便于服务层兜底）
+reply = {
+    'success': True,
+    'text': '已为订单 A1023 退款 150 元。',
+    'handled_by': 'refund_agent',
+    'escalated': False,        # 是否转人工，服务层据此决定要不要建工单
+}
+
+# 3) 服务层产出：对外响应（脱敏后、不含内部字段）
+response = {
+    'reply': reply['text'],    # 只把对外该看的字段透出去
+    'session_id': 'S-7781',
+}
+# 关键：内部字段（confidence/handled_by/escalated）只进 trace 和日志，
+# 不透传给前端 —— 单一出口处统一收口与脱敏。`
+
+const testCode = `# tests/test_refund_guard.py —— 高风险动作必须有测试兜底
+import pytest
+from app.tools import issue_refund, RefundError
+
+def test_refund_within_limit(monkeypatch):
+    # 正常路径：金额合规、订单可退 -> 成功退款
+    result = issue_refund('A1023', 150.0, reason='不喜欢')
+    assert result['status'] == 'refunded'
+    assert result['amount'] == 150.0
+
+def test_refund_over_auto_limit():
+    # 超自动上限(200) -> 必须转人工，绝不自动放款
+    result = issue_refund('A1023', 500.0, reason='太贵')
+    assert result['status'] == 'need_human'
+
+def test_refund_exceeds_order_amount():
+    # 退款金额 > 订单金额 -> 拒绝（防模型算出越界/幻觉金额）
+    with pytest.raises(RefundError):
+        issue_refund('A1023', 99999.0, reason='薅羊毛')
+# 这三条用例覆盖了护栏的三条关键分支：放行 / 升级 / 拒绝。
+# 高风险动作的护栏，永远要用测试钉死，而不是靠人工每次回归。`
+
 export default function Ch8_4() {
   return (
     <>

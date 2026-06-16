@@ -111,6 +111,24 @@ export default function Ch3() {
         </p>
       </Example>
 
+      <h2>DNS 用 UDP 还是 TCP，常见记录类型</h2>
+      <p>
+        DNS 默认走 <strong>UDP 53</strong>：查询和响应通常很小，UDP 无需握手最快。两种情况切到 <strong>TCP</strong>：
+        响应超过 512 字节（会先返回带 <code>TC</code> 截断标志的包让客户端用 TCP 重发），以及主从同步的<em>区域传送</em>。
+        所以标准答案是「以 UDP 为主，特定场景用 TCP」。
+      </p>
+      <p>
+        记录类型也是高频考点，除了 A 和 CNAME，还要认得：
+      </p>
+      <CodeBlock lang="dns" title="常见 DNS 记录类型" code={recordTypeCode} />
+      <Callout variant="warn" title="DNS 缓存与就近调度：为什么同一域名解析出不同 IP">
+        <p>
+          解析改了「过一会儿才生效」是因为各级缓存按 <code>TTL</code> 过期。而 CDN 还会做<strong>就近调度</strong>：
+          权威/智能 DNS 根据你的来源地区，给不同用户返回<em>不同的</em>边缘节点 IP，让你连最近的服务器。
+          所以你和朋友在不同城市 <code>dig</code> 同一个域名，拿到的 IP 很可能不一样——这不是 bug，是 CDN 在调度。
+        </p>
+      </Callout>
+
       <h2>无状态的 HTTP 怎么保持会话</h2>
       <p>
         HTTP 是无状态的：服务器处理完一个请求就忘了你。可登录后浏览各页面又得「记得你已登录」，
@@ -145,6 +163,29 @@ export default function Ch3() {
           <em>Token</em> 方案（如 <em>JWT</em>）换了个思路：登录后服务端签发一个自带签名的令牌交给客户端，
           令牌里<strong>本身就装着用户信息</strong>，客户端之后每次请求带上它。服务端只<strong>验签名</strong>、
           不必存会话，天然适合分布式和前后端分离。代价是令牌签发后难以主动失效，且体积比 sessionId 大。
+        </p>
+      </KeyIdea>
+
+      <h2>顺手讲清 XSS 与 CSRF</h2>
+      <p>
+        Cookie 的那几个安全属性，是专门为防两类经典 Web 攻击设计的，面试常和 Cookie 一起问：
+      </p>
+      <ul>
+        <li>
+          <strong>XSS</strong>（跨站脚本）：攻击者把恶意 JS 注入页面，在你浏览器里执行，比如读走 Cookie。
+          防御核心是<strong>输入输出转义</strong> + 给 Cookie 加 <code>HttpOnly</code>（让 JS 根本读不到它）。
+        </li>
+        <li>
+          <strong>CSRF</strong>（跨站请求伪造）：攻击者诱导你在已登录状态下，由恶意页面替你向目标站发请求
+          （浏览器会自动带上你的 Cookie）。防御靠 <code>SameSite</code> 属性、CSRF Token、校验 Origin/Referer。
+        </li>
+      </ul>
+      <CodeBlock lang="html" title="CSRF 攻击示意与防御" code={csrfCode} />
+      <KeyIdea title="一句话区分 XSS 和 CSRF">
+        <p>
+          <strong>XSS 是「盗用你的身份执行脚本」</strong>——它在你浏览器里跑了恶意代码；
+          <strong>CSRF 是「冒用你的身份发请求」</strong>——它不需要执行你的脚本，只是借用浏览器自动带 Cookie 这一点。
+          所以 <code>HttpOnly</code> 主防 XSS 偷 Cookie，<code>SameSite</code> 主防 CSRF 跨站带 Cookie，各管一摊。
         </p>
       </KeyIdea>
 

@@ -169,6 +169,18 @@ export default function Ch4() {
         这些惩罚都在 softmax 之前作用于 logits。设大了会让输出变得生硬、强行不重复（连必要的重复词如「的」也躲）；
         通常 0.1 到 0.5 的小值就够。
       </p>
+      <p>
+        要分清 frequency 和 presence 的区别：<strong>frequency 是「按次数累加」的连续惩罚</strong>，一个词出现 3 次比出现 1 次罚得更重，
+        适合压制「同一个词反复刷屏」；<strong>presence 是「出现过就一次性扣固定分」的开关惩罚</strong>，不管出现几次都只罚一档，
+        作用是鼓励模型<strong>引入新词、换新话题</strong>，让内容更发散。一个治「复读」，一个促「破圈」，别用混了。
+      </p>
+      <Callout variant="info" title="为什么贪心解码反而最容易复读">
+        <p>
+          很反直觉：温度越低（越贪心）越容易陷入重复循环。原因是低温下模型只敢走「最高概率路径」，而语言里高概率的续写往往是
+          「重复刚说过的话」——一旦它说了「非常重要」，下一步「非常重要」的概率又被自己抬高了，于是越转越深，卡进死循环。
+          高温因为允许偶尔偏离，反而能「跳出」循环。这也是为什么纯贪心很少单用，通常要配上重复惩罚兜底。
+        </p>
+      </Callout>
 
       <Callout variant="warn" title="temperature=0 也不保证逐字复现">
         <p>
@@ -192,6 +204,25 @@ export default function Ch4() {
           并接受「仍可能有少量差异」。本地单卡、确定性 kernel 下才比较容易做到严格复现。
         </p>
       </Callout>
+
+      <Example title="一张表：什么任务配什么参数">
+        <p>没有万能配置，但有一套靠谱的起点，按「要不要确定性」来分：</p>
+        <table>
+          <thead>
+            <tr><th>任务</th><th>temperature</th><th>top-p</th><th>为什么</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>抽取结构化字段 / JSON</td><td>0</td><td>1.0</td><td>要可解析、可复现，不要任何花样</td></tr>
+            <tr><td>事实问答 / 代码</td><td>0 ~ 0.3</td><td>0.9</td><td>要准，少发散</td></tr>
+            <tr><td>翻译 / 改写</td><td>0.3 ~ 0.5</td><td>0.9</td><td>略留弹性，但别跑偏原意</td></tr>
+            <tr><td>文案 / 头脑风暴</td><td>0.8 ~ 1.0</td><td>0.95</td><td>要多样、有创意</td></tr>
+            <tr><td>多路采样投票（self-consistency）</td><td>0.7 ~ 0.9</td><td>0.95</td><td>故意制造不同推理路径</td></tr>
+          </tbody>
+        </table>
+        <p>
+          这些是<strong>起点</strong>不是定论。拿你的真实任务，固定其他参数、只扫温度，跑一组对比，才能定出最适合你场景的值。
+        </p>
+      </Example>
 
       <h2>beam search：为什么聊天里很少用</h2>
       <p>
