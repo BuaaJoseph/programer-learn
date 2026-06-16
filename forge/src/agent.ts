@@ -4,6 +4,7 @@ import type { Provider } from './provider/types.js'
 import { buildToolRegistry } from './tools/index.js'
 import { defaultPolicy, type PermissionPolicy } from './permissions.js'
 import { noopAudit, type AuditLog } from './audit.js'
+import { renderTranscript, COMPACTION_SYSTEM } from './compaction.js'
 
 /** 危险操作确认请求：交给上层（CLI）向用户问一句 y/N。 */
 export interface ConfirmRequest {
@@ -29,6 +30,8 @@ export interface AgentOptions {
   confirm?: (req: ConfirmRequest) => Promise<boolean>
   /** 审计日志，默认不记录。 */
   audit?: AuditLog
+  /** 上下文占用超过窗口的这个比例时，触发自动压缩。默认 0.8。 */
+  compactThreshold?: number
 }
 
 export type AgentEvent =
@@ -36,6 +39,8 @@ export type AgentEvent =
   | { type: 'assistant_text'; text: string } // 一轮的完整文本（增量结束后）
   | { type: 'tool_start'; name: string; input: Record<string, unknown> }
   | { type: 'tool_end'; name: string; output: string; isError: boolean }
+  | { type: 'context_usage'; used: number; limit: number } // 本轮上下文 token 占用
+  | { type: 'compacted'; before: number; after: number } // 自动压缩前后的消息条数
 
 // Agent 主循环：维护一份扁平消息历史，反复「调模型 → 执行工具 → 回灌」，直到模型不再调用工具。
 export class Agent {
@@ -50,6 +55,9 @@ export class Agent {
   private policy: PermissionPolicy
   private confirm?: (req: ConfirmRequest) => Promise<boolean>
   private audit: AuditLog
+  private compactThreshold: number
+  /** 标记：下一轮开始前需要先压缩历史。 */
+  private needCompact = false
   /** 跨多次 runTurn 持续累积的会话历史。 */
   messages: Message[] = []
 
@@ -65,6 +73,7 @@ export class Agent {
     this.policy = opts.permissions ?? defaultPolicy
     this.confirm = opts.confirm
     this.audit = opts.audit ?? noopAudit
+    this.compactThreshold = opts.compactThreshold ?? 0.8
   }
 
   /** 设置危险操作确认回调（供 REPL 注入 y/N 提问）。 */
@@ -93,6 +102,9 @@ export class Agent {
 
     let finalText = ''
     for (let turn = 0; turn < this.maxTurns; turn++) {
+      // 在每轮开始前（消息历史处于完整状态时）检查是否需要压缩。
+      if (this.needCompact) await this.compact()
+
       const res = await this.provider.complete({
         system: this.system,
         messages: this.messages,
@@ -102,6 +114,11 @@ export class Agent {
       })
       this.audit.log({ type: 'llm_round', model: this.provider.model, stopReason: res.stopReason, usage: res.usage })
       this.messages.push({ role: 'assistant', content: res.content })
+
+      // token 预算：用本轮真实的输入 token 估算上下文占用，逼近窗口就标记压缩。
+      const limit = this.provider.contextWindow
+      this.onEvent?.({ type: 'context_usage', used: res.usage.inputTokens, limit })
+      if (res.usage.inputTokens > limit * this.compactThreshold) this.needCompact = true
 
       const text = res.content
         .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
@@ -119,6 +136,29 @@ export class Agent {
       this.messages.push({ role: 'user', content: results })
     }
     return finalText
+  }
+
+  // 自动压缩：把当前历史摊平成文本、让模型总结成一段摘要，再用这段摘要替换整个历史。
+  // 这样上下文从「一长串原始消息」缩成「一段摘要」，会话得以继续而不溢出窗口。
+  private async compact(): Promise<void> {
+    const before = this.messages.length
+    const transcript = renderTranscript(this.messages)
+    const res = await this.provider.complete({
+      system: COMPACTION_SYSTEM,
+      messages: [{ role: 'user', content: [{ type: 'text', text: transcript }] }],
+      tools: [],
+      maxTokens: 2048,
+    })
+    const summary = res.content
+      .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim()
+    // 用摘要重置历史。保留为一条 user 消息，作为后续对话的“前情提要”。
+    this.messages = [{ role: 'user', content: [{ type: 'text', text: `【前情提要（自动压缩）】\n${summary}` }] }]
+    this.needCompact = false
+    this.audit.log({ type: 'llm_round', model: this.provider.model, stopReason: 'compaction', usage: res.usage })
+    this.onEvent?.({ type: 'compacted', before, after: this.messages.length })
   }
 
   // 工具调度：把一轮里的工具调用按「只读」分两组。

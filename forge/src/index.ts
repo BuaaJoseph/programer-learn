@@ -2,7 +2,7 @@
 import { Agent } from './agent.js'
 import { ALL_TOOLS } from './tools/index.js'
 import { ClaudeProvider } from './provider/claude.js'
-import { SYSTEM_PROMPT } from './system.js'
+import { buildSystemPrompt } from './context.js'
 import { startRepl } from './repl.js'
 import { FileAuditLog } from './audit.js'
 
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   const agent = new Agent({
     provider,
     tools: ALL_TOOLS,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(process.cwd()),
     cwd: process.cwd(),
     audit,
     // 事件渲染器：把 Agent 的内部事件画到终端。
@@ -38,6 +38,9 @@ async function main(): Promise<void> {
           break
         case 'tool_end':
           if (e.isError) process.stdout.write(`${RED}  ✗ ${truncate(e.output)}${RESET}\n`)
+          break
+        case 'compacted':
+          process.stdout.write(`\n${DIM}（上下文已自动压缩：${e.before} 条 → ${e.after} 条）${RESET}\n`)
           break
       }
     },

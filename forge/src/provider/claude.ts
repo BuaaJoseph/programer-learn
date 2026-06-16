@@ -9,12 +9,25 @@ export const DEFAULT_MODEL = 'claude-opus-4-8'
 
 export class ClaudeProvider implements Provider {
   readonly model: string
+  readonly contextWindow: number
   private client: Anthropic
 
-  constructor(opts: { model?: string; apiKey?: string } = {}) {
+  constructor(opts: { model?: string; apiKey?: string; contextWindow?: number } = {}) {
     this.model = opts.model ?? DEFAULT_MODEL
+    // Claude 4.x 系列上下文窗口为 1M token；保守留作默认，可由配置覆盖。
+    this.contextWindow = opts.contextWindow ?? 1_000_000
     // 不传 apiKey 时，SDK 会自动读取环境变量 ANTHROPIC_API_KEY。
     this.client = new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : {})
+  }
+
+  async countTokens(params: Omit<CompleteParams, 'onTextDelta' | 'maxTokens'>): Promise<number> {
+    const res = await this.client.messages.countTokens({
+      model: this.model,
+      system: params.system,
+      messages: params.messages.map(toSdkMessage),
+      tools: params.tools.map(toSdkTool),
+    })
+    return res.input_tokens
   }
 
   async complete(params: CompleteParams): Promise<AssistantTurn> {

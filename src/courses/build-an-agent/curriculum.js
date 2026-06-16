@@ -59,10 +59,10 @@ export const VOLUMES = [
     subtitle: 'Context Engineering',
     theme: '上下文是 Agent 最稀缺的资源。这一卷做 system prompt、AGENTS.md 项目记忆、token 预算统计，以及快满时的自动压缩。',
     chapters: [
-      { slug: 'ba4-c1', title: 'System Prompt：给 Agent 立人设和规矩', topic: 'system prompt', hook: '一份好的 system prompt 决定 forge 的行为基线：身份、工具使用纪律、输出风格、安全约束。', minutes: 120, hasContent: false },
-      { slug: 'ba4-c2', title: 'AGENTS.md：让 forge 记住这个项目', topic: '项目记忆', hook: '启动时读取项目根的 AGENTS.md，把项目约定注入上下文——这就是 Agent 的「长期记忆」。', minutes: 120, hasContent: false },
-      { slug: 'ba4-c3', title: 'Token 预算：随时知道还剩多少', topic: 'token 预算', hook: '用 count_tokens 估算每轮上下文占用，把「离上限还有多远」实时显示出来，为压缩做准备。', minutes: 120, hasContent: false },
-      { slug: 'ba4-c4', title: '自动压缩：上下文快满了怎么续命', topic: '自动压缩', hook: '逼近上限时，让模型把早期历史总结成一段摘要、替换掉原始消息——forge 由此能跑很长的任务。', minutes: 150, hasContent: false },
+      { slug: 'ba4-c1', title: 'System Prompt：给 Agent 立人设和规矩', topic: 'system prompt', hook: '一份好的 system prompt 决定 forge 的行为基线：身份、工具使用纪律、输出风格、安全约束。', minutes: 120, hasContent: true },
+      { slug: 'ba4-c2', title: 'AGENTS.md：让 forge 记住这个项目', topic: '项目记忆', hook: '启动时读取项目根的 AGENTS.md，把项目约定注入上下文——这就是 Agent 的「长期记忆」。', minutes: 120, hasContent: true },
+      { slug: 'ba4-c3', title: 'Token 预算：随时知道还剩多少', topic: 'token 预算', hook: '用 count_tokens 估算每轮上下文占用，把「离上限还有多远」实时显示出来，为压缩做准备。', minutes: 120, hasContent: true },
+      { slug: 'ba4-c4', title: '自动压缩：上下文快满了怎么续命', topic: '自动压缩', hook: '逼近上限时，让模型把早期历史总结成一段摘要、替换掉原始消息——forge 由此能跑很长的任务。', minutes: 150, hasContent: true },
     ],
   },
   {

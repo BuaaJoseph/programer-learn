@@ -15,6 +15,10 @@ export interface CompleteParams {
 export interface Provider {
   /** 这个 provider 当前使用的模型标识，用于展示与日志。 */
   readonly model: string
+  /** 这个模型的上下文窗口大小（token 数），用于 token 预算与自动压缩。 */
+  readonly contextWindow: number
   /** 发一轮请求，拿回模型这一轮的完整回复。 */
   complete(params: CompleteParams): Promise<AssistantTurn>
+  /** 估算给定 system + messages + tools 会占用多少输入 token（用于预算）。 */
+  countTokens(params: Omit<CompleteParams, 'onTextDelta' | 'maxTokens'>): Promise<number>
 }
