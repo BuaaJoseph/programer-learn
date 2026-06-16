@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import { Agent } from './agent.js'
 import { ALL_TOOLS } from './tools/index.js'
+import { makeTodoTool } from './tools/todo.js'
+import { makeTaskTool } from './tools/task.js'
+import { TodoStore } from './todo.js'
 import { ClaudeProvider } from './provider/claude.js'
 import { buildSystemPrompt } from './context.js'
 import { startRepl } from './repl.js'
 import { FileAuditLog } from './audit.js'
+import type { Tool } from './tools/types.js'
 
 const DIM = '\x1b[2m'
 const RED = '\x1b[31m'
@@ -20,9 +24,30 @@ async function main(): Promise<void> {
   const provider = new ClaudeProvider()
   const sessionId = new Date().toISOString().replace(/[:.]/g, '-')
   const audit = new FileAuditLog(process.cwd(), sessionId)
-  const agent = new Agent({
+  const todos = new TodoStore()
+
+  // 子代理：用主代理的核心工具 + 独立上下文跑子任务，共用主代理的确认通道。
+  // 注意子代理的工具里不含 task 本身，避免无限递归派生。
+  let agent: Agent
+  const taskTool = makeTaskTool(async (prompt, cwd) => {
+    const sub = new Agent({
+      provider,
+      tools: ALL_TOOLS,
+      system: buildSystemPrompt(cwd),
+      cwd,
+      audit,
+      maxTurns: 30,
+      confirm: (req) => agent.requestConfirm(req),
+    })
+    return sub.runTurn(prompt)
+  })
+
+  // 主代理的完整工具表 = 核心工具 + 任务清单 + 子代理。
+  const tools: Tool[] = [...ALL_TOOLS, makeTodoTool(todos), taskTool]
+
+  agent = new Agent({
     provider,
-    tools: ALL_TOOLS,
+    tools,
     system: buildSystemPrompt(process.cwd()),
     cwd: process.cwd(),
     audit,

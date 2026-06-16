@@ -72,9 +72,9 @@ export const VOLUMES = [
     subtitle: 'Planning & Subagents',
     theme: '面对大任务，Agent 需要会规划、会分而治之。这一卷实现 TodoWrite 任务清单、只读的计划模式、隔离上下文的子代理。',
     chapters: [
-      { slug: 'ba5-c1', title: 'TodoWrite：把大任务拆成清单', topic: '任务清单', hook: '给 forge 一个待办工具：拆步骤、标状态、同时只能有一个进行中——让长任务不跑偏、可追踪。', minutes: 120, hasContent: false },
-      { slug: 'ba5-c2', title: '计划模式：先想清楚再动手', topic: '计划模式', hook: '一种「只读探索、产出计划、等你批准」的模式：动手前先给方案，避免一上来就乱改。', minutes: 120, hasContent: false },
-      { slug: 'ba5-c3', title: '子代理：用 Task 隔离上下文', topic: '子代理', hook: '把独立子任务丢给一个跑在干净上下文里的子代理，它只回传结果摘要——主上下文不被中间过程塞爆。', minutes: 150, hasContent: false },
+      { slug: 'ba5-c1', title: 'TodoWrite：把大任务拆成清单', topic: '任务清单', hook: '给 forge 一个待办工具：拆步骤、标状态、同时只能有一个进行中——让长任务不跑偏、可追踪。', minutes: 120, hasContent: true },
+      { slug: 'ba5-c2', title: '计划模式：先想清楚再动手', topic: '计划模式', hook: '一种「只读探索、产出计划、等你批准」的模式：动手前先给方案，避免一上来就乱改。', minutes: 120, hasContent: true },
+      { slug: 'ba5-c3', title: '子代理：用 Task 隔离上下文', topic: '子代理', hook: '把独立子任务丢给一个跑在干净上下文里的子代理，它只回传结果摘要——主上下文不被中间过程塞爆。', minutes: 150, hasContent: true },
     ],
   },
   {

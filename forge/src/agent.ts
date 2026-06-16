@@ -14,6 +14,12 @@ export interface ConfirmRequest {
   reason: string
 }
 
+const PLAN_MODE_SUFFIX = `
+
+# 计划模式（重要）
+当前处于计划模式：你只能使用只读工具（read/list/glob/grep）调研，绝对不要修改文件或执行写操作。
+请先把相关代码看清楚，然后用文字给出一份清晰的分步计划，等待用户批准后再退出计划模式动手。`
+
 export interface AgentOptions {
   provider: Provider
   tools: Tool[]
@@ -58,6 +64,8 @@ export class Agent {
   private compactThreshold: number
   /** 标记：下一轮开始前需要先压缩历史。 */
   private needCompact = false
+  /** 计划模式：只读探索、产出计划、不改任何东西。 */
+  private planMode = false
   /** 跨多次 runTurn 持续累积的会话历史。 */
   messages: Message[] = []
 
@@ -79,6 +87,20 @@ export class Agent {
   /** 设置危险操作确认回调（供 REPL 注入 y/N 提问）。 */
   setConfirm(confirm: (req: ConfirmRequest) => Promise<boolean>): void {
     this.confirm = confirm
+  }
+
+  /** 走当前确认回调问一句（供子代理复用主代理的确认通道）。 */
+  requestConfirm(req: ConfirmRequest): Promise<boolean> {
+    return this.confirm ? this.confirm(req) : Promise.resolve(false)
+  }
+
+  /** 开/关计划模式。开启后只允许只读工具、要求先给计划。 */
+  setPlanMode(on: boolean): void {
+    this.planMode = on
+  }
+
+  get inPlanMode(): boolean {
+    return this.planMode
   }
 
   /** 当前使用的模型标识（来自 Provider）。 */
@@ -105,10 +127,14 @@ export class Agent {
       // 在每轮开始前（消息历史处于完整状态时）检查是否需要压缩。
       if (this.needCompact) await this.compact()
 
+      // 计划模式：只给只读工具，并在 system 末尾加上「只调研、给计划、别动手」的约束。
+      const tools = this.planMode ? this.toolList.filter((t) => t.readOnly) : this.toolList
+      const system = this.planMode ? this.system + PLAN_MODE_SUFFIX : this.system
+
       const res = await this.provider.complete({
-        system: this.system,
+        system,
         messages: this.messages,
-        tools: this.toolList,
+        tools,
         maxTokens: this.maxTokens,
         onTextDelta: (delta) => this.onEvent?.({ type: 'assistant_delta', text: delta }),
       })

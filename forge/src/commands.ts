@@ -50,6 +50,15 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: 'plan',
+    description: '开/关计划模式（只读调研、先给计划再动手）',
+    run(_args, ctx) {
+      const on = !ctx.agent.inPlanMode
+      ctx.agent.setPlanMode(on)
+      ctx.print(on ? '已进入计划模式：forge 只会调研并给出计划，不会修改任何东西。' : '已退出计划模式。')
+    },
+  },
+  {
     name: 'tools',
     description: '列出已注册的工具',
     run(_args, ctx) {
