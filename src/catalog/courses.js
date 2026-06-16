@@ -10,10 +10,16 @@ import kafka from '../courses/kafka/index.js'
 import zookeeper from '../courses/zookeeper/index.js'
 import nginx from '../courses/nginx/index.js'
 import elasticsearch from '../courses/elasticsearch/index.js'
+import jvm from '../courses/jvm/index.js'
+import javaConcurrency from '../courses/java-concurrency/index.js'
+import spring from '../courses/spring/index.js'
 
 export const COURSES = [
   llmHandbook,
   claudeSkills,
+  jvm,
+  javaConcurrency,
+  spring,
   mysqlInternals,
   redisInternals,
   rabbitmq,

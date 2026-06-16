@@ -57,6 +57,12 @@ export default function CourseCover({ course }) {
         <ProxyScene />
       ) : coverScene === 'invindex' ? (
         <InvIndexScene />
+      ) : coverScene === 'heap' ? (
+        <HeapScene />
+      ) : coverScene === 'threads' ? (
+        <ThreadsScene />
+      ) : coverScene === 'beans' ? (
+        <BeansScene />
       ) : (
         <AttentionScene />
       )}
@@ -346,6 +352,76 @@ function InvIndexScene() {
         </g>
       ))}
       <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">inverted index</text>
+    </g>
+  )
+}
+
+function HeapScene() {
+  // JVM 内存分区
+  const regions = [
+    { name: '堆 Heap', w: 200, sub: '新生代 + 老年代' },
+    { name: '方法区', w: 120, sub: 'Metaspace' },
+    { name: '虚拟机栈', w: 100, sub: '栈帧' },
+    { name: '程序计数器', w: 120, sub: 'PC' },
+  ]
+  return (
+    <g>
+      <text x="40" y="42" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">JVM Runtime Data Areas</text>
+      {regions.map((r, i) => {
+        const x = 40 + (i % 2) * 170
+        const y = 56 + Math.floor(i / 2) * 50
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width="150" height="40" rx="8" fill="#ffffff" fillOpacity={i === 0 ? 0.26 : 0.15} stroke="#ffffff" strokeOpacity="0.5" />
+            <text x={x + 12} y={y + 18} fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">{r.name}</text>
+            <text x={x + 12} y={y + 32} fontFamily="var(--mono)" fontSize="8" fill="#ffffff" fillOpacity="0.7">{r.sub}</text>
+          </g>
+        )
+      })}
+      <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">heap · gc · class loading</text>
+    </g>
+  )
+}
+
+function ThreadsScene() {
+  // 多线程时间线
+  return (
+    <g>
+      <text x="40" y="42" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff" fillOpacity="0.9">threads · locks · JMM</text>
+      {[0, 1, 2].map((t) => (
+        <g key={t} transform={`translate(40 ${60 + t * 32})`}>
+          <text x="0" y="14" fontFamily="var(--mono)" fontSize="9" fill="#ffffff" fillOpacity="0.7">T{t}</text>
+          <line x1="28" y1="10" x2="320" y2="10" stroke="#ffffff" strokeOpacity="0.3" strokeWidth="1.5" />
+          {[0, 1, 2, 3].map((b) => (
+            <rect key={b} x={28 + b * 80 + (t * 14)} y="4" width="46" height="12" rx="3" fill="#ffffff" fillOpacity={0.15 + ((b + t) % 2) * 0.18} />
+          ))}
+        </g>
+      ))}
+      {/* 锁标记 */}
+      <circle cx="200" cy="70" r="9" fill="#ffffff" fillOpacity="0.3" />
+      <text x="200" y="74" textAnchor="middle" fontSize="10">🔒</text>
+      <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">synchronized · AQS · pool</text>
+    </g>
+  )
+}
+
+function BeansScene() {
+  // IoC 容器装着 beans
+  return (
+    <g>
+      <rect x="40" y="40" width="280" height="110" rx="12" fill="#ffffff" fillOpacity="0.1" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.5" />
+      <text x="54" y="60" fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">IoC Container</text>
+      {['UserService', 'OrderDao', 'RedisConfig', 'Controller', 'TxManager', 'AopProxy'].map((b, i) => {
+        const x = 56 + (i % 3) * 90
+        const y = 74 + Math.floor(i / 3) * 38
+        return (
+          <g key={b}>
+            <rect x={x} y={y} width="82" height="28" rx="14" fill="#ffffff" fillOpacity="0.2" stroke="#ffffff" strokeOpacity="0.5" />
+            <text x={x + 41} y={y + 18} textAnchor="middle" fontFamily="var(--mono)" fontSize="8.5" fill="#ffffff">{b}</text>
+          </g>
+        )
+      })}
+      <text x="40" y="184" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">IoC · AOP · transaction</text>
     </g>
   )
 }
