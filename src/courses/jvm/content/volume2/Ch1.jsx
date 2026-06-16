@@ -25,6 +25,40 @@ public class ReferenceDemo {
     }
 }`
 
+const refQueueCode = `import java.lang.ref.*;
+
+// 虚引用 + 引用队列：在对象被回收时收到通知，做善后清理
+public class PhantomDemo {
+    public static void main(String[] args) throws Exception {
+        ReferenceQueue<Object> queue = new ReferenceQueue<>();
+        Object obj = new Object();
+        PhantomReference<Object> phantom =
+                new PhantomReference<>(obj, queue);
+
+        System.out.println(phantom.get()); // 永远是 null
+
+        obj = null;       // 去掉强引用
+        System.gc();      // 触发回收
+
+        // 对象被回收后，它的虚引用会被放入 queue，可在此做资源清理
+        Reference<?> ref = queue.remove(1000);
+        System.out.println("收到回收通知：" + (ref != null));
+    }
+}`
+
+const leakCode = `// 经典内存泄漏：静态集合无限增长
+public class LeakCache {
+    // static 字段是 GC Root，它引用的对象永远可达、永不回收
+    private static final List<byte[]> CACHE = new ArrayList<>();
+
+    public void handle() {
+        // 每次请求都往里塞，却从不清理 —— 老年代只涨不降
+        CACHE.add(new byte[1024 * 1024]);
+    }
+}
+// 修复思路：设容量上限、用带过期/淘汰的缓存（如 Caffeine），
+// 或用 WeakHashMap 让 key 不再被外部引用时条目自动消失`
+
 export default function Ch1() {
   return (
     <>
@@ -45,6 +79,13 @@ export default function Ch1() {
       <p>
         但 Java 没有采用它，原因是一个致命缺陷：<strong>循环引用</strong>。两个对象互相引用对方，
         哪怕外界已经没有任何地方再用到它们，它俩的计数器也永远不会归零，于是这块内存就永远收不回来，成了泄漏。
+      </p>
+      <p>
+        引用计数法还有两个常被忽略的代价：其一，<strong>每次赋值都要改计数器</strong>，
+        引用频繁变动的场景里这笔开销不小，还要保证并发下计数器的原子性；
+        其二，回收一个对象时要<strong>递归地</strong>把它引用的对象计数也减一，可能引发连锁回收、产生不可控的停顿。
+        所以「实现简单」其实只是表面，真正用到大型托管运行时里，问题一大堆。Python 用它，是因为额外配了
+        一个专门处理循环引用的 GC 来打补丁——这恰恰说明引用计数自己搞不定循环引用。
       </p>
 
       <Example title="两个对象互相引用，却谁都不需要">
@@ -79,6 +120,32 @@ export default function Ch1() {
         <li><strong>本地方法栈中 JNI 引用</strong>：Native 方法持有的对象引用；</li>
         <li>此外还有被同步锁 <code>synchronized</code> 持有的对象、JVM 内部的系统类加载器等。</li>
       </ul>
+      <p>
+        记住「<strong>static 字段是 GC Root</strong>」这一条尤其重要，它是绝大多数内存泄漏的根源：
+        一个不断往里塞东西、却从不清理的静态集合，会让里面所有对象永远可达、永远回收不掉。
+      </p>
+      <Example title="最常见的内存泄漏：静态集合越长越大">
+        <CodeBlock lang="java" title="LeakCache.java" code={leakCode} />
+        <p>
+          这段代码里 <code>CACHE</code> 是静态的，等于一条永不断开的 GC Root 引用链；
+          只要往里 <code>add</code>、不 <code>remove</code>，这些 <code>byte[]</code> 就永远活着、不断晋升到老年代，
+          表现就是「Full GC 越来越频繁、老年代占用降不下来」。八成的「线上内存泄漏」最后都查到一个失控的静态容器。
+        </p>
+      </Example>
+
+      <Callout variant="tip" title="可达性分析也要 STW：三色标记与并发难题">
+        <p>
+          可达性分析不是一瞬间完成的，遍历整张对象图很耗时。如果遍历期间业务线程还在改引用关系，
+          就可能<strong>把活对象误判成垃圾</strong>。学术上用<strong>三色标记</strong>（白/灰/黑）描述这个过程：
+          白色未访问、灰色已访问但孩子没处理完、黑色完全处理完。漏标的两个充要条件是
+          「黑色对象新指向了白色对象」且「灰色到该白色的所有路径被切断」。
+        </p>
+        <p>
+          解决办法有两类：<strong>增量更新</strong>（记录黑色新增的引用，CMS 用）和
+          <strong>原始快照 SATB</strong>（记录被删除的引用，G1 用），靠写屏障把这些变动记下来，
+          重新标记阶段再补扫。这就是为什么再「并发」的收集器也躲不开一两次短暂 STW——可达性分析的并发正确性是有代价的。
+        </p>
+      </Callout>
 
       <KeyIdea title="可达 ≠ 一定不回收">
         <p>
@@ -107,6 +174,18 @@ export default function Ch1() {
           唯一用途是在对象被回收时收到一个通知，配合引用队列做善后（如堆外内存的清理）。
         </li>
       </ul>
+      <Example title="虚引用 + 引用队列：怎么收到回收通知">
+        <p>
+          虚引用最难理解，因为 <code>get()</code> 永远返回 <code>null</code>，它根本不是用来「拿对象」的，
+          而是用来「知道对象什么时候被回收」的。配合 <code>ReferenceQueue</code>，对象被回收时它的虚引用会进队列，
+          你就能在那一刻做善后——这正是 <code>DirectByteBuffer</code> 用 <code>Cleaner</code> 释放堆外内存的机制。
+        </p>
+        <CodeBlock lang="java" title="PhantomDemo.java" code={refQueueCode} />
+        <p>
+          注意四种引用都能配引用队列：软/弱引用进队列时对象已被回收（<code>get()</code> 返回 null），
+          这正是 <code>WeakHashMap</code> 清理失效条目的底层依据。
+        </p>
+      </Example>
 
       <Callout variant="warn" title="别指望 finalize() 救场">
         <p>
@@ -117,6 +196,7 @@ export default function Ch1() {
           <li>执行时机完全不确定，甚至可能<strong>永远不被执行</strong>；</li>
           <li>它运行在一个优先级很低、随时可能被卡住的线程上；</li>
           <li>在 <code>finalize()</code> 里「自救」（重新被 GC Roots 引用）只能成功一次，且代码极易出错。</li>
+          <li>有 <code>finalize()</code> 的对象<strong>至少要经历两次 GC</strong> 才能被回收，平白拖慢回收、增大停顿。</li>
         </ul>
         <p>
           所以 <code>finalize()</code> 早已被官方标记为废弃，<strong>千万不要用它来做资源释放</strong>。
@@ -131,6 +211,14 @@ export default function Ch1() {
         不可达即垃圾。如果面试官追问，再补上四种引用的回收时机，以及 <code>finalize()</code> 不可靠、不要用。
         这样一条线下来，既有「为什么」又有「怎么做」，是很完整的回答。
       </p>
+      <p>
+        加分追问：<strong>「可达性分析时业务线程在改引用怎么办？」</strong>——讲三色标记的漏标问题，
+        以及增量更新（CMS）/ SATB（G1）配合写屏障来修正。
+        <strong>「软引用一定能防 OOM 吗？」</strong>——不能完全保证，软引用回收发生在「即将 OOM」时，
+        如果对象增长太快、回收赶不上，照样 OOM；而且大量软引用本身会增加 GC 负担，所以缓存更推荐用带容量和过期策略的专门库。
+        <strong>「WeakHashMap 适合做缓存吗？」</strong>——它的 key 弱引用一旦外部不再持有就被回收，
+        生命周期不可控，做缓存效果差，它更适合「附属信息」这类随 key 共存亡的场景。
+      </p>
 
       <Practice title="动手看软引用与弱引用的差别">
         <p>
@@ -142,16 +230,23 @@ export default function Ch1() {
           试着把软引用那行的数组改得很大、再用 <code>-Xmx</code> 把堆压到很小，你会看到软引用也开始被回收——
           这正是它「内存不足才让路」的特性。
         </p>
+        <p>
+          再做一个泄漏实验：把对象不停 <code>add</code> 进一个 <code>static List</code> 并打开 GC 日志，
+          会看到老年代占用一路上涨、Full GC 越来越密却降不下去；改用 <code>WeakHashMap</code> 或设上限的缓存后，
+          内存曲线立刻恢复健康。这能让你亲手把「static 是 GC Root」和「内存泄漏」这两件事串起来。
+        </p>
       </Practice>
 
       <Summary
         points={[
-          '引用计数法简单及时，但解决不了循环引用，所以 Java 不用它。',
+          '引用计数法简单及时，但解决不了循环引用，且每次赋值都改计数、回收会连锁，所以 Java 不用它。',
           'JVM 用可达性分析：从 GC Roots 出发遍历引用链，不可达的对象判为垃圾。',
           'GC Roots 包括虚拟机栈本地变量、方法区静态变量与常量、本地方法栈的 JNI 引用等。',
+          'static 字段是 GC Root，失控的静态集合是最常见的内存泄漏根源。',
+          '可达性分析也要并发正确：三色标记的漏标靠写屏障 + 增量更新(CMS)/SATB(G1) 修正，故躲不开短暂 STW。',
           '引用分强、软、弱、虚四档：强引用绝不回收，软引用内存不足才回收，弱引用一次 GC 即回收，虚引用仅用于回收通知。',
-          'finalize() 执行时机不确定、可能不执行，已废弃，绝不能用它做资源释放。',
-          '面试核心：先否掉引用计数法，再讲 GC Roots 可达性分析，最后补四种引用的回收时机。',
+          'finalize() 执行时机不确定、可能不执行、还拖慢回收，已废弃，绝不能用它做资源释放，改用 Cleaner / try-with-resources。',
+          '面试核心：先否掉引用计数法，再讲 GC Roots 可达性分析，最后补四种引用与三色标记。',
         ]}
       />
     </>

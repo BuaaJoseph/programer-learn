@@ -139,6 +139,23 @@ export default function Ch4() {
         建造者模式用一个内部 Builder，把对象<strong>分步构建</strong>出来。
       </p>
       <p>
+        先感受一下没有建造者时的痛——「可伸缩构造方法」反模式：
+      </p>
+      <CodeBlock lang="java" title="反模式：可伸缩构造方法" code={telescopingCode} />
+      <p>
+        参数一多，可读性、可维护性全面崩塌：分不清谁是谁、可选组合呈指数级、还无法保证不可变。
+        另一个常见替代方案是「先 new 一个空对象再一堆 setter」（JavaBean 模式），
+        但它的致命缺陷是<strong>对象在构造过程中处于不一致状态</strong>，且无法做成 final 不可变对象。
+        建造者正是要同时解决这两类方案的缺陷。
+      </p>
+      <p>
+        从 GoF 角度看，建造者完整有四个角色：<strong>Builder</strong>（抽象建造者，声明各装配步骤）、
+        <strong>ConcreteBuilder</strong>（具体建造者，实现各步骤并提供 <code>getResult</code>）、
+        <strong>Product</strong>（被构建的复杂产品）、<strong>Director</strong>（指挥者，封装固定的装配顺序）。
+        工程里常用的「静态内部 Builder + 链式调用」是它的简化变体，通常省掉了 Director：
+      </p>
+      <CodeBlock lang="java" title="可选角色：Director 指挥者" code={directorCode} />
+      <p>
         它的三个好处：第一，<strong>链式调用</strong>，每个设值方法返回 this，写起来流畅；
         第二，<strong>可读性强</strong>，<code>.timeout(5000)</code> 一眼就知道在设什么；
         第三，能产出<strong>不可变对象</strong>——字段设为 final，构造完就不可改，天然线程安全。
@@ -151,6 +168,29 @@ export default function Ch4() {
         <code>StringBuilder</code> 的 <code>append().append()</code> 也是建造者思想的链式拼装；
         OkHttp、各种 Config 配置对象基本都用建造者来构建。
       </p>
+      <p>
+        更多例子：<code>StringBuilder</code> / <code>StringBuffer</code> 的 append 链、
+        Java 8 的 <code>Stream.Builder</code>、Guava 的 <code>ImmutableList.builder()</code>、
+        Spring Security 的 <code>HttpSecurity</code> 链式配置、MyBatis 的 <code>SqlSessionFactoryBuilder</code>。
+        凡是看到「<code>.xxx().yyy().build()</code> 然后产出一个配置好的对象」，背后基本都是建造者。
+      </p>
+
+      <h3>建造者 vs 工厂：别搞混</h3>
+      <p>
+        两者都是创建型、都绕开了直接 new，但关注点不同：
+        <strong>工厂</strong>关心「造哪个对象」（按类型一步拿成品，产品之间往往是兄弟关系）；
+        <strong>建造者</strong>关心「怎样一步步把一个复杂对象装配出来」（多步、可配置，产品是同一个但配置多样）。
+        一句话：工厂解决「<em>是什么</em>」，建造者解决「<em>怎么装</em>」。
+      </p>
+
+      <Callout variant="warn" title="建造者不是万能的">
+        <p>
+          建造者有成本：要为产品多写一个 Builder 类、每个字段写一遍。
+          如果对象只有两三个字段、且都是必填，直接用构造方法更省事，硬上 Builder 就是过度设计。
+          建议门槛：<strong>字段超过 4 个、或可选项较多、或需要不可变</strong>时才用建造者
+          （或直接用 Lombok 的 <code>@Builder</code> 省去样板代码）。
+        </p>
+      </Callout>
 
       <Example title="构造方法 vs 建造者">
         <ul>
@@ -171,6 +211,14 @@ export default function Ch4() {
         与其每个都从头初始化，不如<strong>先造一个原型，之后靠克隆来产出新对象</strong>。
         在 Java 里通常通过实现 <code>Cloneable</code> 接口、重写 <code>clone()</code> 来实现。
       </p>
+      <p>
+        原型模式的意图是<strong>用「拷贝已有实例」代替「从头创建」</strong>。它的 UML 角色很简单：
+        <strong>Prototype</strong>（声明 <code>clone</code> 的接口）、
+        <strong>ConcretePrototype</strong>（实现克隆的具体类）、
+        <strong>Client</strong>（拿着原型调 clone 产新对象）。
+        典型适用场景：对象创建成本高（要查库、读配置、大量计算）；需要大量结构相同、仅少量字段不同的对象；
+        或想隔离「具体类」——客户端只持有原型引用，不关心它到底是哪个类。
+      </p>
 
       <h3>浅克隆 vs 深克隆（核心考点）</h3>
       <p>
@@ -181,6 +229,19 @@ export default function Ch4() {
         实现深克隆有两条路：手动把每个引用字段也 clone 一遍，或者用
         <strong>序列化再反序列化</strong>（把对象写成字节流再读回来）一次性深拷贝整棵对象树。
       </p>
+      <CodeBlock lang="java" title="序列化实现深克隆" code={serializeDeepCloneCode} />
+      <p>
+        实战里还有几个变体值得知道：用 JSON 工具（如 Jackson、Gson）「序列化再反序列化」也能做深拷贝，
+        且不要求实现 Serializable，但会丢失类型信息、性能一般；
+        Spring 的 <code>BeanUtils.copyProperties</code>、Apache 的 <code>BeanUtilsBean</code>
+        本质是<strong>浅拷贝</strong>（只拷一层属性引用），用时要当心嵌套对象被共享。
+      </p>
+
+      <h3>原型 vs 拷贝构造方法</h3>
+      <p>
+        原型模式与「拷贝构造方法 <code>new User(other)</code>」目的相同，差别在<strong>多态</strong>：
+        <code>clone()</code> 能在「只持有抽象类型引用、不知道具体类」时也复制出正确的子类对象；
+        而拷贝构造方法在编译期就写死了类型。当客户端需要复制一个「运行期才知道具体类型」的对象时，原型才有不可替代的价值。</p>
 
       <KeyIdea title="一句话区分浅与深">
         <p>
@@ -227,6 +288,9 @@ export default function Ch4() {
           '身边的建造者：Lombok 的 @Builder、StringBuilder 的 append 链、各种 Config 构建。',
           '原型模式通过克隆创建对象，适合创建成本高、又需要大量相似实例的场景。',
           '浅克隆只复制一层壳、引用字段仍共享；深克隆连引用对象一起复制，可逐字段 clone 或用序列化实现。',
+          '建造者四角色（Builder/ConcreteBuilder/Product/Director），工程常用简化版省掉 Director；门槛是字段多、可选多或要不可变。',
+          '建造者 vs 工厂：工厂关心「是什么」（按类型拿成品），建造者关心「怎么装」（多步配置同一对象）。',
+          '原型 vs 拷贝构造：clone 支持在只持有抽象引用时多态复制，拷贝构造编译期写死类型；BeanUtils.copyProperties 是浅拷贝要当心。',
           'Cloneable 设计有缺陷，工程中常改用拷贝构造、静态工厂或 JSON / 序列化做深拷贝。',
         ]}
       />

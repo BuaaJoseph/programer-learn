@@ -46,6 +46,43 @@ public OrderService orderService() {
     return new OrderService();
 }`
 
+const awareCode = `@Component
+public class ContextHolder
+        implements BeanNameAware, ApplicationContextAware {
+
+    private String beanName;
+    private ApplicationContext ctx;
+
+    @Override   // 容器把这个 Bean 的名字告诉它
+    public void setBeanName(String name) {
+        this.beanName = name;
+    }
+
+    @Override   // 容器把自己（上下文）交给这个 Bean
+    public void setApplicationContext(ApplicationContext ctx) {
+        // 拿到 ctx 后就能在运行期主动 getBean、发布事件
+        this.ctx = ctx;
+    }
+}`
+
+const destroyCode = `@Component
+public class ConnectionPool implements DisposableBean {
+
+    @PreDestroy                 // 1. 销毁阶段最先执行
+    public void preDestroy() {
+        System.out.println("1 @PreDestroy 释放资源");
+    }
+
+    @Override                   // 2. 其次执行
+    public void destroy() {
+        System.out.println("2 DisposableBean.destroy");
+    }
+    // 3. 最后执行 @Bean(destroyMethod="...") 指定的方法
+}
+
+// 注意：销毁回调只对 singleton 生效；
+// prototype Bean 容器创建后就撒手不管，@PreDestroy 永远不会被调用`
+
 const bppCode = `@Component
 public class TimingBeanPostProcessor implements BeanPostProcessor {
 
@@ -109,6 +146,23 @@ export default function Ch2() {
           → 自定义 <code>destroy-method</code>。
         </li>
       </ul>
+      <p>
+        <strong>为什么要拆这么多步？</strong>因为 Spring 想给你足够多的「插槽」去介入对象的诞生过程，
+        又要保证介入的<strong>时机精确可控</strong>。实例化和属性填充分开，才能做到「先有半成品再补依赖」，
+        进而解决循环依赖；初始化前后各留一个 BPP 钩子，才能让 AOP、注解处理这些增强逻辑
+        无侵入地挂上去。每一步都是为某类扩展能力存在的，理解了「为什么分步」，整条流水线就不再是死记硬背。
+      </p>
+
+      <h3>Aware 回调：让 Bean 反向感知容器</h3>
+      <p>
+        正常情况下我们追求「业务 Bean 对容器零感知」，但有些基础设施型的 Bean 确实需要拿到容器内部资源
+        （自己的名字、容器本身、ClassLoader 等）。Spring 用一组 <code>*Aware</code> 接口满足这种需求，
+        实现哪个接口，容器就在属性填充之后、初始化之前回调对应方法把资源「喂」进来：
+      </p>
+      <CodeBlock lang="java" title="ContextHolder.java（Aware 回调示例）" code={awareCode} />
+      <p>
+        这其实是一种<strong>受控的依赖查找</strong>——能力很强但会让 Bean 耦合 Spring API，
+        所以只在写工具类、框架适配层时用，普通业务别碰。</p>
 
       <Example title="@PostConstruct 何时执行">
         <p>
@@ -138,6 +192,38 @@ export default function Ch2() {
           大量功能都是靠它实现的。理解了 BPP，就理解了 Spring 是怎么「无侵入」地增强你的 Bean 的。
         </p>
       </KeyIdea>
+
+      <Callout variant="info" title="BeanPostProcessor 与 BeanFactoryPostProcessor 别搞混">
+        <p>
+          名字像，时机和对象完全不同，这是源码层面的高频追问：
+        </p>
+        <ul>
+          <li>
+            <strong>BeanFactoryPostProcessor（BFPP）</strong>：在所有 Bean <strong>实例化之前</strong>执行，
+            操作的是 Bean 的「定义」（<code>BeanDefinition</code>，相当于图纸），可以改属性默认值、改作用域。
+            <code>{'@Value'}</code> 里 <code>{'${...}'}</code> 占位符的解析、<code>@Configuration</code> 类的处理，
+            靠的就是 <code>PropertySourcesPlaceholderConfigurer</code> 和 <code>ConfigurationClassPostProcessor</code> 这类 BFPP。
+          </li>
+          <li>
+            <strong>BeanPostProcessor（BPP）</strong>：在每个 Bean <strong>实例化之后</strong>、初始化前后执行，
+            操作的是 Bean 的「实例」（已经 new 出来的对象）。
+          </li>
+        </ul>
+        <p>一句话：BFPP 改图纸（定义），BPP 改成品（实例）；BFPP 整体早于 BPP。</p>
+      </Callout>
+
+      <Example title="销毁阶段的执行顺序与陷阱">
+        <p>
+          销毁和初始化对称，也是「注解 → 接口 → 自定义方法」三连，但有个大坑：
+        </p>
+        <CodeBlock lang="java" title="ConnectionPool.java（销毁回调）" code={destroyCode} />
+        <p>
+          关键边界：<strong>销毁回调只对 singleton 生效</strong>。prototype Bean 一旦交付，
+          容器就不再持有它的引用，<code>@PreDestroy</code> 永远不会触发，资源释放得自己兜底
+          （比如 try-with-resources 或显式 close）。另外，只有正常关闭容器
+          （<code>ctx.close()</code> 或注册了 JVM 关闭钩子）才会走销毁；进程被 kill -9 直接拍死，什么回调都不会执行。
+        </p>
+      </Example>
 
       <Callout variant="warn" title="单例 Bean 什么时候被创建">
         <p>

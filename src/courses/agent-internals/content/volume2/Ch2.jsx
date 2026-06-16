@@ -53,6 +53,33 @@ const turn5 = `// 重构任务进行到第 5 轮时，这一轮发出去的 mess
   //  ↑ 模型读完上面这一切，现在要输出「第 5 轮的动作」
 ]`
 
+const toolSchema = `// 一个工具定义的真实样子：name + description + input_schema
+{
+  name: "Edit",
+  description: "对一个已存在的文件做精确字符串替换。" +
+    "调用前必须先 Read 过该文件。old_string 必须在文件中唯一，" +
+    "否则用 replace_all。不要用它创建新文件——那是 Write 的活。",
+  input_schema: {
+    type: "object",
+    properties: {
+      file_path:   { type: "string", description: "要修改的文件绝对路径" },
+      old_string:  { type: "string", description: "要被替换掉的原文" },
+      new_string:  { type: "string", description: "替换成的新文本" },
+    },
+    required: ["file_path", "old_string", "new_string"],
+  },
+}`
+
+const tokenBudget = `# 第 12 轮时，一次调用的 token 大致分布（示意）
+system prompt     ~  600   固定
+工具定义           ~ 2,000  固定
+CLAUDE.md         ~  400   固定
+———————————————————————————————
+对话历史           ~ 3,500  随轮次增长
+工具结果(含全文)    ~ 9,000  ← 大头！auth.js 全文被反复带着
+———————————————————————————————
+合计              ~15,500  每一轮都重发一遍`
+
 export default function Ch2() {
   return (
     <>
@@ -70,6 +97,11 @@ export default function Ch2() {
         就是一个 messages 数组，固定由五部分拼成：
       </p>
       <CodeBlock lang="javascript" title="一次 LLM 调用的 messages 结构" code={messagesShape} />
+      <p>
+        <strong>为什么模型要设计成无状态的</strong>？因为无状态的服务才好水平扩展、好缓存、好容错——任意一台机器拿到这个
+        完整的 messages 数组，都能算出完全相同的下一步，不依赖「上一次是哪台机器、记得什么」。代价是：
+        所有「记忆」都得由调用方（也就是 harness）显式地塞进 messages。Agent 的「记性」不在模型里，在那个不断增长的数组里。
+      </p>
 
       <h3>逐块看：每一部分干什么</h3>
       <ul>
@@ -94,6 +126,30 @@ export default function Ch2() {
 
       <LlmTurn />
 
+      <h2>工具定义长什么样：description 才是灵魂</h2>
+      <p>
+        上面反复强调「description 是写给模型看的说明书」，到底什么意思？看一个 <code>Edit</code> 工具定义的真实形态：
+      </p>
+      <CodeBlock lang="javascript" title="一个工具定义：name + description + input_schema" code={toolSchema} />
+      <p>
+        注意 description 里那几句：<em>「调用前必须先 Read 过」「old_string 必须唯一」「不要用它创建新文件」</em>。
+        这些不是注释，而是模型在<strong>决定要不要用、怎么用这个工具时唯一的依据</strong>。模型不会去读 Edit 的源码，
+        它只读这段文字。所以工具作者写 description，本质是在<em>给模型编程</em>——你怎么描述，模型就怎么理解和使用。
+      </p>
+      <Callout variant="warn" title="常见误区：把工具行为问题当成模型问题">
+        <p>
+          当 Agent 频繁用错某个工具（比如老是不先 Read 就 Edit、老是把参数填错），很多人第一反应是「模型太笨」。
+          但实战经验是：<strong>八成是 description 没写清楚</strong>。把约束、前置条件、反例写进 description，
+          模型的行为往往立刻就对了。改 prompt 比换模型便宜太多——遇到工具用错，先回去审 description。
+        </p>
+      </Callout>
+      <p>
+        <strong>边界情况：工具不是越多越好</strong>。每多挂一个工具，工具定义这块就多占几百上千 token，<em>每一轮都带着</em>；
+        而且工具越多，模型越容易「挑花眼」选错。所以成熟的 Agent 会克制工具数量，宁可几个职责清晰的强工具，
+        也不堆一堆功能重叠的弱工具。这也是为什么有的 Agent 用同一个 <code>Bash</code> 工具跑各种命令，
+        而不是给每个命令都做一个专用工具。
+      </p>
+
       <h2>举例：重构任务的第 5 轮长什么样</h2>
       <p>
         抽象的结构不好记，我们把上一章那个重构任务，停在<strong>第 5 轮开始前</strong>，看看这一刻发给模型的 messages
@@ -104,6 +160,12 @@ export default function Ch2() {
         看清楚了吗？前三块（system / tools / CLAUDE.md）几乎一字没变；真正在<strong>疯长</strong>的，是后面的对话历史
         和工具结果——每多走一轮，就多压进去一对「模型的动作 + 执行的结果」。模型就是读着这一整坨，
         才知道「我已经拆了 login.js，下一步该拆 session.js 还是补测试」。
+      </p>
+      <p>
+        <strong>注意一个容易被忽略的细节</strong>：<code>tool_use</code> 是 <code>assistant</code> 角色发出的（模型提议调用），
+        而 <code>tool_result</code> 是以 <code>user</code> 角色塞回去的（环境给的反馈）。也就是说，工具的执行结果，
+        在模型眼里是「用户那一侧给我的新信息」。这个 <code>assistant 提议 → user 回结果</code> 的配对，
+        是整个对话历史的基本节拍，一轮一对，规规整整地往下排。
       </p>
 
       <KeyIdea title="模型凭什么决定下一步">
@@ -120,6 +182,7 @@ export default function Ch2() {
         真正失控的是<strong>累积的对话历史</strong>和<strong>工具结果</strong>——尤其工具结果：一次 <code>Read</code> 整个
         600 行的 auth.js，就能塞进去几千个 token，而且<strong>之后每一轮都还带着它</strong>。
       </p>
+      <CodeBlock lang="text" title="第 12 轮时的 token 分布（示意）" code={tokenBudget} />
       <Example title="同一份文件内容，被重复计费">
         <p>
           第 2 轮模型 Read 了 auth.js 全文（约 4000 token）。到了第 5、第 8、第 12 轮，只要这条 tool_result
@@ -127,12 +190,32 @@ export default function Ch2() {
           不是模型变笨了，是它每轮要重读的「卷宗」越来越厚。
         </p>
       </Example>
+      <p>
+        <strong>这里要破除一个误区</strong>：很多人以为「模型记住了前面的内容，所以后面不用再发」。恰恰相反——
+        正因为模型<em>不记得</em>，每一轮才必须把全部历史<strong>重新发一遍</strong>。第 12 轮和第 1 轮，
+        在模型看来是两次完全独立的、无关联的调用，关联全靠 messages 里那坨被重发的历史。
+        理解这点，你才会真正在意「别往历史里塞没用的大块内容」。
+      </p>
+      <p>
+        <strong>缓解手段的预告</strong>：既然固定的前缀（system / tools / CLAUDE.md）每轮一字不变，
+        就可以用<em>提示缓存</em>（prompt caching）把这段缓存住，避免重复计算，省时省钱。
+        而对疯长的历史，则有压缩、裁剪、子 Agent 隔离等办法。这些都是后面的主题，这里你只需先有个数：
+        <strong>固定前缀可缓存，增长的历史才是真正的负担。</strong>
+      </p>
 
       <Callout variant="warn" title="上下文是有上限的">
         <p>
           messages 的总长度受<strong>上下文窗口</strong>限制（比如 200K token）。历史和工具结果无限增长，迟早会撞顶。
           这正是后面要讲的压缩、裁剪、子 Agent 隔离等机制存在的根本原因——它们都是在跟「上下文越滚越大」这件事作斗争。
           现在你只需记住：每多读一个大文件、每多跑一轮，都在往这个会越来越满的桶里加水。
+        </p>
+      </Callout>
+      <Callout variant="warn" title="边界情况：撞到上限之前，质量就开始下滑">
+        <p>
+          别以为「没撞满 200K 就没事」。实践中，上下文越长，模型越容易<strong>忽略中间段的信息</strong>
+          （业界常说的「lost in the middle」）——关键约束如果埋在一大堆文件内容中间，模型可能就漏看了。
+          所以控制上下文长度，不只是为了省钱，更是为了<em>让模型把注意力放在该放的地方</em>。
+          又长又脏的上下文，本身就会拖垮决策质量。
         </p>
       </Callout>
 
@@ -142,6 +225,11 @@ export default function Ch2() {
         能 Grep 定位、只读相关片段，就别整文件吞，因为它会一直挂在上下文里。第二，<strong>长会话适时另起炉灶</strong>：
         当一个任务彻底做完，开新会话比在塞满的旧会话里继续更快更省。第三，理解了「模型只看 messages」，
         你就明白<strong>把上下文喂对</strong>才是让 Agent 变强的真正杠杆，而不是反复念「请认真一点」。
+      </p>
+      <p>
+        第四条，给写工具/写 prompt 的人：<strong>把好钢用在 description 和 CLAUDE.md 上</strong>。
+        这两块是你能直接「编程」模型行为的地方，而且写一次、每轮生效。与其在对话里一遍遍纠正它，
+        不如把那条纠正<em>沉淀</em>进 CLAUDE.md，让它从第一轮起就知道。
       </p>
 
       <Practice title="用伪 JSON 写出一轮 messages">
@@ -160,10 +248,12 @@ export default function Ch2() {
         points={[
           '一轮 = 一次 LLM 调用 = 把一个 messages 数组发给模型，模型输出下一个工具调用或最终文本。',
           'messages 固定五块：system prompt、工具定义、CLAUDE.md、对话历史、上一轮工具结果。',
-          '工具的 description 是写给模型看的说明书，模型靠它判断何时用、怎么用这个工具。',
-          '模型无状态，决策完全基于当前 messages；没塞进去的信息对它就不存在。',
-          'system/tools/CLAUDE.md 是常数开销，历史和工具结果随轮次累积、增长最快、被反复计费。',
-          '上下文窗口有上限，控制读入的内容与会话长度，是让 Agent 又快又省的关键。',
+          '模型是无状态的：它不记得上一轮，每轮都把全部历史重新发一遍，关联全靠 messages 里被重发的内容。',
+          '工具的 description 是写给模型看的说明书，模型靠它判断何时用、怎么用；用错工具往往是 description 没写清。',
+          'tool_use 由 assistant 发出、tool_result 以 user 角色塞回，一轮一对构成对话历史的基本节拍。',
+          'system/tools/CLAUDE.md 是常数开销（可被提示缓存），历史和工具结果随轮次累积、增长最快、被反复计费。',
+          '上下文不仅有窗口上限，过长还会让模型漏看中间信息，控制长度既省钱也提质。',
+          '把上下文喂对才是让 Agent 变强的杠杆；该沉淀的约束写进 CLAUDE.md，而不是对话里反复念。',
         ]}
       />
     </>

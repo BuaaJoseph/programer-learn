@@ -79,6 +79,59 @@ public class JdkProxyDemo {
     }
 }`
 
+const cglibProxyCode = `import net.sf.cglib.proxy.Enhancer;
+import net.sf.cglib.proxy.MethodInterceptor;
+import net.sf.cglib.proxy.MethodProxy;
+import java.lang.reflect.Method;
+
+// 目标类：没有实现任何接口，JDK 动态代理无能为力
+class UserService {
+    public void save(String name) {
+        System.out.println("保存用户：" + name);
+    }
+}
+
+public class CglibProxyDemo {
+
+    // MethodInterceptor：所有被代理方法都会进到 intercept
+    static class LogInterceptor implements MethodInterceptor {
+        public Object intercept(Object obj, Method method,
+                                Object[] args, MethodProxy proxy) throws Throwable {
+            System.out.println("[日志] 调用 " + method.getName());
+            // 注意用 invokeSuper（调父类方法），而不是 invoke，否则会无限递归
+            Object result = proxy.invokeSuper(obj, args);
+            System.out.println("[日志] 调用结束");
+            return result;
+        }
+    }
+
+    public static void main(String[] args) {
+        Enhancer enhancer = new Enhancer();
+        enhancer.setSuperclass(UserService.class);     // 设父类：生成它的子类
+        enhancer.setCallback(new LogInterceptor());
+        UserService proxy = (UserService) enhancer.create();
+        proxy.save("李四");   // 走的是子类重写后的方法 -> intercept
+    }
+}`
+
+const selfInvokeCode = `// AOP 经典陷阱：类内部自调用，事务/切面失效
+@Service
+public class OrderService {
+
+    @Transactional
+    public void create(Order order) {
+        // ...
+        this.audit(order);   // 走的是 this（真实对象），没经过代理！
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void audit(Order order) {
+        // 期望它开一个新事务，但因为是自调用，@Transactional 完全不生效
+    }
+}
+
+// 解法：①注入自己的代理 ②AopContext.currentProxy() ③拆成两个 Bean`
+
 export default function Ch1() {
   return (
     <>
@@ -100,6 +153,27 @@ export default function Ch1() {
         它由三个角色构成：<em>Subject</em>（共同接口）、<em>RealSubject</em>（真实对象）、
         <em>Proxy</em>（代理对象，持有真实对象的引用）。代理实现了和真实对象相同的接口，所以可以无缝替换原对象。
       </p>
+
+      <h3>代理的四种常见类型</h3>
+      <p>
+        按「控制访问」的目的不同，代理在 GoF 里分出几种典型用途，理解它们有助于在面试里举出对的例子：
+      </p>
+      <ul>
+        <li>
+          <strong>远程代理（Remote Proxy）</strong>：为「在另一台机器上的对象」提供本地替身，
+          代理在背后做序列化与网络传输。RPC 框架 Dubbo、Feign 就是它。
+        </li>
+        <li>
+          <strong>虚拟代理（Virtual Proxy）</strong>：延迟创建开销大的对象，先给个轻量替身，真正用到时才创建。
+          Hibernate 的懒加载、图片占位符都是它。
+        </li>
+        <li>
+          <strong>保护代理（Protection Proxy）</strong>：在访问前做权限校验，决定放不放行。权限切面、网关鉴权属于它。
+        </li>
+        <li>
+          <strong>智能引用代理（Smart Reference）</strong>：在访问时附带额外动作，如引用计数、缓存、日志、加锁。
+        </li>
+      </ul>
 
       <h3>静态代理：手写一个替身类</h3>
       <p>
@@ -147,6 +221,55 @@ export default function Ch1() {
         <code>private</code> 方法（不能被重写）。它通过 <code>MethodInterceptor</code> 的 <code>intercept</code>
         方法拦截调用，思路和 <code>InvocationHandler</code> 类似。
       </p>
+      <CodeBlock lang="java" title="CglibProxyDemo.java（无接口也能代理）" code={cglibProxyCode} />
+      <p>
+        注意上面的关键细节：CGLIB 拦截里要调 <code>proxy.invokeSuper(obj, args)</code>（调用父类方法），
+        而不是 <code>method.invoke(obj, args)</code>——后者会在子类代理对象上再次触发拦截，造成<strong>无限递归 StackOverflow</strong>。
+        这是 CGLIB 手写时最常见的坑。
+      </p>
+
+      <h2>JDK 动态代理 vs CGLIB 对比表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>JDK 动态代理</th>
+            <th>CGLIB</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>实现机制</td>
+            <td>运行期生成实现接口的代理类</td>
+            <td>运行期生成目标类的子类</td>
+          </tr>
+          <tr>
+            <td>依赖关系</td>
+            <td>基于接口（implements）</td>
+            <td>基于继承（extends）</td>
+          </tr>
+          <tr>
+            <td>前提</td>
+            <td>目标必须实现接口</td>
+            <td>无需接口，但类不能 final</td>
+          </tr>
+          <tr>
+            <td>拦截入口</td>
+            <td>InvocationHandler.invoke</td>
+            <td>MethodInterceptor.intercept</td>
+          </tr>
+          <tr>
+            <td>不能代理</td>
+            <td>没有接口的类</td>
+            <td>final 类、final/private 方法</td>
+          </tr>
+          <tr>
+            <td>是否内置</td>
+            <td>JDK 自带</td>
+            <td>需引入字节码库（ASM）</td>
+          </tr>
+        </tbody>
+      </table>
 
       <KeyIdea title="三者怎么选">
         <p>
@@ -173,6 +296,20 @@ export default function Ch1() {
           </li>
         </ul>
       </Callout>
+
+      <h3>自调用失效：原理与三种解法</h3>
+      <p>
+        这是工作中真正会踩、面试也最爱深挖的坑。Spring 注入给你的是<strong>代理对象</strong>，
+        切面逻辑（开事务、记日志）都织在代理上。可一旦在类内部用 <code>this.xxx()</code> 调另一个方法，
+        走的是真实对象自己的引用，绕过了代理，切面自然不触发：
+      </p>
+      <CodeBlock lang="java" title="自调用导致 @Transactional 失效" code={selfInvokeCode} />
+      <p>
+        三种常见解法：①把被调用的方法<strong>拆到另一个 Bean</strong>，通过注入调用（最干净）；
+        ②<strong>注入自己的代理</strong>（<code>@Autowired private OrderService self;</code> 再调 <code>self.audit()</code>）；
+        ③开启 <code>exposeProxy=true</code> 后用 <code>((OrderService) AopContext.currentProxy()).audit()</code>。
+        根因都一样：必须让调用<strong>经过代理那一层</strong>，切面才会生效。
+      </p>
 
       <h2>代理模式在实际中的应用</h2>
       <p>
@@ -206,6 +343,29 @@ export default function Ch1() {
         简单记：<strong>代理是「替你把门」，装饰器是「给你加料」</strong>。
       </p>
 
+      <h3>代理 vs 适配器 vs 外观（结构型三兄弟）</h3>
+      <p>
+        这三个都「包了一层」，但意图完全不同，常被一起对比：
+      </p>
+      <ul>
+        <li><strong>代理</strong>：接口不变，<strong>控制访问</strong>（要不要让你访问、何时创建）。</li>
+        <li><strong>适配器</strong>：接口<strong>改变</strong>，把 A 接口转成客户端要的 B 接口，解决兼容。</li>
+        <li><strong>装饰器</strong>：接口不变，<strong>增强功能</strong>，强调可层层叠加。</li>
+        <li><strong>外观</strong>：把一堆子系统接口<strong>收敛成一个</strong>简单入口，强调简化。</li>
+      </ul>
+      <p>
+        一句话钩子：代理控访问、适配转接口、装饰加功能、外观做简化。
+      </p>
+
+      <Callout variant="warn" title="代理不是免费的">
+        <p>
+          代理虽好，但每加一层都有<strong>性能与可调试性</strong>成本：反射调用比直接调用慢、
+          调用栈里多了一堆 <code>$Proxy</code> / <code>$$EnhancerBySpringCGLIB$$</code> 帧，排查问题更绕。
+          因此别滥用——只有真正需要「在不改源码的前提下统一织入横切逻辑」时才用代理，
+          简单场景直接调用就好，否则又是一种过度设计。
+        </p>
+      </Callout>
+
       <Practice title="手写一个 JDK 动态代理">
         <p>
           下面是一个完整可运行的 JDK 动态代理例子：用 <code>InvocationHandler</code> 给 <code>UserService</code>
@@ -226,6 +386,9 @@ export default function Ch1() {
           'JDK 动态代理基于 Proxy + InvocationHandler，用反射拦截调用，前提是目标必须实现接口。',
           'CGLIB 运行期生成目标类的子类、靠继承织入增强，无需接口，但不能代理 final 类与 final/private 方法。',
           '口诀「有接口走 JDK，没接口走 CGLIB」；Spring Boot 默认用 CGLIB，且类内自调用会让 AOP 失效。',
+          '代理按用途分四种：远程代理（RPC）、虚拟代理（懒加载）、保护代理（鉴权）、智能引用代理（计数/缓存）。',
+          '自调用失效根因是走 this 绕过代理，三种解法：拆 Bean、注入自身代理、AopContext.currentProxy()。',
+          'CGLIB 手写要用 invokeSuper 而非 invoke，否则无限递归 StackOverflow。',
           '应用遍布 Spring AOP/事务、RPC 远程代理、MyBatis Mapper、懒加载；与装饰器的区别是「代理控制访问、装饰增强功能」。',
         ]}
       />

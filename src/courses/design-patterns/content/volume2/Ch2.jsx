@@ -64,6 +64,52 @@ class Demo {
     }
 }`
 
+const objectAdapterCode = `// 对象适配器（推荐）：用「组合」持有被适配者，更灵活
+// 目标接口：客户端期望的
+interface Target {
+    String request();
+}
+
+// 被适配者：已有的、接口对不上的类
+class Adaptee {
+    String specificRequest() { return "老接口的数据"; }
+}
+
+// 对象适配器：实现目标接口，内部持有 Adaptee 实例（组合）
+class ObjectAdapter implements Target {
+    private final Adaptee adaptee;
+    ObjectAdapter(Adaptee adaptee) { this.adaptee = adaptee; }
+    public String request() {
+        return "适配后：" + adaptee.specificRequest();   // 转调 + 转换
+    }
+}`
+
+const classAdapterCode = `// 类适配器：用「继承」实现，受单继承限制、耦合更强，少用
+class ClassAdapter extends Adaptee implements Target {
+    public String request() {
+        return "适配后：" + specificRequest();   // 直接继承父类方法
+    }
+}`
+
+const facadeCode = `// 外观：把"下单"涉及的库存、支付、物流三个子系统藏到一个门面后面
+class InventoryService { void deduct(String sku) { /* 扣库存 */ } }
+class PaymentService   { void pay(long amount) { /* 扣款 */ } }
+class LogisticsService { void ship(String addr) { /* 发货 */ } }
+
+// 门面：客户端只跟它打交道，不必知道内部协作细节
+public class OrderFacade {
+    private final InventoryService inventory = new InventoryService();
+    private final PaymentService   payment   = new PaymentService();
+    private final LogisticsService logistics = new LogisticsService();
+
+    public void placeOrder(String sku, long amount, String addr) {
+        inventory.deduct(sku);    // 1. 扣库存
+        payment.pay(amount);      // 2. 付款
+        logistics.ship(addr);     // 3. 发货
+    }
+}
+// 客户端：new OrderFacade().placeOrder("A001", 9900, "北京");`
+
 export default function Ch2() {
   return (
     <>
@@ -85,6 +131,14 @@ export default function Ch2() {
         为什么不用继承？因为如果靠子类来组合功能，「加奶」「加糖」「加奶又加糖」「加奶加糖加香草」……会发生
         <strong>子类爆炸</strong>。装饰器把这些功能拆成一个个可叠加的小装饰，运行期想怎么组合就怎么组合。
       </p>
+      <p>
+        从 UML 看，装饰器有四个角色：<strong>Component</strong>（抽象组件，定义统一接口，如 <code>Coffee</code>）、
+        <strong>ConcreteComponent</strong>（被装饰的核心，如 <code>SimpleCoffee</code>）、
+        <strong>Decorator</strong>（抽象装饰类，实现 Component 接口并持有一个 Component 引用）、
+        <strong>ConcreteDecorator</strong>（具体装饰，在转发调用前后叠加功能）。
+        它最妙的一点是：装饰类<strong>既「是」一个 Component（implements），又「持有」一个 Component（组合）</strong>，
+        正因如此才能被当作普通 Component 继续被下一层装饰，从而无限套娃。
+      </p>
 
       <h3>最经典的例子：Java IO 流的装饰器链</h3>
       <p>
@@ -105,6 +159,15 @@ export default function Ch2() {
           这正是装饰器优于继承的地方。
         </p>
       </Example>
+
+      <Callout variant="warn" title="装饰器的代价：小类爆炸与顺序敏感">
+        <p>
+          装饰器并非没有缺点：其一，它会产生<strong>很多细粒度的小类</strong>，IO 包里几十个 Stream 类初学者望而生畏，
+          就是这个原因；其二，<strong>装饰顺序可能影响结果</strong>——「先加密再压缩」和「先压缩再加密」效果完全不同，
+          调试一条长装饰链时要小心定位是哪一层出了问题；其三，多层包裹后，用 <code>instanceof</code>
+          判断或拿到「最里层那个核心对象」会变得困难。功能正交、可自由组合时它才最划算。
+        </p>
+      </Callout>
 
       <h2>适配器模式：转换不兼容的接口</h2>
       <p>
