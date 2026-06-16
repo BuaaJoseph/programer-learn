@@ -56,6 +56,59 @@ def agent_loop(goal, max_turns=8):
 
 print(agent_loop('帮我整理本周未读邮件，把通知类的归档'))`
 
+const guardedLoopCode = `# 在最小循环上叠加四个「上线及格线」控制点：
+# 轮数上限、预算上限、人审关卡、可终止。
+import json, time
+from anthropic import Anthropic
+
+client = Anthropic()
+
+# 哪些动作不可逆，必须人审后才执行
+NEEDS_APPROVAL = {'archive_email', 'send_email', 'delete_file'}
+
+def run_tool(name, args):
+    return {'ok': True, 'name': name}  # 省略真实实现
+
+def agent_loop(goal, tools, run_tool,
+               max_turns=20, token_budget=200_000, should_stop=None):
+    messages = [{'role': 'user', 'content': goal}]
+    used_tokens = 0
+    for turn in range(max_turns):                 # 控制点①：轮数上限
+        if should_stop and should_stop():          # 控制点④：外部可终止
+            return '已被外部终止'
+        resp = client.messages.create(
+            # 推荐用最新模型 + 自适应思考；这里 effort 取 high 兼顾质量
+            model='claude-opus-4-8',
+            max_tokens=4096,
+            thinking={'type': 'adaptive'},
+            output_config={'effort': 'high'},
+            tools=tools,
+            messages=messages,
+        )
+        used_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+        if used_tokens > token_budget:             # 控制点②：预算上限
+            raise RuntimeError(f'token 预算 {token_budget} 已耗尽')
+
+        messages.append({'role': 'assistant', 'content': resp.content})
+        if resp.stop_reason != 'tool_use':
+            return resp.content
+
+        results = []
+        for block in resp.content:
+            if block.type != 'tool_use':
+                continue
+            if block.name in NEEDS_APPROVAL:        # 控制点③：人审关卡
+                ok = input(f'执行 {block.name}({block.input})? [y/N] ')
+                if ok.strip().lower() != 'y':
+                    results.append({'type': 'tool_result', 'tool_use_id': block.id,
+                                    'content': '用户拒绝了此操作', 'is_error': True})
+                    continue
+            out = run_tool(block.name, block.input)
+            results.append({'type': 'tool_result', 'tool_use_id': block.id,
+                            'content': json.dumps(out, ensure_ascii=False)})
+        messages.append({'role': 'user', 'content': results})
+    raise RuntimeError('超过最大轮数，强制终止')`
+
 export default function Ch6_1() {
   return (
     <>
@@ -79,6 +132,12 @@ export default function Ch6_1() {
         「帮我整理本周邮件」，至于怎么算「整理」、要不要先列出来再逐封判断，由模型在运行时临场决定。这是 Agent 强大的
         来源，也是它一切风险的来源。
       </p>
+      <p>
+        值得强调的一点是：<strong>模型本身一点没变</strong>。它依旧是第 1 卷讲的那个只会做 next-token prediction 的概率机器，
+        既不能联网、也不能动你的文件。所谓「调用工具」，其实是模型<strong>生成了一段结构化文本</strong>（「我想调 archive_email，参数 id=1」），
+        你的代码读到这段文本、解析出工具名和参数、真正去执行、再把结果当成新的上下文喂回去。Agent 的「自主」是一种<strong>编排上的错觉</strong>——
+        是你用一个循环，把模型的「文字意图」反复翻译成真实动作而已。理解这层，你才知道所有护栏该装在哪：装在代码这一侧，而不是指望模型自律。
+      </p>
 
       <h3>循环的最小骨架</h3>
       <p>
@@ -94,6 +153,11 @@ export default function Ch6_1() {
         模型本身不会执行任何动作——它只会「说」它想调什么工具，真正动手的永远是你的代码。这条边界，是后面讲护栏时
         所有约束能生效的物理前提。
       </p>
+      <p>
+        注意这个循环和第 5 卷的关系：每转一圈，上下文都会变长（多了一轮工具调用和它的返回结果）。跑几十上百轮的 Agent，
+        正是第 5 卷那套「滑窗 + 摘要 + 按需检索 + 预算裁剪」的主战场。<strong>Agent 循环负责「决定做什么」，上下文管理负责「在窗口和预算内可持续地做下去」</strong>，两者缺一不可。
+
+      </p>
 
       <h3>两种主流编排：ReAct vs Plan-and-Execute</h3>
       <p>
@@ -106,6 +170,18 @@ export default function Ch6_1() {
         然后按计划逐条执行，执行阶段不再随意改主意。它更可控、token 更省、便于人审计划，缺点是计划一旦在中途被现实
         打脸（某步失败了），需要额外的重规划机制。实践中常常混用：用 Plan 定大方向，用 ReAct 处理每一步内部的临场判断。
       </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>ReAct（边想边做）</th><th>Plan-and-Execute（先规划再执行）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>灵活性</td><td>高，能随中间结果改方向</td><td>低，执行阶段按计划走</td></tr>
+          <tr><td>可控/可审</td><td>难审，路径运行时才确定</td><td>易审，计划一次性产出可先过目</td></tr>
+          <tr><td>token 成本</td><td>较高，每轮都带思考</td><td>较省，规划集中在前期</td></tr>
+          <tr><td>失败处理</td><td>就地调整</td><td>需要显式的重规划机制</td></tr>
+          <tr><td>适合</td><td>探索型、步骤不定的任务</td><td>步骤较清晰、要可审计的任务</td></tr>
+        </tbody>
+      </table>
 
       <Example title="走一轮「整理本周邮件」">
         <p>你对 Agent 说：「帮我整理本周未读邮件，把通知类的归档。」循环可能这样转：</p>
@@ -129,6 +205,12 @@ export default function Ch6_1() {
         </p>
       </KeyIdea>
 
+      <p>
+        判断「该不该上 Agent」有四个可操作的检查项，缺一就往简单的那头退：<strong>复杂度</strong>（任务是否多步且难以提前完整描述）、
+        <strong>价值</strong>（结果是否值得更高的成本与延迟）、<strong>可行性</strong>（模型在这类任务上是否真的能做好）、<strong>错误代价</strong>（出错能不能被测试/审查/回滚兜住）。
+        四项都为「是」，自主 Agent 才划算；任何一项为「否」，优先单次调用或固定 workflow。
+      </p>
+
       <Callout variant="warn" title="自主带来的四类新风险">
         <p>一旦把方向盘交给模型，下面四件以前不会发生的事就成了常态：</p>
         <ul>
@@ -146,6 +228,18 @@ export default function Ch6_1() {
         <strong>人审关卡</strong>（删数据、发邮件、付款这类不可逆动作前暂停，等人点头）、<strong>可终止</strong>（任何时候外部能干净地把循环叫停）。
         这四个不是优化项，是上线前的及格线——后面几章讲的分解、反思、护栏、评估，本质都是在这个循环上加更细的控制。
       </p>
+      <p>
+        人审关卡这一项要点在于<strong>按可逆性分级</strong>，而不是逢动作就拦。读文件、搜网页这类只读、可重来的动作可以放行；
+        发邮件、删库、付款、对外发请求这类<strong>不可逆</strong>的动作才该卡住等人点头。这也呼应了「工具设计」的一条原则：把需要审批的高危动作
+        做成<strong>专门的工具</strong>（如 <code>send_email</code>），而不是塞进一个万能的 <code>bash</code>——前者你能精准拦截，后者你只看到一串不透明的命令字符串，没法分级。
+      </p>
+
+      <CodeBlock lang="python" title="guarded_agent_loop.py" code={guardedLoopCode} />
+      <p>
+        上面这版在最小循环上把四个控制点都补齐了：轮数上限、token 预算、按可逆性分级的人审、外部 <code>should_stop</code> 钩子。
+        模型用的是最新的 <code>claude-opus-4-8</code> 配自适应思考（<code>thinking: adaptive</code>）——让模型自己决定每一轮想多深，比手动设思考预算更省心；
+        <code>effort</code> 设为 <code>high</code> 兼顾智能与成本，长程 Agent 通常用 <code>high</code> 或 <code>xhigh</code>。这就是一个能上线的 Agent 内核雏形。
+      </p>
 
       <Practice title="跑一个最小自主循环">
         <p>
@@ -159,16 +253,21 @@ export default function Ch6_1() {
           <code>archive_email</code> 加一行「执行前 print 并 input 等你回车」，这就是最朴素的人审关卡；再故意让
           <code>list_unread_emails</code> 返回一封措辞像指令的邮件，观察模型会不会被带跑——这正是第 4 章护栏要解决的。
         </p>
+        <p>
+          进阶练习：把上面 <code>guarded_agent_loop.py</code> 的四个控制点逐一加进来，再人为让某个工具每次都返回错误，
+          观察模型会不会在 <code>max_turns</code> 内反复重试、最终被轮数上限兜住——亲眼看到「失控循环」是怎么被挡住的。
+        </p>
       </Practice>
 
       <Summary
         points={[
           'Agent 的本质是控制权翻转：从「代码调模型」变成「模型调代码」，分支逻辑从代码移进了模型的临场决策。',
+          '模型本身没变，仍是概率补全机器；「调用工具」只是它生成结构化文本、由你的代码翻译成真实动作——护栏因此必须装在代码侧。',
           '自主循环只有四步——观察、决策、执行、反馈——反复转；模型只「说」要调什么工具，真正执行的永远是代码。',
           'ReAct 边想边做、灵活但易跑偏；Plan-and-Execute 先规划再执行、可控省钱但需重规划，实践中常混用。',
-          '能画成固定流程图的任务就用 workflow 或普通代码解决，只有步骤数不定、需动态决策时才上自主 Agent。',
+          '能画成固定流程图的任务就用 workflow 或普通代码解决；用复杂度/价值/可行性/错误代价四项判断该不该上自主 Agent。',
           '自主带来四类新风险：失控循环、成本失控、错误累积、不可预测。',
-          '对应四个必装控制点：轮数上限、预算上限、人审关卡、可终止——这是 Agent 上线的及格线。',
+          '对应四个必装控制点：轮数上限、预算上限、按可逆性分级的人审关卡、可终止——这是 Agent 上线的及格线。',
         ]}
       />
     </>
