@@ -18,7 +18,8 @@ export class ClaudeProvider implements Provider {
   }
 
   async complete(params: CompleteParams): Promise<AssistantTurn> {
-    const res = await this.client.messages.create({
+    // 始终走流式：长输出/高 max_tokens 下可避免请求超时，也让回答能逐字呈现。
+    const stream = this.client.messages.stream({
       model: this.model,
       max_tokens: params.maxTokens,
       system: params.system,
@@ -28,6 +29,11 @@ export class ClaudeProvider implements Provider {
       // 注：部分 SDK 版本的类型尚未收录 'adaptive'，运行时已支持，这里做一次类型放行。
       thinking: { type: 'adaptive' } as unknown as Anthropic.ThinkingConfigParam,
     })
+    if (params.onTextDelta) {
+      stream.on('text', (delta) => params.onTextDelta!(delta))
+    }
+    // finalMessage() 等流结束、拿到拼好的完整消息，再按非流式一样解析。
+    const res = await stream.finalMessage()
 
     const content: ContentBlock[] = []
     for (const block of res.content) {

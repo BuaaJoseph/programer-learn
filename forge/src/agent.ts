@@ -16,7 +16,8 @@ export interface AgentOptions {
 }
 
 export type AgentEvent =
-  | { type: 'assistant_text'; text: string }
+  | { type: 'assistant_delta'; text: string } // 流式增量文本，一段段到达
+  | { type: 'assistant_text'; text: string } // 一轮的完整文本（增量结束后）
   | { type: 'tool_start'; name: string; input: Record<string, unknown> }
   | { type: 'tool_end'; name: string; output: string; isError: boolean }
 
@@ -44,6 +45,21 @@ export class Agent {
     this.onEvent = opts.onEvent
   }
 
+  /** 当前使用的模型标识（来自 Provider）。 */
+  get model(): string {
+    return this.provider.model
+  }
+
+  /** 清空会话历史（供 /clear 等命令使用）。 */
+  clearHistory(): void {
+    this.messages = []
+  }
+
+  /** 替换底层 Provider（供 /model 切换模型使用）。 */
+  setProvider(provider: Provider): void {
+    this.provider = provider
+  }
+
   /** 处理用户的一条输入，跑到模型给出最终文本为止，返回最终回答。 */
   async runTurn(userInput: string): Promise<string> {
     this.messages.push({ role: 'user', content: [{ type: 'text', text: userInput }] })
@@ -55,6 +71,7 @@ export class Agent {
         messages: this.messages,
         tools: this.toolList,
         maxTokens: this.maxTokens,
+        onTextDelta: (delta) => this.onEvent?.({ type: 'assistant_delta', text: delta }),
       })
       this.messages.push({ role: 'assistant', content: res.content })
 

@@ -35,9 +35,9 @@ export const VOLUMES = [
     subtitle: 'A Real CLI',
     theme: '内核能跑了，但还不好用。这一卷把它包装成一个真正的命令行应用：可交互的 REPL、逐字流式输出、斜杠命令。',
     chapters: [
-      { slug: 'ba2-c1', title: 'REPL：可交互的对话循环', topic: 'REPL', hook: '用 readline 搭一个「问→答→再问」的交互外壳，维护多轮会话，Ctrl-C 优雅退出。', minutes: 120, hasContent: false },
-      { slug: 'ba2-c2', title: '流式渲染：让回答一个字一个字蹦出来', topic: '流式输出', hook: '用 messages.stream 边收边打印，工具调用实时显示「正在读 X / 正在改 Y」，体验立刻不一样。', minutes: 150, hasContent: false },
-      { slug: 'ba2-c3', title: '斜杠命令：/help /clear /model …', topic: '斜杠命令', hook: '在 REPL 里拦截以 / 开头的输入，做成一套可扩展的本地命令系统，不走 LLM 也能控制 forge。', minutes: 120, hasContent: false },
+      { slug: 'ba2-c1', title: 'REPL：可交互的对话循环', topic: 'REPL', hook: '用 readline 搭一个「问→答→再问」的交互外壳，维护多轮会话，Ctrl-C 优雅退出。', minutes: 120, hasContent: true },
+      { slug: 'ba2-c2', title: '流式渲染：让回答一个字一个字蹦出来', topic: '流式输出', hook: '用 messages.stream 边收边打印，工具调用实时显示「正在读 X / 正在改 Y」，体验立刻不一样。', minutes: 150, hasContent: true },
+      { slug: 'ba2-c3', title: '斜杠命令：/help /clear /model …', topic: '斜杠命令', hook: '在 REPL 里拦截以 / 开头的输入，做成一套可扩展的本地命令系统，不走 LLM 也能控制 forge。', minutes: 120, hasContent: true },
     ],
   },
   {

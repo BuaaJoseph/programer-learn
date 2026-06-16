@@ -8,6 +8,8 @@ export interface CompleteParams {
   messages: Message[]
   tools: Tool[]
   maxTokens: number
+  /** 流式文本回调：每收到一段增量文本就调用一次。用于让回答逐字蹦出来。 */
+  onTextDelta?: (delta: string) => void
 }
 
 export interface Provider {
