@@ -40,6 +40,15 @@ def get_user(uid):
     redis.set('user:' + uid, data, ex=600)
     return data`
 
+const cuckooCode = `# 布谷鸟过滤器：RedisBloom 也提供，支持删除、误判率更低
+CF.RESERVE cf:users 1000000      # 预计 100 万元素
+CF.ADD cf:users 10086
+CF.EXISTS cf:users 10086         # 1=可能存在
+CF.DEL cf:users 10086            # 关键：布谷鸟支持删除，标准布隆做不到
+
+# 对比标准布隆的扩容能力(RedisBloom 的可扩展布隆，自动加层)
+BF.RESERVE bf:users 0.01 1000000 EXPANSION 2`
+
 export default function Ch4() {
   return (
     <>
@@ -87,12 +96,18 @@ export default function Ch4() {
         太少区分度不够、太多又把位数组填得太满。工程上通常只需指定「预计元素数」和「能接受的误判率」，
         让库自动算出 m 和 k。
       </p>
+      <p>
+        给个直观感受：经验上最优哈希个数 <code>k ≈ 0.7 × (m/n)</code>，对应误判率约 <code>0.6185^(m/n)</code>。
+        要支撑 1 亿元素、误判率 1%，大约需要 <strong>约 114MB</strong> 位数组——相比用 Set 存 1 亿个 ID（动辄几个 GB）省了一两个数量级。
+        这就是它「空间效率极高」的来源：只存「在/不在」的指纹，不存元素本身。
+      </p>
 
       <Callout variant="warn" title="标准布隆不能删除">
         <p>
           想删一个元素？不能直接把它的 k 位清 0——因为这些位可能<strong>被别的元素共用</strong>，清 0 会误伤别人，
           导致漏报。解决办法是<em>计数布隆过滤器</em>（Counting Bloom Filter）：把每一位从「0/1」换成一个<strong>小计数器</strong>，
           加入时 +1、删除时 -1，计数器大于 0 才算该位被占。代价是空间变大好几倍。
+          另一个更省空间且原生支持删除的方案是<strong>布谷鸟过滤器</strong>（Cuckoo Filter），RedisBloom 用 <code>CF.</code> 系列命令提供。
         </p>
       </Callout>
 
@@ -100,11 +115,13 @@ export default function Ch4() {
       <p>
         实现上有两条路：用 Redis 官方的 <em>RedisBloom</em> 模块，命令以 <code>BF.</code> 开头（<code>BF.ADD</code>、<code>BF.EXISTS</code>），
         最省心；或者自己用位图命令 <code>SETBIT</code> / <code>GETBIT</code> 加上几个哈希函数手撸一个。
+        RedisBloom 还提供<strong>可扩展布隆</strong>（容量不够时自动加一层，避免一开始就预估错）和布谷鸟过滤器。
       </p>
       <p>
         最经典的用途是<strong>缓存穿透防护</strong>：恶意请求或脏数据不停查询<strong>根本不存在</strong>的 key，
         每次都穿过缓存打到数据库。把所有合法 key 预先灌进布隆过滤器，查 DB 前先问一句，
-        过滤器说「一定不存在」就直接挡回，数据库压力骤降。此外还常用于<strong>黑名单</strong>、URL 去重、垃圾邮件判定等。
+        过滤器说「一定不存在」就直接挡回，数据库压力骤降。此外还常用于<strong>黑名单</strong>、URL 去重（爬虫已抓过的链接）、
+        垃圾邮件判定、推荐系统去重（已推过的内容不再推）等。
       </p>
 
       <Example title="防止查询不存在的用户 ID 击穿到 DB">
@@ -119,12 +136,35 @@ export default function Ch4() {
         </p>
       </Example>
 
+      <Callout variant="info" title="工程落地的两个真问题">
+        <ul>
+          <li>
+            <strong>新增数据怎么同步进过滤器？</strong> 用户注册时除了写库，还要 <code>BF.ADD</code> 一次；
+            或定时全量重建一个新过滤器再原子切换。标准布隆<strong>不能删</strong>，所以删除用户后过滤器里仍「认为存在」——
+            但这只造成误放、不造成误杀，可接受（用布谷鸟过滤器则能删）。
+          </li>
+          <li>
+            <strong>误判率怎么定？</strong> 不是越低越好，越低越占内存。穿透防护场景，1% 误判意味着 1% 不存在的 key 被放过去多查一次 DB，
+            通常完全可以接受，没必要追求 0.01%。
+          </li>
+        </ul>
+      </Callout>
+
+      <h2>面试怎么答</h2>
+      <p>
+        被问「布隆过滤器原理」：位数组 + k 个哈希，加入时把 k 位置 1，查询时看 k 位是否全 1；
+        有 0 必不存在、全 1 可能存在（有误判、无漏报）。追问「为什么不能删」答位被多元素共用、清 0 会误伤导致漏报，要删用计数布隆或布谷鸟。
+        追问「怎么用」答缓存穿透前置拦截。误区澄清：布隆<strong>会误判但绝不漏报</strong>（很多人记反）；它判「不存在」是 100% 准确的。
+      </p>
+
       <Practice title="用 RedisBloom 或位图实现">
         <p>
           首选 RedisBloom 模块，一条命令建好、加值、查值；没有模块时可用位图理解底层。
         </p>
         <CodeBlock lang="bash" title="RedisBloom：BF.ADD / BF.EXISTS" code={redisBloomCode} />
         <CodeBlock lang="bash" title="位图模拟：SETBIT / GETBIT" code={bitCode} />
+        <p>需要删除或更低误判率时，用布谷鸟过滤器或可扩展布隆：</p>
+        <CodeBlock lang="bash" title="CF.* 布谷鸟与可扩展布隆" code={cuckooCode} />
         <p>把它接到查询入口前，就是一道缓存穿透的防线：</p>
         <CodeBlock lang="python" title="bloom_guard.py" code={guardCode} />
       </Practice>
@@ -134,9 +174,9 @@ export default function Ch4() {
           '布隆过滤器 = 一个位数组 + k 个哈希函数：加入时把 k 个位置置 1，查询时看这 k 位是否全为 1。',
           '判定规则：有一位为 0 则一定不存在；k 位全为 1 则「可能存在」，存在 false positive 误判，但绝不漏报。',
           '误判率由位数组大小 m、哈希个数 k、元素数 n 共同决定：m 越大越低、n 越多越高，k 有最优值。',
-          '标准布隆不能删除（位被多元素共用），要删除得用计数布隆（每位换成计数器，代价是更占空间）。',
-          '实现可用 RedisBloom 模块的 BF.* 命令，或自己用 SETBIT/GETBIT 加哈希函数模拟。',
-          '最典型用途是缓存穿透防护和黑名单：查库前先问过滤器，挡掉一定不存在的 key，护住数据库。',
+          '空间效率极高：存指纹不存元素，1 亿元素 1% 误判约 114MB，远小于用 Set 存原值。',
+          '标准布隆不能删除（位被多元素共用），要删除用计数布隆或布谷鸟过滤器(CF.*)。',
+          '实现可用 RedisBloom 的 BF.*/CF.* 命令，或自己用 SETBIT/GETBIT 加哈希模拟；最典型用途是缓存穿透防护与黑名单。',
         ]}
       />
     </>

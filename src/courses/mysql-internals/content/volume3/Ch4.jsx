@@ -27,6 +27,27 @@ SHOW VARIABLES LIKE 'innodb_io_capacity';           -- 后台刷脏页的 IO 能
 SHOW VARIABLES LIKE 'log_bin';
 SHOW VARIABLES LIKE 'sync_binlog';   -- binlog 自己的刷盘策略`
 
+const twoPhaseSql = `-- 两阶段提交的崩溃恢复规则（理解这张“真值表”就懂了 2PC 为什么能保证一致）
+-- 提交顺序：① redo(prepare) → ② 写 binlog → ③ redo(commit)
+--
+-- 崩溃发生在    redo状态     binlog是否完整    恢复时的决定
+-- ----------    --------    ------------    -----------
+-- ① 之前         无          无              无事可做
+-- ① 与 ② 之间     prepare     无              回滚（binlog 没写，从库不会有，主库也撤销）
+-- ② 与 ③ 之间     prepare     有(完整)        提交（binlog 已写，必须让主库也生效以保持一致）
+-- ③ 之后         commit      有              已提交，正常
+--
+-- 关键：恢复时若 redo 是 prepare 状态，就看 binlog 是否写完整：
+--   写完整→提交，没写完→回滚。这样主库和从库（靠 binlog）永远一致。`
+
+const flushCombineSql = `-- 高并发下的“组提交”：多个事务的 redo/binlog 合并成一次 fsync，摊薄刷盘成本
+SHOW VARIABLES LIKE 'binlog_group_commit_sync_delay';     -- 故意等几微秒攒一批
+SHOW VARIABLES LIKE 'binlog_group_commit_sync_no_delay_count';
+
+-- 写入抖动排查：看 redo 是否频繁等待 checkpoint 推进（值越大说明 redo 太小或刷脏跟不上）
+SHOW STATUS LIKE 'Innodb_log_waits';        -- log buffer 不够、等刷盘的次数
+SHOW STATUS LIKE 'Innodb_os_log_fsyncs';    -- 累计 fsync 次数`
+
 export default function Ch4() {
   return (
     <>
@@ -72,6 +93,15 @@ export default function Ch4() {
         redo log 的落盘时机由参数 <code>innodb_flush_log_at_trx_commit</code> 控制，它是<strong>性能与安全的关键旋钮</strong>：
         取值 <code>1</code>（默认）每次提交都 fsync 到磁盘，崩溃零丢失但最慢；<code>2</code> 每次提交只写到操作系统缓存、每秒 fsync 一次，
         MySQL 进程崩溃不丢、整机断电可能丢 1 秒；<code>0</code> 完全交给后台每秒刷一次，最快但崩溃可能丢最近 1 秒的已提交事务。
+      </p>
+
+      <h3>崩溃恢复时 redo 怎么用：LSN 与幂等</h3>
+      <p>
+        redo log 里每条记录都带一个全局单调递增的序号叫 <em>LSN</em>（Log Sequence Number），每个数据页头部也记着
+        “它最后一次应用到的 LSN”。崩溃恢复时，InnoDB 从最近的 checkpoint 开始顺序重放 redo：对每条 redo，
+        比较“它的 LSN”和“目标页当前的 LSN”，<strong>只重放页 LSN 更小的那些</strong>——已经体现在页里的修改就跳过。
+        这保证了重放是<strong>幂等</strong>的：哪怕恢复过程又崩一次、重来一遍，结果也一样，不会重复扣两次钱。
+        理解 LSN，你才明白“数据页都还没落盘，凭什么说提交的数据没丢”——靠的就是 redo 里这串带序号的物理变更能精确重建出每一页。
       </p>
 
       <h2>undo log：逻辑日志，支撑回滚与 MVCC</h2>
@@ -122,6 +152,21 @@ export default function Ch4() {
         InnoDB 提交时采用<strong>两阶段提交</strong>：先写 redo（prepare）→ 写 binlog → 再提交 redo（commit），
         中间任一步崩溃都能据此判定该回滚还是该提交。细节这里点到为止。
       </p>
+      <CodeBlock lang="sql" title="two_phase_commit.sql" code={twoPhaseSql} />
+      <p>
+        两阶段提交的代价是<strong>每次提交多次 fsync</strong>（redo prepare、binlog、redo commit）。高并发下 InnoDB 用
+        <em>组提交</em>（group commit）把多个并发事务的刷盘<strong>合并成一次 fsync</strong>来摊薄成本——这就是为什么开了
+        binlog 也能扛住高 TPS。<code>binlog_group_commit_sync_delay</code> 故意等几微秒攒更大一批，是吞吐与延迟的权衡旋钮。
+      </p>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“redo log 和 binlog 区别？”</strong>——层次（引擎层 vs Server 层）、内容（物理 vs 逻辑）、写法（循环覆盖 vs 追加不删）、用途（崩溃恢复 vs 复制/恢复）四个维度对比，必背。</li>
+          <li><strong>“为什么要两阶段提交？”</strong>——保证 redo（主库本地恢复）和 binlog（从库复制）两套日志的一致，避免主从数据分叉。</li>
+          <li><strong>“一条 UPDATE 的日志写入顺序？”</strong>——改内存页 → 写 undo（旧值） → 写 redo(prepare) → 写 binlog → 写 redo(commit)，提交返回，数据页后台异步刷。</li>
+          <li><strong>“redo 写满了会怎样？”</strong>——触发强制刷脏页推进 checkpoint，期间写入会被阻塞（性能抖动），所以 redo 不能配太小。</li>
+        </ul>
+      </Callout>
 
       <h2>这对排查问题意味着什么</h2>
       <p>
@@ -138,6 +183,10 @@ export default function Ch4() {
         </p>
         <CodeBlock lang="sql" title="redo_params.sql" code={redoParamsSql} />
         <CodeBlock lang="sql" title="checkpoint_params.sql" code={checkpointSql} />
+        <p>
+          进阶：观察组提交相关参数和 <code>Innodb_log_waits</code>——如果它在涨，说明 redo 容量小或刷脏跟不上，写入会抖动。
+        </p>
+        <CodeBlock lang="sql" title="flush_combine.sql" code={flushCombineSql} />
         <p>
           做完后回答自己一个问题：如果现在拔电源，哪些刚提交的事务一定还在、哪些可能丢？答案完全取决于
           <code>innodb_flush_log_at_trx_commit</code> 和 <code>sync_binlog</code> 这两个值——这就是「持久性」在工程上的真实分量。

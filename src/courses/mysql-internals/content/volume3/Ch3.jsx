@@ -37,6 +37,32 @@ SELECT * FROM performance_schema.data_lock_waits;
 -- 万能手段：发生死锁后看最近一次死锁详情
 SHOW ENGINE INNODB STATUS;   -- 关注 LATEST DETECTED DEADLOCK 段落`
 
+const lockWaitSql = `-- 锁等待相关的关键参数与排障
+SHOW VARIABLES LIKE 'innodb_lock_wait_timeout';   -- 等锁超时秒数，默认 50s
+SHOW VARIABLES LIKE 'innodb_deadlock_detect';     -- 死锁检测开关，默认 ON
+
+-- 8.0 直接看“谁在等、等谁、等了多久、被谁阻塞的 SQL 是什么”
+SELECT
+  r.trx_id          AS waiting_trx,
+  r.trx_mysql_thread_id AS waiting_thread,
+  r.trx_query       AS waiting_query,
+  b.trx_id          AS blocking_trx,
+  b.trx_mysql_thread_id AS blocking_thread,
+  b.trx_query       AS blocking_query
+FROM performance_schema.data_lock_waits w
+JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_engine_transaction_id
+JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_engine_transaction_id;`
+
+const deadlockCaseSql = `-- 经典死锁：两个事务以相反顺序更新同两行
+-- 会话 A                                会话 B
+START TRANSACTION;                     -- START TRANSACTION;
+UPDATE t SET val=val+1 WHERE id=10;    -- 拿到 id=10 的 X 锁
+                                       -- UPDATE t SET val=val+1 WHERE id=20;  拿到 id=20 的 X 锁
+UPDATE t SET val=val+1 WHERE id=20;    -- 等 B 的 id=20 → 阻塞
+                                       -- UPDATE t SET val=val+1 WHERE id=10;  等 A 的 id=10 → 成环！
+-- InnoDB 检测到环，回滚代价较小的一方，另一方继续
+-- 预防：两个事务都按 id 升序更新（先 10 后 20），环就形不成`
+
 export default function Ch3() {
   return (
     <>
@@ -102,6 +128,23 @@ export default function Ch3() {
         </li>
       </ul>
 
+      <h3>间隙锁的两个反直觉特性</h3>
+      <p>
+        间隙锁（Gap Lock）是 InnoDB 里最容易让人困惑的锁，记住它两个反直觉的点就不会踩坑：
+      </p>
+      <ul>
+        <li><strong>间隙锁之间互相兼容</strong>：两个事务可以同时持有<strong>同一个间隙</strong>的间隙锁，互不冲突！因为间隙锁的唯一目的是“阻止插入”，而不是“阻止别人也想阻止插入”。这导致一个经典死锁：两个事务都先持有同一间隙的间隙锁，然后都想往这个间隙里插入，互相等对方释放，成环。</li>
+        <li><strong>间隙锁只在 RR 下默认存在</strong>：RC 隔离级别基本关闭了间隙锁（只在外键检查、唯一键冲突等少数场景用），所以 RC 下死锁更少。这也是上一章说“生产偏好 RC”的原因之一。</li>
+      </ul>
+
+      <Callout variant="tip" title="插入意向锁（Insert Intention Lock）">
+        <p>
+          INSERT 前要先在目标间隙加一个特殊的<em>插入意向锁</em>。它是一种特殊的间隙锁：<strong>多个插入意向锁之间兼容</strong>
+          （只要插的不是同一个位置），但它会和已有的<strong>普通间隙锁冲突</strong>——别人锁了间隙不让插，你的插入意向锁就得等。
+          很多“两条 INSERT 互相死锁”的现场，根子就在插入意向锁和间隙锁的这种交互上。
+        </p>
+      </Callout>
+
       <LockTypes />
 
       <KeyIdea title="Next-Key Lock 如何防住幻读">
@@ -139,12 +182,28 @@ export default function Ch3() {
         环就形不成。
       </p>
 
+      <CodeBlock lang="sql" title="deadlock_case.sql" code={deadlockCaseSql} />
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“锁等待和死锁有什么区别？”</strong>——锁等待是单向等待，会一直等到拿到锁或 <code>innodb_lock_wait_timeout</code> 超时报错；死锁是循环等待，InnoDB 会立刻检测到并主动回滚一方，不会傻等。</li>
+          <li><strong>“怎么预防死锁？”</strong>——统一加锁顺序（永远按主键升序）、缩短事务、减少一次锁的行数、必要时降到 RC 减少间隙锁、业务层捕获死锁错误重试。</li>
+          <li><strong>“为什么 WHERE 不走索引会锁全表？”</strong>——InnoDB 锁加在索引记录上，没索引就全表扫，扫到的每行都被加锁，等价于锁全表。</li>
+          <li><strong>“等值查询一个不存在的值会加什么锁？”</strong>——RR 下加间隙锁（锁住该值所在的间隙），防止别人插进来导致幻读。</li>
+        </ul>
+      </Callout>
+
       <h2>这对排查并发问题意味着什么</h2>
       <p>
         当你看到大量 SQL「卡住不动」却没报错，多半是在等锁——用 <code>data_lock_waits</code> 找出谁在等谁、阻塞源头是哪个事务，
         往往能定位到一个忘了提交的长事务或一条不走索引的更新。死锁则相反：它会快速失败并报错，处理思路是「业务侧重试 + 统一加锁顺序」。
         理解锁加在索引上这一点，你就能解释绝大多数 InnoDB 的诡异阻塞。
       </p>
+      <p>
+        排查锁等待最顺手的一条 SQL，就是把 <code>data_lock_waits</code> 和 <code>innodb_trx</code> JOIN 起来，
+        一次性看清“等待方的 SQL、阻塞方的 SQL、各自线程号”，定位元凶后视情况 KILL。
+      </p>
+      <CodeBlock lang="sql" title="lock_wait.sql" code={lockWaitSql} />
 
       <Practice title="用 FOR UPDATE 观察加锁">
         <p>

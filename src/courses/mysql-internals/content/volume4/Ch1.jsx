@@ -56,6 +56,31 @@ SELECT money FROM account WHERE id = 1;
 -- ========== 回到 T1：提交 ==========
 COMMIT;`
 
+const purgeSql = `-- undo / 版本链回收（purge）的健康度排查
+-- History list length：等待 purge 清理的“旧版本事务”数，长事务会让它失控暴涨
+SHOW ENGINE INNODB STATUS\\G    -- TRANSACTIONS 段里找 History list length
+
+-- 8.0 也能直接查（单位是“可清理事务数”的估算）
+SELECT count FROM information_schema.INNODB_METRICS
+WHERE name = 'trx_rseg_history_len';
+
+-- purge 线程数（清理跟不上时可调大）
+SHOW VARIABLES LIKE 'innodb_purge_threads';
+
+-- undo 表空间大小（长事务撑大它，且 8.0 前 undo 占用的空间不会自动收缩）
+SHOW VARIABLES LIKE 'innodb_undo%';`
+
+const visibilityWalk = `-- 把可见性判断“走一遍”：假设我的 ReadView 是
+--   m_ids = [60, 80]，min_trx_id = 60，max_trx_id = 90，creator_trx_id = 70
+-- 版本链（链头→链尾）：
+--   v1: money=300, DB_TRX_ID=80   → 80 在 m_ids 里 → 未提交 → 不可见，往下找
+--   v2: money=200, DB_TRX_ID=60   → 60 在 m_ids 里 → 未提交 → 不可见，往下找
+--   v3: money=150, DB_TRX_ID=55   → 55 < min_trx_id(60) → 早已提交 → 可见！停在这
+-- 所以这个事务看到的是 money=150
+--
+-- 若把 creator_trx_id 改成 80（即 v1 是我自己改的）：
+--   v1 的 DB_TRX_ID==creator_trx_id → 自己改的 → 立即可见 → 看到 300`
+
 export default function Ch1() {
   return (
     <>
@@ -148,6 +173,23 @@ export default function Ch1() {
       </p>
       <CodeBlock lang="sql" title="ReadView 可见性判断规则" code={readviewRule} />
 
+      <h3>把规则“走一遍”：一次完整的可见性判断</h3>
+      <p>
+        光看规则容易蒙，最好的办法是拿一条具体的版本链，按规则一格一格往下走。下面这段把
+        <code>m_ids</code>、<code>min/max_trx_id</code> 都给定，沿链头往链尾逐版本判断，直到停在第一个可见版本——
+        把它在纸上推一遍，ReadView 你就再也忘不掉了。
+      </p>
+      <CodeBlock lang="sql" title="visibility_walkthrough.sql" code={visibilityWalk} />
+
+      <Callout variant="warn" title="一个高频混淆：可见性比的是「提交时刻」还是「事务 ID 大小」">
+        <p>
+          很多人误以为 MVCC 是“按事务 ID 谁大谁新”来判断可见性，其实不然。事务 ID 在 <code>START TRANSACTION</code> 时并不分配，
+          而是在<strong>第一次真正修改数据</strong>时才分配。所以一个早开启但晚修改的事务，可能拿到比你大的 ID。
+          ReadView 用 <code>m_ids</code>（活跃未提交名单）来判断，本质判的是“<strong>这个版本对应的事务，在我拍快照那一刻提交了没有</strong>”，
+          而不是单纯比 ID 大小——只有当 ID 落在 <code>min</code> 和 <code>max</code> 之间时，才需要查 <code>m_ids</code> 来确认它当时是否已提交。
+        </p>
+      </Callout>
+
       <KeyIdea title="可见性的核心直觉">
         <p>
           抛开公式，一句话概括：<strong>我只能看见「在我拍快照之前就已经提交」的修改</strong>。
@@ -174,6 +216,22 @@ export default function Ch1() {
         </ul>
       </Callout>
 
+      <Example title="undo 暴涨拖垮线上：一次真实排障">
+        <p>
+          某监控告警“磁盘使用率持续上涨”，但业务数据量没明显增长。排查链路：
+        </p>
+        <ul>
+          <li>发现涨的是 InnoDB 的 undo 表空间，而不是数据文件。</li>
+          <li><code>SHOW ENGINE INNODB STATUS</code> 里 <code>History list length</code> 高达几百万（健康值通常几千以内）。</li>
+          <li><code>information_schema.INNODB_TRX</code> 里有个事务跑了好几小时还没提交——是一个 BI 工具开的只读大查询，连接池没回收。</li>
+        </ul>
+        <p>
+          根因：这个老事务的 ReadView 一直存活，<strong>purge 线程不敢清理任何比它新的旧版本</strong>（万一它要读呢），
+          于是版本链越积越长、undo 越撑越大。kill 掉那个连接后，History list length 几分钟内回落、磁盘释放。
+          教训：<strong>长事务不分读写都危险，只读长事务一样会卡死 purge</strong>。
+        </p>
+      </Example>
+
       <h2>这对实际开发意味着什么</h2>
       <p>
         理解了 ReadView，很多「灵异现象」就不灵异了。比如你在一个长事务里反复查同一行，
@@ -190,6 +248,10 @@ export default function Ch1() {
           这正是 ReadView 把 T1 判为「活跃未提交、不可见」，T2 沿版本链回溯到旧版本的结果。
         </p>
         <CodeBlock lang="sql" title="snapshot_read_demo.sql" code={sessionDemo} />
+        <p>
+          做完后再查一下版本链回收的健康度：盯住 <code>History list length</code>，开一个事务故意不提交，看它怎么涨；提交后再看它怎么回落。
+        </p>
+        <CodeBlock lang="sql" title="purge_health.sql" code={purgeSql} />
         <p>
           再做个对照实验：让 T1 先 <code>COMMIT</code>，<strong>然后</strong>再开 T2 事务去查——
           这次 T2 会看到 200，因为创建 ReadView 时 T1 已不在 <code>m_ids</code> 里了。

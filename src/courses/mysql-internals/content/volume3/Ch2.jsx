@@ -106,6 +106,16 @@ export default function Ch2() {
         不可重复读针对已有行的修改，幻读针对<strong>新增/删除的行</strong>（INSERT/DELETE 导致结果集行数变化）。
       </p>
 
+      <h3>第四种异常：丢失更新（lost update）</h3>
+      <p>
+        标准定义的三种异常之外，实战里最常坑人的其实是<em>丢失更新</em>：两个事务都“先读后写”，
+        后提交的那个用自己基于旧值算出的结果，<strong>覆盖</strong>了先提交那个的修改。比如两人同时给余额 100 减钱，
+        A 减 30、B 减 50，各自基于 100 计算，结果不是 20 而是 50 或 70——有一笔扣款凭空消失了。
+        它本质是“读到的旧值算完再写回”这个模式的通病，<strong>提高隔离级别并不能直接根治</strong>，
+        必须靠原子更新（<code>SET balance = balance - 30</code>）或当前读加锁（<code>FOR UPDATE</code>）来解决。
+      </p>
+      <CodeBlock lang="sql" title="lost_update.sql" code={lostUpdateSql} />
+
       <Example title="一句话区分三者">
         <p>用「会话 A 在一个事务里读，会话 B 在旁边捣乱”来记忆：</p>
         <ul>
@@ -152,6 +162,20 @@ export default function Ch2() {
         </p>
       </KeyIdea>
 
+      <h3>RC 还是 RR：生产到底该选哪个</h3>
+      <p>
+        虽然 MySQL 默认 RR，但很多大厂（包括阿里的规范）线上反而推荐 <strong>RC</strong>。原因值得理解：
+      </p>
+      <ul>
+        <li><strong>RC 加锁更少</strong>：RR 为防幻读用 Next-Key Lock 锁间隙，锁范围更大、更容易死锁；RC 基本只锁命中的行（语句级释放间隙锁），并发更高、死锁更少。</li>
+        <li><strong>RC 的间隙锁影响小</strong>：高并发写入场景下，RR 的间隙锁经常误伤、引发意外阻塞，RC 没这个负担。</li>
+        <li><strong>代价</strong>：RC 下同一事务里两次读可能不一致（不可重复读），业务要能接受，或对需要一致读的地方显式用 <code>FOR UPDATE</code>。</li>
+      </ul>
+      <p>
+        所以选型不是“RR 更高级所以更好”，而是看业务：<strong>纯靠 SQL 单条原子操作、很少在事务里反复读同一数据的系统，RC 往往更顺；
+        依赖事务内多次一致读的复杂事务，RR 更省心。</strong>切换前务必评估对现有依赖“可重复读”逻辑的影响，还要注意 binlog 格式（RC 必须用 row 格式）。
+      </p>
+
       <Callout variant="warn" title="换库 / 主从混用时的坑">
         <p>
           因为默认级别不同，把代码从 MySQL 迁到 PostgreSQL（或反过来），同样的事务逻辑可能表现不一致——
@@ -179,6 +203,10 @@ export default function Ch2() {
           做完这个实验，你会对「隔离级别到底改变了什么」有最直观的体感：它决定的就是「我这个事务内的读，
           会不会被外面已提交的修改影响」。
         </p>
+        <p>
+          再分清 global / session / 下一个事务 三种作用域，别在排查时改错了层级——很多“我明明改了隔离级别却没生效”都栽在这。
+        </p>
+        <CodeBlock lang="sql" title="global_vs_session.sql" code={globalVsSessionSql} />
       </Practice>
 
       <Summary
