@@ -41,6 +41,34 @@ const execOneSrc = `private async execOne(call: ToolUseBlock): Promise<ToolResul
   }
 }`
 
+const reorderSrc = `// 为什么必须按「模型原始顺序」重排，而不能按「执行完成顺序」回灌？
+//
+// 模型一轮发出（原始顺序）：
+//   [0] read a.ts   (id=tu_0)
+//   [1] grep "foo"  (id=tu_1)
+//   [2] edit b.ts   (id=tu_2)
+//
+// 实际执行：read/grep 并发，谁先回来不一定；edit 串行最后跑。
+// 假设完成顺序变成了：grep -> read -> edit
+//
+// ❌ 若按完成顺序回灌：[tu_1, tu_0, tu_2]  —— 顺序乱了
+// ✅ forge 用 id->result 的 Map 重排回原始顺序：[tu_0, tu_1, tu_2]
+//
+// 关键：tool_use_id 保证「配对」绝不会错（靠 id 认人，不靠位置）；
+// 但回灌的「排列顺序」仍按原始次序，是为了让模型读起来最顺、最不易误解。`
+
+const isolationSrc = `// 失败隔离：一个工具炸了，不能连累同一轮里的其它工具。
+
+// ✅ forge 的做法：每个调用各自 execOne，内部 try/catch 兜住，
+//    无论成败都产出一条 tool_result。三个调用互不影响。
+const results = await Promise.all(reads.map((t) => this.execOne(t)))
+//    execOne 内部：try { ... } catch { 返回 is_error 的结果 }
+
+// ❌ 反例：在 map 里直接 await tool.execute(...)，不兜异常
+const bad = await Promise.all(reads.map((t) => t.tool.execute(t.input, ctx)))
+//    只要任意一个 execute 抛异常，Promise.all 整体 reject，
+//    另外两个「本来成功」的结果也一起丢了，这一轮全废 —— 还会漏回 tool_result。`
+
 export default function Ch6() {
   return (
     <>
@@ -130,6 +158,33 @@ export default function Ch6() {
         </li>
       </ol>
 
+      <h2>正确性的两根支柱：配对靠 id，排列靠原序</h2>
+      <p>
+        第 4 步那个「重排」很容易被当成可有可无的整理动作，其实它牵出一个值得说透的区分——
+        <strong>「配对」和「排列」是两件不同的事，分别由两个机制保证</strong>，缺一不可：
+      </p>
+      <ul>
+        <li>
+          <strong>配对（哪个结果属于哪个调用）靠 <code>tool_use_id</code>。</strong>这是<strong>认人</strong>，和位置无关：
+          就算结果在数组里被打乱、错位，只要每条 <code>tool_result</code> 带着正确的 <code>tool_use_id</code>，
+          模型就能把它认回对应的调用。id 是唯一的、可靠的锚。
+        </li>
+        <li>
+          <strong>排列（结果在数组里的先后）靠按原始调用顺序重排。</strong>这不是为了「能不能对上」（那是 id 的活），
+          而是为了让模型<strong>读起来最顺</strong>：人和模型都习惯「我先问的先答」，乱序虽然技术上能对上，却增加误读概率。
+        </li>
+      </ul>
+      <CodeBlock lang="ts" title="配对 vs 排列：两件事，两个机制" code={reorderSrc} />
+      <KeyIdea title="为什么并发了还要「假装有序」？">
+        <p>
+          这里有个微妙的设计哲学：forge <strong>内部</strong>把只读工具并发、把执行完成顺序彻底打乱（为了快），
+          但对模型<strong>呈现</strong>时，又把结果重新排回它原始的调用顺序（为了清晰）。
+          换句话说，<strong>并发是实现细节，有序是对外契约</strong>。模型不需要、也不应该知道我们在底下并发了——
+          它只看到「我按顺序发的调用，按顺序拿回了结果」。把「内部怎么高效」和「对外怎么清晰」解耦，
+          是这段调度代码真正的精巧之处，也是很多手搓 Agent 会忽略、然后在多工具场景下莫名其妙出错的地方。
+        </p>
+      </KeyIdea>
+
       <h2>execOne：一个工具失败，绝不炸掉整个循环</h2>
       <p>
         <code>runTools</code> 把每个调用都交给 <code>execOne</code> 去真正执行。这个函数的全部价值在于<strong>健壮</strong>——
@@ -161,6 +216,29 @@ export default function Ch6() {
         这是给 CLI 层展示用的钩子——「正在执行 read a.ts……」「edit 完成」这类实时反馈，
         就靠这两个事件喂出去（卷 2 做 CLI 时会接上它）。它和调度逻辑解耦：<code>execOne</code> 只管「发生了什么」，怎么显示是上层的事。
       </p>
+
+      <h2>失败隔离：为什么这里偏偏不能用「裸的」Promise.all</h2>
+      <p>
+        <code>execOne</code> 把每个工具调用都包进 try/catch、保证「无论成败都吐一条结果」——这件事不仅是为了健壮，
+        更是<strong>只读并发能成立的前提</strong>。关键在 <code>Promise.all</code> 的一个特性：它是<strong>「一损俱损」</strong>的——
+        只要传进去的任意一个 Promise reject，整个 <code>Promise.all</code> 立刻 reject，<strong>其余已经成功的结果全被丢弃</strong>。
+      </p>
+      <CodeBlock lang="ts" title="execOne 的兜底 vs 裸 Promise.all 的「一损俱损」" code={isolationSrc} />
+      <p>
+        看清楚这个对比：如果 <code>map</code> 里直接 <code>await tool.execute(...)</code> 而不兜异常，一旦三个并发只读里有一个抛错，
+        <code>Promise.all</code> 整体 reject——另外两个<strong>本来成功</strong>的结果跟着陪葬，而且这一轮会<strong>漏回 tool_result</strong>，
+        直接违反上一章那条「有几个 tool_use 就得回几个 tool_result」的硬约束，整轮报废。
+      </p>
+      <KeyIdea title="先把每个调用「降级」成必定成功的结果，再交给 Promise.all">
+        <p>
+          forge 的解法是把异常处理<strong>下沉</strong>到 <code>execOne</code> 内部：每个调用在进入 <code>Promise.all</code> 之前，
+          就已经被 try/catch 包成了一个「<strong>永远 resolve、绝不 reject</strong>」的 Promise——成功 resolve 成正常结果，
+          失败也 resolve 成一条 <code>is_error</code> 结果。于是对 <code>Promise.all</code> 来说，根本不存在「会 reject 的成员」，
+          它的「一损俱损」特性也就无从触发。<strong>把每个个体的失败在源头消化成「成功返回一条错误」，并发的整体就稳了。</strong>
+          （顺带一提：如果你确实想保留裸 Promise 的写法，<code>Promise.allSettled</code> 也能避免一损俱损——
+          但 forge 选了语义更直白的「execOne 内部兜底」，因为它顺手把「未知工具」「自带 isError」也一并收进了同一个出口。）
+        </p>
+      </KeyIdea>
 
       <Callout variant="note" title="tool_result 的硬性配对：id 要对上，数量要相等">
         <p>

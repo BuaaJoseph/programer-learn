@@ -284,6 +284,37 @@ export default function Ch5() {
         </p>
       </Callout>
 
+      <h3>唯一性约束是「一种取舍」，不是唯一解</h3>
+      <p>
+        把唯一性约束讲成「灵魂」之后，得补一句公道话：它不是定位被改位置的<strong>唯一</strong>方案，而是几种方案里<strong>取舍最划算</strong>的那个。
+        了解它的替代品，你才能理解 forge 为什么这么选，也才知道它的<strong>代价</strong>在哪：
+      </p>
+      <CodeBlock lang="ts" title="定位被改位置的三种方案对比" code={editAltSrc} />
+      <table>
+        <thead>
+          <tr><th>方案</th><th>对模型的难度</th><th>误伤风险</th><th>主要代价</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>唯一字符串（forge）</td><td>低（带上下文即可）</td><td>低（唯一才改）</td><td>oldString 须逐字符精确，空白对不上就失败</td></tr>
+          <tr><td>行号替换</td><td>中</td><td>高（行号易错位）</td><td>文件一改行号全乱，后续编辑连锁出错</td></tr>
+          <tr><td>unified diff</td><td>高（要生成合法 patch）</td><td>中</td><td>上下文对不上时应用失败率高，需 patch 解析器</td></tr>
+        </tbody>
+      </table>
+      <p>
+        唯一性方案<strong>自己也有代价</strong>：模型必须把 <code>oldString</code> 一个字符不差地复刻出来（包括缩进、空格、引号），
+        稍有偏差就 <code>indexOf</code> 返回 -1、改不动。这就是为什么实践中 edit 偶尔会「找不到原文」而需要重试——
+        它把「歧义」这个更危险的问题，换成了「精确度」这个更可控的问题。在「实现复杂度 / 模型成功率 / 误伤风险」三角里，
+        它是当下最平衡的一点，所以成了主流 Agent 的标配。
+      </p>
+      <Callout variant="tip" title="再看那句 oldString === newString 的防呆">
+        <p>
+          代码里「新旧文本相同就报错」看着多余，其实拦的是一类真实的模型失误：模型有时会「以为自己改了」，
+          但发来的 newString 和 oldString 一模一样（脑补了一次本不存在的改动）。若不拦，edit 会返回「已修改」，
+          模型于是<strong>误以为任务推进了</strong>、接着往下走——而文件其实纹丝没动。把这种「空改动」显式判为错误，
+          是在帮模型<strong>对齐它的认知和现实</strong>，免得它基于一个假的「已完成」继续推理。
+        </p>
+      </Callout>
+
       <h2>bash：执行一条 shell 命令</h2>
       <p>
         最后一个，也是<strong>最强大、最危险</strong>的写工具。<code>bash</code> 让 Agent 能跑任意 shell 命令——
@@ -331,6 +362,37 @@ export default function Ch5() {
           别在你的真项目、更别在带着重要文件的目录里直接放它跑。
           卷 3 会给写工具（尤其 bash）加上「人在回路」的确认闸门：危险命令执行前先问你一声。
           但那是后话；现在，你的责任是把它关在沙盒里。
+        </p>
+      </Callout>
+
+      <h3>bash 为什么是「风险等级独一档」的工具</h3>
+      <p>
+        write 和 edit 危险，但它们的危险<strong>有边界</strong>：write 最多改一个文件、edit 最多动一处文本，
+        都局限在「文件系统、工作目录内」。bash 不一样——它把<strong>整台机器的能力</strong>一股脑交给了模型。
+        同一个工具，可以装依赖、跑测试，也可以删库、发网络请求、改系统配置、把数据偷传出去。
+        三个维度的失控都集中在它身上：
+      </p>
+      <table>
+        <thead>
+          <tr><th>风险维度</th><th>具体表现</th><th>forge 当前的护栏</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>破坏性</td><td><code>rm -rf</code>、<code>git push --force</code>、覆盖配置</td><td>无（卷 3 才加确认闸门）</td></tr>
+          <tr><td>资源耗尽</td><td>死循环、狂吐日志、占满磁盘</td><td>timeout 60s + maxBuffer 1MB</td></tr>
+          <tr><td>越权 / 外泄</td><td><code>curl 脚本 | sh</code>、读密钥外传</td><td>无（依赖沙盒目录隔离）</td></tr>
+        </tbody>
+      </table>
+      <p>
+        看清楚：<code>timeout</code> 和 <code>maxBuffer</code> 挡住的只是「<strong>资源耗尽</strong>」这一类——防止一条命令卡死或撑爆内存把 Agent 拖垮。
+        但对「破坏性」和「越权外泄」，当前的 bash <strong>毫无防御</strong>。这不是疏忽，是分层：能力先做出来，缰绳卷 3 再套。
+      </p>
+      <Callout variant="warn" title="一个反直觉但重要的点：别在 bash 里做「命令黑名单」">
+        <p>
+          很多人加固 bash 的第一反应是「拦掉危险命令」——禁 <code>rm</code>、禁 <code>curl</code>。这条路<strong>基本走不通</strong>，
+          因为 shell 的表达能力让黑名单形同虚设：<code>rm</code> 可以写成 <code>r''m</code>、<code>$(echo rm)</code>、
+          <code>eval $(...)</code>、藏在一个脚本文件里再执行……你永远列不全。真正可靠的不是「过滤字符串」，而是<strong>收紧执行环境本身</strong>：
+          在受限权限下跑（不给删关键目录的权限）、在容器/沙盒里跑、或者卷 3 那样<strong>由人确认每一条</strong>命令再放行。
+          「与其猜命令安不安全，不如让它跑在一个就算危险也伤不到你的环境里」——这是处理 bash 这类工具的正解。
         </p>
       </Callout>
 
