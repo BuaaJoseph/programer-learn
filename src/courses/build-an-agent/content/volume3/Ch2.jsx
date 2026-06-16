@@ -1,9 +1,47 @@
+import { useState } from 'react'
 import Lead from '@/components/cards/Lead.jsx'
 import KeyIdea from '@/components/cards/KeyIdea.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
+
+// 一个文件内的小交互：试着对不同操作做裁定，看人在回路的取舍。
+function ConfirmDemo() {
+  const cases = [
+    { id: 'read', label: 'read src/app.ts（只读）', verdict: 'allow', tip: '只读无副作用，静默放行，不打扰你。' },
+    { id: 'edit', label: 'edit README.md（工作区内）', verdict: 'ask', tip: '有副作用但合理，停下来问一句 y/N。' },
+    { id: 'rm', label: 'bash "rm -rf /"（破坏性）', verdict: 'deny', tip: '命中红线，直接拒，连问都不问。' },
+  ]
+  const [picked, setPicked] = useState('edit')
+  const cur = cases.find((c) => c.id === picked)
+  const color = cur.verdict === 'allow' ? '#16a34a' : cur.verdict === 'ask' ? '#d97706' : '#dc2626'
+  return (
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, margin: '16px 0' }}>
+      <div style={{ marginBottom: 12, fontSize: 14, color: '#6b7280' }}>点一个操作，看闸门怎么裁定：</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        {cases.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setPicked(c.id)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 6,
+              border: picked === c.id ? '2px solid ' + color : '1px solid #d1d5db',
+              background: picked === c.id ? '#f9fafb' : '#fff',
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontWeight: 600, color, marginBottom: 4 }}>裁定：{cur.verdict.toUpperCase()}</div>
+      <div style={{ fontSize: 14, color: '#374151' }}>{cur.tip}</div>
+    </div>
+  )
+}
 
 const confirmTypeSrc = `/** 危险操作确认请求：交给上层（CLI）向用户问一句 y/N。 */
 export interface ConfirmRequest {
@@ -141,6 +179,11 @@ export default function Ch2() {
         人负责守住「准不准做」。两者各司其职，agent 才敢上生产。
       </KeyIdea>
 
+      <p>
+        三档裁定到底怎么落到具体操作上，动手点一下最直观：
+      </p>
+      <ConfirmDemo />
+
       <h2>二、解耦：Agent 只「请求确认」，不负责「怎么问」</h2>
       <p>
         这里有一个很容易做错的设计冲动：直接在 Agent 内核里 <code>console.log</code> 一行、再读一下终端输入。
@@ -275,7 +318,23 @@ export default function Ch2() {
         「我先把 diff 贴给你看看」这样的替代方案。拒绝不是一个死胡同，而是一次反馈，模型会顺着它往下走。
       </p>
 
-      <h2>六、确认提示，必须说清「具体要做什么」</h2>
+      <h2>六、一个隐蔽的并发陷阱：TOCTOU</h2>
+      <p>
+        确认机制有一个容易被忽略的底层缝隙：<strong>「问人」和「执行」是两个不同的时刻</strong>，
+        中间隔着用户读提示、思考、敲键的几秒钟。这几秒里，被操作的对象有可能被悄悄换掉——
+        用户看着 A 点的头，最后执行在了 B 上。安全领域管这叫 <strong>TOCTOU（Time-Of-Check To Time-Of-Use）</strong>，
+        检查时与使用时之间的竞态。
+      </p>
+      <CodeBlock lang="ts" title="确认机制里的 TOCTOU 窗口" code={tocttouSrc} />
+      <p>
+        对一个本地单用户的编码 Agent 来说，这个风险不算高频，但它揭示了一个重要原则：
+        <strong>确认提示里给人看的东西，必须和最终真正执行的东西是同一个</strong>。
+        如果你在提示里展示的是「文件路径」，执行时却允许这条路径在确认后被重新解析（比如跟随了新的符号链接），
+        那用户的点头就被偷换了概念。缓解办法是缩短「检查到使用」的窗口、确认后不再插入可被外界影响的中间步骤，
+        高危场景甚至用文件描述符而非路径来操作。把它记在心里：<strong>确认的有效性，取决于「所见」与「所做」是否一致</strong>。
+      </p>
+
+      <h2>七、确认提示，必须说清「具体要做什么」</h2>
       <Callout variant="warn" title="一个真实的坑：看不清的确认，等于没有确认">
         <p>
           如果确认提示只是干巴巴地问一句「forge 想执行一个操作，允许吗？[y/N]」，而不告诉用户<strong>具体是什么操作</strong>，
@@ -290,21 +349,46 @@ export default function Ch2() {
         </p>
       </Callout>
 
-      <h2>七、如果每次都问，会不会太烦？</h2>
-      <Callout variant="tip" title="进阶：本次会话内记住某类批准">
+      <h2>八、确认疲劳：闸门最大的敌人是它自己</h2>
+      <p>
+        危险确认有一个反直觉的失效模式：<strong>问得太多，等于没问</strong>。这在安全工程里叫
+        <strong>「确认疲劳」（alert / confirmation fatigue）</strong>——当一个系统对什么都弹确认，
+        用户很快就学会条件反射地按 <code>y</code>，根本不读内容。这时候这道闸门不仅没用，反而<strong>有害</strong>：
+        它制造了「我有在审查」的错觉，让真正危险的那一次也跟着被无脑放行了。
+        浏览器的安全警告、手机 App 的权限弹窗、企业里满天飞的审批，全都栽在这上面。
+      </p>
+      <p>
+        所以「每次都问」并不是最安全的设计，而是<strong>把审查能力消耗殆尽</strong>的设计。
+        真正的目标是：<strong>把人的注意力，省着用在最该用的地方</strong>。读操作不问、低风险写操作可批量批、
+        只有真正不可逆的高危操作才郑重地停下来问一次——这样用户每看到一次确认，都知道「这次是要紧的」，
+        才会认真读、认真判。少问，是为了让该问的那次更有分量。
+      </p>
+
+      <h2>九、自动批准策略：在安全和省心之间分档</h2>
+      <p>
+        既然不能每次都问、也不能全放行，出路就是<strong>分档的自动批准</strong>。核心约束只有一条铁律：
+        <strong>自动批准只能把 <code>ask</code> 降级成 <code>allow</code>，绝不能动 <code>deny</code></strong>。
+        红线规则永远压在最上面，再图省事也不能把危险操作自动批掉。
+      </p>
+      <CodeBlock lang="ts" title="分档的自动批准（卷 6 配置化的雏形）" code={autoApproveSrc} />
+      <p>
+        三档各有适用场景：<code>never</code> 最安全也最累，适合在陌生项目或生产环境里用；
+        <code>session</code>「本次会话内记住某类批准」是最常用的折中——你为「改这个项目的源码」点一次头，
+        接下来连改十个文件就不再反复打扰（很多工具的「本次会话内允许」就是这个）；
+        <code>pattern</code> 则把你长期信得过的命令（<code>npm test</code>、<code>git status</code>）配成白名单常驻放行。
+      </p>
+      <Callout variant="warn" title="自动批准的粒度，决定闸门还剩几分用">
         <p>
-          很现实的体验问题：连续改十个文件，难道要点十次 <code>y</code>？一个常见的进阶做法是「会话级记忆」——
-          用户对某类操作点头后，本次会话内同类操作就不再反复打扰（类似很多工具的「本次会话内允许」选项）。
-        </p>
-        <p>
-          但这要<strong>非常谨慎</strong>：记忆的粒度多大？是「这一个文件」还是「所有写操作」？
-          范围一放宽，闸门就一寸寸失效。这恰恰是卷 6「权限配置化」要正面解决的问题——
-          把 <code>allow</code> / <code>ask</code> / <code>deny</code> 做成可配置、可分层、可记忆的规则系统，
-          让你在「省心」和「安全」之间精确地调档，而不是临时拍脑袋放权。这里先埋个伏笔。
+          做会话级记忆时务必想清楚<strong>粒度</strong>：是记住「这一个文件」「这个目录」还是「所有写操作」？
+          范围每放宽一档，闸门就失效一寸。最危险的是「approve all / 永远别再问我」这种选项——
+          它一键把整道闸门关掉，而用户往往是在被问烦了的那一刻、最不该做这个决定的时候点下它。
+          好的设计会让宽松选项<strong>带作用域、带过期</strong>（仅本会话、仅此目录），而不是给一个一次性永久放权的核按钮。
+          这正是卷 6「权限配置化」要正面解决的：把 allow/ask/deny 做成可配置、可分层、可记忆、可过期的规则系统，
+          让你精确调档，而不是临时拍脑袋放权。
         </p>
       </Callout>
 
-      <h2>八、两道闸门，合成安全底座</h2>
+      <h2>十、两道闸门，合成安全底座</h2>
       <p>
         到这里，forge 的安全机制有了清晰的两层防线：上一章的 <code>deny</code> 是<strong>硬拦截</strong>——
         危险到不该问的操作，机器直接拦死，根本不给人犹豫的机会；这一章的 <code>ask</code> 是<strong>软闸门</strong>——
@@ -323,15 +407,39 @@ export default function Ch2() {
         把每一次裁定和每一次执行都落进可回放的记录，让整个过程经得起回头看。
       </p>
 
+      <Example title="确认 UX 的好与坏，差在哪">
+        <p>
+          同一次「改 server.ts 的端口」，两种确认提示给用户的体验天差地别：
+        </p>
+        <p>
+          <strong>坏的：</strong>「forge 想执行一个操作，允许吗？[y/N]」——啥都没说，用户只能盲按。
+        </p>
+        <p>
+          <strong>好的：</strong>「修改文件 src/server.ts：将 <code>port = 3000</code> 改为 <code>port = 8080</code>（1 处改动）。允许吗？[y/N]」——
+          工具、对象、具体改动一目了然，用户一秒就能判断「对，是我要的」或「不对，停」。
+        </p>
+        <p>
+          好的确认 UX 有几个共性：<strong>展示具体而非笼统</strong>（命令全文 / 文件路径 / diff 摘要）、
+          <strong>默认安全</strong>（默认选项是「否」，回车不等于同意）、<strong>视觉醒目</strong>（用颜色把确认行从滚屏里拎出来）、
+          <strong>给得起替代选项</strong>（不只是 y/N，还能「先看 diff」「本会话内别再问」）。
+          闸门的有用程度，一大半取决于这一句提示问得好不好。
+        </p>
+      </Example>
+
       <Summary
         points={[
           '人在回路（HITL）是 Agent 上生产的前提：关键写操作前可中断、可审查，把「执行权」在关键节点交还给人。',
+          'HITL 的本质是责任归属 + 不可逆性：在「回不了头的那一刻之前」插入一个可逆的暂停点，把注意力花在真正不可撤销的操作上。',
           'Agent 内核不知道「怎么问用户」，只持有一个 confirm 回调；终端 y/N、GUI 弹窗、自动批准等具体实现由上层注入——这是依赖注入，内核可测试、可适配多前端。',
           'confirm 返回 Promise<boolean>（问人是异步的）；字段可选且「不提供就视为拒绝」，是一个安全默认——问不到人就别做。',
           'execOne 的 ask 分支把「没注入 confirm」和「用户说不」合并成同一条拒绝路径，返回「用户拒绝了这次操作。」回灌给模型。',
           'REPL 侧用 new Promise 把 rl.question 包成 ask 辅助函数，从而能在 confirm 里 await 用户输入；默认大写 N，必须显式 y 才放行。',
           '主循环此刻正 await 在 runTurn 上、没有并发读取 stdin，所以 confirm 能安全复用同一个 rl 实例。',
           '确认提示必须展示命令全文 / 文件路径，reason 字段就为此而生——看不清的确认等于没有闸门，用户会盲目 y。',
+          'TOCTOU：确认与执行是两个时刻，中间状态可能被换；原则是「所见即所做」——给人看的对象要和真正执行的一致。',
+          '确认疲劳是闸门最大的敌人：问得太多，y 成肌肉记忆，反而有害；少问是为了让该问的那次更有分量。',
+          '自动批准分档（never/session/pattern）在安全与省心间调档，铁律是只能降 ask→allow、绝不能动 deny；宽松选项要带作用域和过期，别给一次性永久放权的核按钮。',
+          '好的确认 UX：展示具体、默认安全、视觉醒目、给得起替代选项（看 diff / 本会话别再问）。',
           '进阶可做会话级批准记忆以减少打扰，但要谨慎；这正是卷 6 权限配置化要正面解决的。deny 拦死 + ask 问人 = forge 的安全底座，下一章接审计日志。',
         ]}
       />

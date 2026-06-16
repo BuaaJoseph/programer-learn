@@ -73,6 +73,34 @@ const cliEventCode = `case 'compacted':
   process.stdout.write(\`\\n\${DIM}（上下文已自动压缩：\${e.before} 条 → \${e.after} 条）\${RESET}\\n\`)
   break`
 
+const keepRecentCode = `// 进阶策略：只压缩较旧的部分，保留最近 N 轮原文不动。
+// 这样最新的上下文（最可能被立刻用到）保持高保真，旧历史才被浓缩。
+private async compactKeepRecent(keep = 6): Promise<void> {
+  if (this.messages.length <= keep) return // 还不够长，没必要压
+  const head = this.messages.slice(0, -keep) // 待压缩的旧历史
+  const tail = this.messages.slice(-keep)    // 原样保留的近 N 轮
+
+  const transcript = renderTranscript(head)
+  const res = await this.provider.complete({
+    system: COMPACTION_SYSTEM,
+    messages: [{ role: 'user', content: [{ type: 'text', text: transcript }] }],
+    tools: [],
+    maxTokens: 2048,
+  })
+  const summary = res.content
+    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim()
+
+  // 摘要在前、近 N 轮原文在后：既腾出空间，又不损失最新细节。
+  this.messages = [
+    { role: 'user', content: [{ type: 'text', text: \`【前情提要（自动压缩）】\\n\${summary}\` }] },
+    ...tail,
+  ]
+  this.needCompact = false
+}`
+
 export default function Ch4() {
   return (
     <article>
@@ -223,7 +251,93 @@ export default function Ch4() {
         目的是把原理讲透；理解了它，再做分段保留只是工程量的事。
       </Callout>
 
-      <h2>7. 第 4 卷小结</h2>
+      <h2>7. 压缩策略对比：全量 vs 保留近 N 轮</h2>
+      <p>
+        本章实现的是最简的「全量压缩」：把整段历史压成一条摘要。它讲原理最清楚，但不是唯一打法。
+        更常用于生产的是「保留近 N 轮」：只把较旧的部分压成摘要，最近几轮原文原封不动留着。
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>全量压缩（本章）</th>
+            <th>保留近 N 轮</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>实现复杂度</td>
+            <td>最低，一条摘要换全部</td>
+            <td>略高，要切分 head / tail</td>
+          </tr>
+          <tr>
+            <td>最新细节保真</td>
+            <td>最近一轮也被摘要，细节会糊</td>
+            <td>近 N 轮原文保留，最新细节无损</td>
+          </tr>
+          <tr>
+            <td>压缩后体积</td>
+            <td>最小（全是摘要）</td>
+            <td>稍大（含近 N 轮原文）</td>
+          </tr>
+          <tr>
+            <td>适用场景</td>
+            <td>教学、对最新细节不敏感的任务</td>
+            <td>长任务，刚发生的上下文最关键</td>
+          </tr>
+        </tbody>
+      </table>
+      <CodeBlock lang="ts" title="src/agent.ts（进阶：保留近 N 轮）" code={keepRecentCode} />
+      <p>
+        关键直觉是：<strong>越新的上下文，越可能马上被用到</strong>。模型接下来要决策的依据，大概率藏在最近几轮里——
+        刚读的文件、刚跑的测试输出。把这些原文留着、只浓缩远处的旧历史，能在「省空间」和「不丢刚发生的细节」之间取得更好的平衡。
+        注意切分时要保证 tail 自身是<strong>自洽</strong>的（不要从一对 tool_use / tool_result 中间切开），否则又会触发配对报错。
+      </p>
+
+      <h2>8. 摘要质量与信息丢失</h2>
+      <p>
+        压缩是有损操作，这件事躲不掉。问题不是「丢不丢」，而是「丢的是不是要紧的」。摘要质量几乎完全由两个因素决定：
+        <code>COMPACTION_SYSTEM</code> 写得够不够具体，以及给摘要的 <code>maxTokens</code> 够不够。
+      </p>
+      <ul>
+        <li>
+          <strong>指令越具体，丢得越准。</strong> 「请总结一下」会丢掉文件路径、待办这类要命的细节；
+          而本章那条明确列出「必须保留目标 / 改动 / 结论 / 待办」的指令，等于给模型一张「不准丢」的清单。
+        </li>
+        <li>
+          <strong>maxTokens 别给太小。</strong> 给 2048 是个合理起点；给太小，模型会被迫丢掉它本想保留的内容。
+          但也别无限大——摘要越长，省下的空间越少，压缩的意义就被稀释。
+        </li>
+        <li>
+          <strong>具体的东西最容易丢。</strong> 精确的行号、变量名、报错原文、临时拍板的小决定——这些细节最难在摘要里完整保留，
+          也最容易在压缩后让 Agent「记不清当时为什么这么做」。这正是「保留近 N 轮」想缓解的痛点。
+        </li>
+      </ul>
+      <Callout variant="warn" title="边界情况：压缩本身也可能失败或失真">
+        <ul>
+          <li><strong>摘要请求本身要花钱、要时间</strong>，而且它也是一次模型调用，有可能失败——要有重试或降级（比如退回截断）。</li>
+          <li><strong>历史极长时，连摘要请求都可能超窗</strong>。这就是为什么要先 <code>truncate</code> 每条工具结果，必要时还得分批摘要再摘要。</li>
+          <li><strong>摘要可能「自信地说错」</strong>。模型总结时也会犯错、漏掉关键约束。对长程关键任务，可考虑把原始目标这类铁律单独固定保留，不交给摘要。</li>
+        </ul>
+      </Callout>
+
+      <h2>9. 何时触发：时机的几种选择</h2>
+      <p>
+        本章用的触发条件是「上一轮 <code>usage</code> 越过 80% → 下一轮开始前压缩」。这是<strong>事后阈值触发</strong>。
+        但「何时触发」其实还有别的维度可调：
+      </p>
+      <ul>
+        <li><strong>事前预检触发：</strong>发送前用 <code>countTokens</code> 估算，超了就先压再发，永不撞墙（上一章讲过，代价是多一次调用）。</li>
+        <li><strong>固定轮数触发：</strong>每 N 轮强制压一次。简单粗暴，但不看实际占用，可能压早了或压晚了。</li>
+        <li><strong>手动触发：</strong>给用户一个 <code>/compact</code> 命令，让他在自己觉得合适时主动压。把控制权交还给人。</li>
+      </ul>
+      <Callout variant="tip" title="工程经验：触发点永远放在「自洽边界」">
+        无论用哪种触发条件，真正执行压缩的<strong>位置</strong>都必须在 messages 完整自洽的时刻——也就是每轮循环顶部、
+        没有悬空的 tool_use / tool_result。触发<strong>条件</strong>可以灵活，触发<strong>位置</strong>不能将就，
+        否则重置历史会破坏配对、下一次请求必报错。把「判断要不要压」和「在哪压」分开想，就不会乱。
+      </Callout>
+
+      <h2>10. 第 4 卷小结</h2>
       <p>
         到这里，第 4 卷「上下文工程」的四件套全部凑齐了。回头看，它们各管一摊、合起来让 forge 既「懂规矩」
         又「跑得久」：

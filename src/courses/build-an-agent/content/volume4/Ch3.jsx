@@ -76,6 +76,34 @@ export default function Ch3() {
         才谈得上在合适的时机去压缩它。
       </KeyIdea>
 
+      <h2>先搞懂：token 到底是什么</h2>
+      <p>
+        预算的单位是 token，但 token 既不是「字符」也不是「单词」。它是 <strong>tokenizer</strong>（分词器）把文本切成的一个个小片段。
+        现代模型用的是 BPE（Byte Pair Encoding）一类的子词算法：高频的词组会被合并成一个 token，低频的内容会被拆成更碎的片段。
+      </p>
+      <ul>
+        <li>常见英文单词，往往 1 个词 ≈ 1 个 token（<code>{'" the"'}</code> 是一个 token，连前面的空格一起）。</li>
+        <li>中文按字甚至更碎，<strong>一个汉字常常占 1~2 个 token</strong>，所以同样信息量的中文通常比英文更费 token。</li>
+        <li>代码里的缩进、符号、罕见标识符会被切得很碎，<code>{'getUserById'}</code> 可能被拆成好几个 token。</li>
+        <li>数字、URL、base64 这类「无规律」字符串特别费 token——一串长 hash 能顶一整句话。</li>
+      </ul>
+      <Callout variant="tip" title="为什么不能用 length / 4 糊弄">
+        网上流传「1 token ≈ 4 字符」的经验法则，对纯英文散文还凑合，对中文、代码、JSON 会严重失真。
+        预算是要拿来决定「该不该压缩」的硬决策，估错了要么过早压缩丢信息、要么撑爆窗口报错。
+        所以正经做法是调真正的 tokenizer / <code>count_tokens</code> 接口，别自己拍脑袋乘系数。
+      </Callout>
+
+      <h2>上下文窗口：那个不能超的天花板</h2>
+      <p>
+        上下文窗口（context window）是模型一次能「看见」的 token 总量上限，<strong>输入和输出共享同一个窗口</strong>。
+        这点很多人会忽略：如果窗口是 1M，你的输入已经占了 999k，那留给模型生成回复的空间就只剩 1k——
+        它可能话说一半就被掐断。所以做预算时，真正可用的不是整个窗口，而是<strong>窗口减去你为输出预留的 maxTokens</strong>。
+      </p>
+      <KeyIdea title="预算的分母不是窗口，是「窗口 − 输出余量」">
+        可用输入预算 = contextWindow − maxTokens（预留给生成）。
+        逼近的是这条线，而不是窗口本身。忽略输出余量，会在「看起来还没满」时就被截断。
+      </KeyIdea>
+
       <h2>token 占用从哪里来</h2>
       <p>
         要知道一轮请求占了多少 token，有两种来源：
@@ -130,6 +158,16 @@ export default function Ch3() {
         它返回 <code>input_tokens</code>。注意 messages 和 tools 仍要走 <code>toSdkMessage</code> /
         <code>toSdkTool</code> 转换成 SDK 期望的形状。
       </p>
+      <Callout variant="tip" title="为什么 tools 也要一起传给 count_tokens">
+        一个常见误区是「只算 messages，忘了 tools」。但工具定义（名字、描述、参数 JSON Schema）是<strong>每轮都随请求发送</strong>的，
+        而且往往不小——十几个工具的 schema 加起来轻松上千 token。漏算 tools，预算会系统性偏低，导致你以为还很空、实际已经逼近上限。
+        所以 <code>countTokens</code> 的入参必须和 <code>complete</code> 完全对齐：system + messages + tools，一个都不能少。
+      </Callout>
+      <Callout variant="warn" title="边界情况：估算值和实际不必逐 token 相等">
+        <code>count_tokens</code> 给的是「这次输入」的 token 数，但实际计费里可能还掺着 prompt caching 的命中/写入、
+        服务端为某些块附加的隐藏 token 等。把它当成<strong>可靠的预算依据</strong>没问题，但别指望它和账单逐 token 对得上。
+        预算要的是「够准到能做对压缩决策」，不是会计级精确。
+      </Callout>
 
       <h2>Agent 侧的实时预算</h2>
       <p>
@@ -180,11 +218,72 @@ export default function Ch3() {
         </ul>
       </Example>
 
+      <h2>预算策略对比</h2>
+      <p>
+        「什么时候算、算谁、怎么用」其实有好几种打法，forge 选的只是其中一种。理解全景能帮你在不同场景下选对：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>策略</th>
+            <th>怎么做</th>
+            <th>成本</th>
+            <th>代价</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>事后实测（forge 默认）</td>
+            <td>读回复自带的 <code>usage.inputTokens</code></td>
+            <td>零（白送）</td>
+            <td>滞后一轮：本轮已经发出去了才知道占用</td>
+          </tr>
+          <tr>
+            <td>事前预检</td>
+            <td>发送前用 <code>countTokens</code> 估算</td>
+            <td>一次额外接口调用</td>
+            <td>多花钱、多一点延迟，但从不撞墙</td>
+          </tr>
+          <tr>
+            <td>本地估算</td>
+            <td>本地跑 tokenizer 库算</td>
+            <td>近乎零、无网络</td>
+            <td>需自带分词器，且和服务端口径未必完全一致</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        forge 选「事后实测」是因为它免费、够用：滞后一轮的代价，被「阈值设在 80% 而非 100%」吸收掉了——
+        预留的那 20% 缓冲，正好够覆盖「下一轮才反应过来」的延迟。这是一个用阈值换接口调用的经典工程取舍。
+      </p>
+      <CodeBlock lang="ts" title="src/agent.ts（进阶：发送前预检）" code={precheckCode} />
+      <p>
+        预检版的关键差别在于：分母用的是 <code>{'limit - maxTokens'}</code>，把输出余量也算进去；而且压缩动作发生在<strong>发送之前</strong>，
+        所以理论上永远不会真的触达窗口上限。代价就是每轮多一次 <code>countTokens</code> 调用。
+
+      </p>
+
       <Callout variant="note" title="更主动的策略：发送前预检">
         有了 <code>countTokens</code>，还能玩一种更主动的打法：<strong>发送前</strong>先估算这次请求会占多少 token，
         如果会超窗，就先压缩再发，从不让请求真的撞上墙。forge 目前选了更简单的「事后实测 + 标记下一轮压缩」——
         够用，而且省掉一次 <code>count_tokens</code> 调用。等你需要更稳的保障时，再升级到预检也不迟。
       </Callout>
+
+      <h2>工程经验：预算里几个真实的坑</h2>
+      <ul>
+        <li>
+          <strong>不同模型的 tokenizer 不一样。</strong> 同一段文本，换个模型家族切出来的 token 数可能差一截。
+          所以 <code>contextWindow</code> 和 token 计数都得跟着具体模型走，不能用一套数字套所有模型。
+        </li>
+        <li>
+          <strong>工具结果是占用暴涨的头号元凶。</strong> 一次 <code>cat</code> 大文件、一次命中几千行的 grep，单条工具结果就能吃掉几十 k token。
+          预算曲线往往不是平滑上升，而是被某次工具调用「一脚踹上去」。这也是为什么下一章压缩时要对工具结果做截断。
+        </li>
+        <li>
+          <strong>阈值别贴着 100% 设。</strong> 设太高（比如 0.98）会让你几乎没有缓冲，事后实测的滞后一轮就可能直接撞墙；
+          设太低（比如 0.5）又会过早、过频地压缩，白丢信息也白花压缩的钱。0.8 是个经过实践检验的折中起点。
+        </li>
+      </ul>
 
       <h2>承上启下</h2>
       <p>
