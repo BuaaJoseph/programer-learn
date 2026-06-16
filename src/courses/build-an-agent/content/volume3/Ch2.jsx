@@ -388,6 +388,53 @@ export default function Ch2() {
         </p>
       </Callout>
 
+      <p>
+        把视野放宽，「人在回路」并不止 forge 这一种形态。不同系统按「人介入的时机」和「介入的轻重」分出几类，
+        值得对比着看：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>人在什么时候介入</th>
+            <th>典型场景</th>
+            <th>取舍</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>执行前逐次确认（forge ask）</td>
+            <td>每个高危操作落地前</td>
+            <td>本地编码 Agent、终端工具</td>
+            <td>最细颗粒，但易确认疲劳</td>
+          </tr>
+          <tr>
+            <td>计划审批（plan-then-execute）</td>
+            <td>开工前审一份计划，之后放手跑</td>
+            <td>多步骤自动化、CI 任务</td>
+            <td>打扰少，但中途出偏不易及时拦</td>
+          </tr>
+          <tr>
+            <td>事后审查（review / PR）</td>
+            <td>全做完了再看产物</td>
+            <td>Agent 提 PR、生成草稿</td>
+            <td>完全不挡路，但已是既成事实</td>
+          </tr>
+          <tr>
+            <td>异常上报（escalation）</td>
+            <td>只在拿不准 / 出错时找人</td>
+            <td>大规模无人值守 Agent 集群</td>
+            <td>最省人力，依赖「拿不准」判得准</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        forge 走的是第一种，因为它面对的是「能直接改你本地文件」的高风险场景，逐次确认最稳妥。
+        但理解这几种模式的差别很重要：随着 Agent 越来越自主，HITL 的重心会从「逐次确认」逐渐右移到
+        「计划审批」「异常上报」——人不再盯每一步，而是定好边界、只在边界被触碰时才介入。
+        选哪种，取决于操作的<strong>可逆性</strong>和<strong>规模</strong>。
+      </p>
+
       <h2>十、两道闸门，合成安全底座</h2>
       <p>
         到这里，forge 的安全机制有了清晰的两层防线：上一章的 <code>deny</code> 是<strong>硬拦截</strong>——

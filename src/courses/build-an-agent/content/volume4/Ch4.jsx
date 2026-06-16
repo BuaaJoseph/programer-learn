@@ -1,9 +1,72 @@
+import { useState } from 'react'
 import Lead from '@/components/cards/Lead.jsx'
 import KeyIdea from '@/components/cards/KeyIdea.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
+
+function CompactionFigure() {
+  const [mode, setMode] = useState('full')
+  const rounds = Array.from({ length: 8 }, (_, i) => i + 1)
+  const keep = 3
+  return (
+    <figure style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, margin: '16px 0' }}>
+      <div style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          onClick={() => setMode('full')}
+          style={{ marginRight: 8, fontWeight: mode === 'full' ? 700 : 400 }}
+        >
+          全量压缩
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('recent')}
+          style={{ fontWeight: mode === 'recent' ? 700 : 400 }}
+        >
+          保留近 {keep} 轮
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <div
+          style={{
+            padding: '6px 10px',
+            borderRadius: 4,
+            background: '#cfe8ff',
+            fontSize: 13,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          摘要
+        </div>
+        {rounds.map((r) => {
+          const kept = mode === 'recent' && r > rounds.length - keep
+          return (
+            <div
+              key={r}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 4,
+                fontSize: 13,
+                background: kept ? '#d6f5d6' : '#f0f0f0',
+                color: kept ? '#1a1a1a' : '#aaa',
+                textDecoration: kept ? 'none' : 'line-through',
+              }}
+            >
+              第{r}轮
+            </div>
+          )
+        })}
+      </div>
+      <figcaption style={{ fontSize: 13, color: '#666', marginTop: 10 }}>
+        {mode === 'full'
+          ? '全量压缩：所有轮次都被浓缩进一条摘要，最新细节也会变糊。'
+          : `保留近 ${keep} 轮：旧历史压成摘要，最近 ${keep} 轮原文（绿色）原样保留，最新细节无损。`}
+      </figcaption>
+    </figure>
+  )
+}
 
 const compactionCode = `import type { Message } from './types.js'
 
@@ -287,6 +350,8 @@ export default function Ch4() {
           </tr>
         </tbody>
       </table>
+      <p>点下面的按钮，直观看看两种策略保留了什么、丢掉了什么：</p>
+      <CompactionFigure />
       <CodeBlock lang="ts" title="src/agent.ts（进阶：保留近 N 轮）" code={keepRecentCode} />
       <p>
         关键直觉是：<strong>越新的上下文，越可能马上被用到</strong>。模型接下来要决策的依据，大概率藏在最近几轮里——
