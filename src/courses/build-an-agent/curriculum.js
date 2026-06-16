@@ -109,10 +109,10 @@ export const VOLUMES = [
     subtitle: 'Package & Ship',
     theme: '最后一公里：把 forge 打包成单文件、发布到 npm、写好文档，让任何人都能像装 Claude Code 一样装上它。',
     chapters: [
-      { slug: 'ba8-c1', title: 'bin 打包：编译成可分发的产物', topic: '打包', hook: '用 tsc/构建工具把 TS 编译成 JS、配好 bin 与 shebang，让它脱离开发环境也能跑。', minutes: 120, hasContent: false },
-      { slug: 'ba8-c2', title: '发布到 npm：让别人能 npm i -g', topic: 'npm 发布', hook: '配 package.json 的 files/bin/engines，npm publish，再 npm i -g forge 真机验证——它真的装上了。', minutes: 120, hasContent: false },
-      { slug: 'ba8-c3', title: '文档与 README：让人会用、敢用', topic: '文档', hook: '写清安装、配置、用法、安全说明——一个没有文档的工具等于不存在。', minutes: 90, hasContent: false },
-      { slug: 'ba8-c4', title: '毕业项目：用 forge 改造 forge', topic: '毕业项目', hook: '终极验证：用你亲手造的 forge，去给 forge 自己加一个新功能。它能自举，你就毕业了。', minutes: 150, hasContent: false },
+      { slug: 'ba8-c1', title: 'bin 打包：编译成可分发的产物', topic: '打包', hook: '用 tsc/构建工具把 TS 编译成 JS、配好 bin 与 shebang，让它脱离开发环境也能跑。', minutes: 120, hasContent: true },
+      { slug: 'ba8-c2', title: '发布到 npm：让别人能 npm i -g', topic: 'npm 发布', hook: '配 package.json 的 files/bin/engines，npm publish，再 npm i -g forge 真机验证——它真的装上了。', minutes: 120, hasContent: true },
+      { slug: 'ba8-c3', title: '文档与 README：让人会用、敢用', topic: '文档', hook: '写清安装、配置、用法、安全说明——一个没有文档的工具等于不存在。', minutes: 90, hasContent: true },
+      { slug: 'ba8-c4', title: '毕业项目：用 forge 改造 forge', topic: '毕业项目', hook: '终极验证：用你亲手造的 forge，去给 forge 自己加一个新功能。它能自举，你就毕业了。', minutes: 150, hasContent: true },
     ],
   },
 ]
