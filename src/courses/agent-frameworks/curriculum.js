@@ -31,8 +31,8 @@ export const VOLUMES = [
     subtitle: 'Lightweight + Handoff',
     theme: 'OpenAI 官方轻量框架、Swarm 的生产级继任者。极少抽象，靠 Agent + Handoff + Guardrail 组织多 Agent。',
     chapters: [
-      { slug: 'af2-c1', title: 'OpenAI Agents SDK 原理：Agent/Handoff/Guardrail', topic: '原理', hook: 'Agent、Runner、Handoff(控制权交接)、Guardrail(并行校验可中断)、Session、Tracing——少量原语拼出多 Agent 系统。', minutes: 120, hasContent: false },
-      { slug: 'af2-c2', title: '实战：客服分诊多 Agent + 输入护栏（接百炼）', topic: '实战', hook: '关键四步把 SDK 接到百炼(走 chat_completions)，做一个 triage→专家 Agent 的分诊路由，并加一道输入护栏拦截越权请求。', minutes: 150, hasContent: false },
+      { slug: 'af2-c1', title: 'OpenAI Agents SDK 原理：Agent/Handoff/Guardrail', topic: '原理', hook: 'Agent、Runner、Handoff(控制权交接)、Guardrail(并行校验可中断)、Session、Tracing——少量原语拼出多 Agent 系统。', minutes: 120, hasContent: true },
+      { slug: 'af2-c2', title: '实战：客服分诊多 Agent + 输入护栏（接百炼）', topic: '实战', hook: '关键四步把 SDK 接到百炼(走 chat_completions)，做一个 triage→专家 Agent 的分诊路由，并加一道输入护栏拦截越权请求。', minutes: 150, hasContent: true },
     ],
   },
   {
