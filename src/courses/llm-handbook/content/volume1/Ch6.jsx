@@ -5,6 +5,7 @@ import Practice from '@/components/cards/Practice.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Summary from '@/components/cards/Summary.jsx'
+import KVCacheViz from '@/components/illustrations/KVCacheViz.jsx'
 
 const budgetCode = `def kv_cache_bytes(n_tokens, n_layers, d_model, n_kv_heads=None,
                    n_heads=None, bytes_per_elem=2):
@@ -117,6 +118,8 @@ export default function Ch6() {
           这就是为什么长上下文、高并发的服务那么贵、那么难部署。
         </p>
       </Example>
+
+      <KVCacheViz />
 
       <h2>位置外推：RoPE 与长度泛化</h2>
       <p>

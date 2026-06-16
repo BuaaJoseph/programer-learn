@@ -37,7 +37,13 @@ export default function CourseCover({ course }) {
       <rect width="400" height="200" fill={`url(#${dots})`} />
       <rect width="400" height="200" fill={`url(#${glow})`} />
 
-      {coverScene === 'bptree' ? <BPlusTreeScene /> : <AttentionScene />}
+      {coverScene === 'bptree' ? (
+        <BPlusTreeScene />
+      ) : coverScene === 'kvgrid' ? (
+        <KvGridScene />
+      ) : (
+        <AttentionScene />
+      )}
     </svg>
   )
 }
@@ -97,6 +103,40 @@ function BPlusTreeScene() {
           ))}
         </GlassRect>
       ))}
+    </g>
+  )
+}
+
+function KvGridScene() {
+  // key→value 内存格 + 数据结构标签，呼应 Redis 的「内存键值 + 多结构」
+  const cells = [
+    { k: 'user:1', tag: 'Hash' },
+    { k: 'rank', tag: 'ZSet' },
+    { k: 'lock:x', tag: 'String' },
+    { k: 'queue', tag: 'List' },
+    { k: 'tags', tag: 'Set' },
+    { k: 'stock', tag: 'String' },
+  ]
+  return (
+    <g>
+      <g stroke="#ffffff" strokeOpacity="0.08" fill="none" strokeWidth="2">
+        <circle cx="360" cy="170" r="58" />
+        <circle cx="360" cy="170" r="90" />
+      </g>
+      {cells.map((c, i) => {
+        const col = i % 3
+        const row = Math.floor(i / 3)
+        const x = 40 + col * 116
+        const y = 52 + row * 52
+        return (
+          <GlassRect key={c.k} x={x} y={y} w={104} h={40} bright={0.15}>
+            <text x={x + 12} y={y + 18} fontFamily="var(--mono)" fontSize="11" fontWeight="700" fill="#ffffff">{c.k}</text>
+            <rect x={x + 12} y={y + 24} width="80" height="8" rx="4" fill="#ffffff" fillOpacity="0.22" />
+            <text x={x + 96} y={y + 14} textAnchor="end" fontFamily="var(--mono)" fontSize="8.5" fill="#ffffff" fillOpacity="0.8">{c.tag}</text>
+          </GlassRect>
+        )
+      })}
+      <text x="40" y="168" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.7">in-memory · key → value</text>
     </g>
   )
 }

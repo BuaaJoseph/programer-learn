@@ -2,8 +2,9 @@
 // 平台的「数据库」镜像——将来接后端时，返回结构与此对齐，迁移平滑。
 import llmHandbook from '../courses/llm-handbook/index.js'
 import mysqlInternals from '../courses/mysql-internals/index.js'
+import redisInternals from '../courses/redis-internals/index.js'
 
-export const COURSES = [llmHandbook, mysqlInternals]
+export const COURSES = [llmHandbook, mysqlInternals, redisInternals]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null

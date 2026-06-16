@@ -5,6 +5,7 @@ import Practice from '@/components/cards/Practice.jsx'
 import Callout from '@/components/cards/Callout.jsx'
 import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Summary from '@/components/cards/Summary.jsx'
+import RagPipeline from '@/components/illustrations/RagPipeline.jsx'
 
 const ragCode = `"""mini_rag.py —— 一个能跑的最小 RAG。
 依赖：pip install sentence-transformers numpy openai
@@ -122,6 +123,8 @@ export default function Ch5_3() {
           而不是凭空回忆。资料更新了，下次查询自动用新的——这就是「可更新」。
         </p>
       </Example>
+
+      <RagPipeline />
 
       <h2>为什么能缓解幻觉</h2>
       <p>
