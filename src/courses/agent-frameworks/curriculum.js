@@ -86,9 +86,9 @@ export const VOLUMES = [
     subtitle: 'Spring AI (Java)',
     theme: 'Spring 官方的 AI 框架，把 LLM 调用变成「又一个被 Spring 管理的依赖」。最适合已有 Spring Boot 后端要加 AI 能力的 Java 团队。',
     chapters: [
-      { slug: 'af7-c1', title: 'Spring AI 原理：ChatClient、Advisors、工具调用', topic: '原理', hook: 'ChatClient 流式 API + 自动配置/依赖注入；Advisors 做记忆与 RAG；@Tool 声明式工具；.entity() 结构化输出——Spring 风格的 AI。', minutes: 120, hasContent: false },
-      { slug: 'af7-c2', title: '实战：Spring Boot 接百炼（含 base-url 拼接坑）', topic: '实战', hook: 'OpenAI starter 覆盖 base-url 接百炼——重点讲那个最易踩的坑：base-url 写到 compatible-mode 为止、不带 /v1，否则双 v1 报 404。', minutes: 150, hasContent: false },
-      { slug: 'af7-c3', title: '实战进阶：@Tool 工具调用 + 结构化输出 + RAG/Alibaba', topic: '实战', hook: '一个 REST 接口：注入 ChatClient + @Tool 工具 + .entity() 自动映射 record；再看 Spring AI Alibaba 原生 DashScope 与 RAG advisor。', minutes: 150, hasContent: false },
+      { slug: 'af7-c1', title: 'Spring AI 原理：ChatClient、Advisors、工具调用', topic: '原理', hook: 'ChatClient 流式 API + 自动配置/依赖注入；Advisors 做记忆与 RAG；@Tool 声明式工具；.entity() 结构化输出——Spring 风格的 AI。', minutes: 120, hasContent: true },
+      { slug: 'af7-c2', title: '实战：Spring Boot 接百炼（含 base-url 拼接坑）', topic: '实战', hook: 'OpenAI starter 覆盖 base-url 接百炼——重点讲那个最易踩的坑：base-url 写到 compatible-mode 为止、不带 /v1，否则双 v1 报 404。', minutes: 150, hasContent: true },
+      { slug: 'af7-c3', title: '实战进阶：@Tool 工具调用 + 结构化输出 + RAG/Alibaba', topic: '实战', hook: '一个 REST 接口：注入 ChatClient + @Tool 工具 + .entity() 自动映射 record；再看 Spring AI Alibaba 原生 DashScope 与 RAG advisor。', minutes: 150, hasContent: true },
     ],
   },
   {
@@ -98,8 +98,8 @@ export const VOLUMES = [
     subtitle: 'Compare & Choose',
     theme: '把七个框架放在一起对比：范式、能力、适用场景。给一套选型决策树，并总结统一接国产模型的经验与趋势。',
     chapters: [
-      { slug: 'af8-c1', title: '范式总览与选型决策树', topic: '选型', hook: '一张表对比七框架的范式/抽象/适用场景，再给一棵决策树：按任务复杂度、团队栈、部署环境，帮你选对框架。', minutes: 120, hasContent: false },
-      { slug: 'af8-c2', title: '统一接国产模型的经验与趋势', topic: '总结/趋势', hook: '七种 base_url 接法对照(AsyncOpenAI/ChatOpenAI/LiteLlm/OpenAIProvider/OpenAIServerModel/LLM/Spring base-url)，以及 MCP/A2A 互操作、框架收敛的走向。', minutes: 90, hasContent: false },
+      { slug: 'af8-c1', title: '范式总览与选型决策树', topic: '选型', hook: '一张表对比七框架的范式/抽象/适用场景，再给一棵决策树：按任务复杂度、团队栈、部署环境，帮你选对框架。', minutes: 120, hasContent: true },
+      { slug: 'af8-c2', title: '统一接国产模型的经验与趋势', topic: '总结/趋势', hook: '七种 base_url 接法对照(AsyncOpenAI/ChatOpenAI/LiteLlm/OpenAIProvider/OpenAIServerModel/LLM/Spring base-url)，以及 MCP/A2A 互操作、框架收敛的走向。', minutes: 90, hasContent: true },
     ],
   },
 ]
