@@ -247,7 +247,7 @@ export default function Ch1() {
       <Callout variant="warn" title="最常见的泄漏：闭包捕获 self">
         在 <code>Task</code>、闭包或异步回调里直接用 <code>self</code>，很容易形成
         「self 持有闭包、闭包又持有 self」的引用环。解法是用捕获列表
-        <code>{'[weak self]'}</code>，并在用时 <code>guard let self else { return }</code>。
+        <code>{'[weak self]'}</code>，并在用时 <code>{'guard let self else { return }'}</code>。
         Leaks 模板里那个绕成环的引用图，多半就指向它。
       </Callout>
 
