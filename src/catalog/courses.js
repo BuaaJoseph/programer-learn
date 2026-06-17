@@ -21,7 +21,7 @@ import os from '../courses/os/index.js'
 import designPatterns from '../courses/design-patterns/index.js'
 import reactEcosystem from '../courses/react-ecosystem/index.js'
 import vueEcosystem from '../courses/vue-ecosystem/index.js'
-// import jsTsFoundations from '../courses/js-ts-foundations/index.js' // 章节补全后启用
+import jsTsFoundations from '../courses/js-ts-foundations/index.js'
 
 export const COURSES = [
   llmHandbook,
@@ -43,7 +43,7 @@ export const COURSES = [
   network,
   os,
   designPatterns,
-  // jsTsFoundations, // 章节补全后启用
+  jsTsFoundations,
   reactEcosystem,
   vueEcosystem,
 ]

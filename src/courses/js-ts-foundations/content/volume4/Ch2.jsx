@@ -191,7 +191,7 @@ export default function Ch2() {
         从 <code>pending</code>（进行中）出发，最终走向 <code>fulfilled</code>（成功）或
         <code>rejected</code>（失败）。<strong>状态一旦敲定就永久固定、不可逆</strong>，
         且只会敲定一次。这个「确定且唯一」的特性，是它能可靠链式衔接的基础。
-      </p>
+      </KeyIdea>
       <CodeBlock lang="js" title="Promise 的三种状态与状态机" code={promiseStates} />
       <p>
         构造 Promise 时传入的函数叫 <strong>executor</strong>，它会<strong>立即同步执行</strong>，
