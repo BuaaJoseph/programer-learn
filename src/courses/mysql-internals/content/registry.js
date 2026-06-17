@@ -16,6 +16,16 @@ export const CONTENT = {
 
   'm4-c1': lazy(() => import('./volume4/Ch1.jsx')),
   'm4-c2': lazy(() => import('./volume4/Ch2.jsx')),
+
+  'm5-c1': lazy(() => import('./volume5/Ch1.jsx')),
+  'm5-c2': lazy(() => import('./volume5/Ch2.jsx')),
+  'm5-c3': lazy(() => import('./volume5/Ch3.jsx')),
+  'm5-c4': lazy(() => import('./volume5/Ch4.jsx')),
+
+  'm6-c1': lazy(() => import('./volume6/Ch1.jsx')),
+  'm6-c2': lazy(() => import('./volume6/Ch2.jsx')),
+  'm6-c3': lazy(() => import('./volume6/Ch3.jsx')),
+  'm6-c4': lazy(() => import('./volume6/Ch4.jsx')),
 }
 
 export function hasContent(slug) {

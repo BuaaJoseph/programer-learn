@@ -37,6 +37,30 @@ export const VOLUMES = [
       { slug: 'jvm3-c3', title: 'OOM 排查与 JVM 调优', topic: '调优/排查', hook: '堆 OOM、栈溢出、元空间 OOM 各有成因；用 jstat/jmap/MAT/jstack + GC 日志定位，再调堆大小与收集器。', minutes: 120, hasContent: true },
     ],
   },
+  {
+    id: 'jvm4',
+    index: 4,
+    title: '面试精讲：内存与执行',
+    subtitle: 'Interview · Memory & Execution',
+    theme: '按面试高频题逐题拆解 JVM 的内存结构与执行引擎：从内存区域划分、OOM 成因、对象布局，到跨平台原理、JIT/AOT、逃逸分析与类加载、引用类型。',
+    chapters: [
+      { slug: 'jvm4-c1', title: '面试精讲一：内存结构', topic: '内存结构面试题', hook: 'JVM 由哪几部分组成？堆栈区别、方法区会不会 OOM、几种 OOM 成因、直接内存、常量池、对象在内存里如何存储、TLAB——逐题讲透。', minutes: 150, hasContent: true },
+      { slug: 'jvm4-c2', title: '面试精讲二：执行引擎', topic: '执行引擎面试题', hook: 'Java 怎么跨平台？编译执行 vs 解释执行、JIT 编译产物存哪、AOT、逃逸分析、PLAB、一段 Java 代码的完整执行流程。', minutes: 150, hasContent: true },
+      { slug: 'jvm4-c3', title: '面试精讲三：类加载与引用', topic: '类加载/引用面试题', hook: '类加载器有哪些、双亲委派回顾，以及强引用/软引用/弱引用/虚引用的区别与典型用途。', minutes: 120, hasContent: true },
+    ],
+  },
+  {
+    id: 'jvm5',
+    index: 5,
+    title: '面试精讲：垃圾回收与调优',
+    subtitle: 'Interview · GC & Tuning',
+    theme: '面试里 GC 是绝对重头。从回收算法、可达性分析、分代设计、三色标记，到 CMS/G1/ZGC 收集器细节、记忆集与写屏障，再到调优目标与排查工具，逐题讲深。',
+    chapters: [
+      { slug: 'jvm5-c1', title: '面试精讲四：GC 基础', topic: 'GC 基础面试题', hook: '回收算法有哪些、怎么判断垃圾、为何分代、新生代为何分 Eden/S0/S1、三色标记、young/old/full/mixed GC 区别、触发条件、PermGen 为何换成 Metaspace。', minutes: 150, hasContent: true },
+      { slug: 'jvm5-c2', title: '面试精讲五：垃圾收集器', topic: '收集器面试题', hook: '常见收集器、G1 与 CMS 回收流程、记忆集差异、写屏障与并发正确性、concurrent mode failure、收集器组合限制、ZGC。', minutes: 180, hasContent: true },
+      { slug: 'jvm5-c3', title: '面试精讲六：调优与排查', topic: '调优排查面试题', hook: 'GC 调优目标、调优方法、常用 JVM 参数、性能分析工具、内存泄漏分析。', minutes: 150, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>

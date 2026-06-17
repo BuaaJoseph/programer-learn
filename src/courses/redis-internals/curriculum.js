@@ -52,6 +52,30 @@ export const VOLUMES = [
       { slug: 'r4-c4', title: 'Cluster：16384 个槽与水平扩展', topic: 'Cluster 分片', hook: '单机内存装不下时上 Cluster：用 CRC16 把 key 映射到 16384 个槽，再把槽分给多个节点，实现分片与扩容。', minutes: 150, hasContent: true },
     ],
   },
+  {
+    id: 'r5',
+    index: 5,
+    title: '面试精讲：原理与数据结构',
+    subtitle: 'Interview · Internals',
+    theme: '把面试官最爱问的「为什么快、底层怎么存、内存怎么管」逐题讲透：从单线程模型、SDS/跳表/listpack 等底层编码，到持久化与内存淘汰，让你不止会答，还能讲出原理与取舍。',
+    chapters: [
+      { slug: 'r5-c1', title: '总览与速度：为什么这么快、单线程与多线程', topic: '应用场景 / 单线程 / 多线程 / vs Memcached', hook: '从应用场景到「凭什么快」，再到 6.0 为何引入多线程、Redis vs Memcached、客户端选型与性能瓶颈处理，一次说清。', minutes: 120, hasContent: true },
+      { slug: 'r5-c2', title: '数据类型与底层：SDS、跳表、listpack、Geo', topic: 'SDS / 跳表 / ziplist / quicklist / listpack', hook: 'String 为什么用 SDS、EMBSTR 阈值 44 怎么来的、ZSet 为何用跳表不用红黑树或 B+树、Geo 怎么实现、如何用 List 做队列和栈。', minutes: 150, hasContent: true },
+      { slug: 'r5-c3', title: '持久化与内存：过期删除、淘汰策略、Big Key', topic: 'RDB / AOF / 过期 / 淘汰 / 内存碎片', hook: '生成 RDB 时怎么不阻塞请求、过期删除三策略、八种内存淘汰策略、内存碎片化优化、Big Key 与热点 Key 怎么治。', minutes: 120, hasContent: true },
+    ],
+  },
+  {
+    id: 'r6',
+    index: 6,
+    title: '面试精讲：高可用与实战',
+    subtitle: 'Interview · HA & Practice',
+    theme: '主从哨兵集群、缓存三大问题与一致性、事务/Lua/Pipeline、分布式锁与 Redisson 看门狗——把高可用与实战题的原理与坑位一并讲透。',
+    chapters: [
+      { slug: 'r6-c1', title: '主从哨兵集群：复制原理、脑裂与 hash slot', topic: '主从 / Sentinel / Cluster', hook: '主从复制原理与延迟成因、哨兵选主、集群 16384 槽如何定位节点、Cluster vs Sentinel、脑裂如何发生与防范。', minutes: 150, hasContent: true },
+      { slug: 'r6-c2', title: '缓存与一致性：穿透击穿雪崩、布隆、UV、排行榜', topic: '缓存三大问题 / 一致性 / 布隆 / HLL', hook: '穿透击穿雪崩怎么分清与解决、缓存与数据库一致性方案、用 Redis 做布隆过滤器、HyperLogLog 统计 UV、ZSet 做排行榜。', minutes: 120, hasContent: true },
+      { slug: 'r6-c3', title: '事务锁脚本：Lua、Pipeline、RedLock、看门狗', topic: '事务 / Lua / 分布式锁 / Redisson', hook: 'Redis 事务和关系型事务的区别、Lua 与 Pipeline 区别、分布式锁的过期/续期/RedLock 争议、Redisson 看门狗原理。', minutes: 150, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>

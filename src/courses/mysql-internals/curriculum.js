@@ -48,6 +48,32 @@ export const VOLUMES = [
       { slug: 'm4-c2', title: '快照读与当前读：RR 如何应对幻读', topic: '快照读 / 当前读', hook: '普通 SELECT 是快照读、走 MVCC；加锁读是当前读、走最新版本——幻读的玄机就在这里。', minutes: 120, hasContent: true },
     ],
   },
+  {
+    id: 'm5',
+    index: 5,
+    title: '面试精讲一·存储与索引',
+    subtitle: 'Interview · Storage & Index',
+    theme: '把存储引擎与索引的高频面试题逐道讲透：执行流程、B+Tree 原理、索引实战与数据类型。每题都讲原理、对比、易错点与追问。',
+    chapters: [
+      { slug: 'm5-c1', title: '架构与执行：一条 SQL 的一生', topic: '执行流程 / 优化器 / Buffer Pool', hook: '一条 SQL 从连接器走到执行器、再到存储引擎；SELECT 各子句的真实执行顺序、优化器选计划、排序如何落地。', minutes: 120, hasContent: true },
+      { slug: 'm5-c2', title: '索引原理：B+Tree 全家桶', topic: 'B+Tree / 聚簇索引 / 回表 / 索引下推', hook: '为什么是 B+Tree 而不是红黑树或 B-Tree？三层能存多少？聚簇与二级、回表、覆盖、最左前缀、索引下推一次讲清。', minutes: 130, hasContent: true },
+      { slug: 'm5-c3', title: '索引实战：建、不建与排查', topic: '建索引 / Change Buffer / 深度分页 / EXPLAIN', hook: '索引越多越好吗？什么时候不该建？索引为何失效如何排查？Change Buffer、深度分页优化与 EXPLAIN 全程实战。', minutes: 130, hasContent: true },
+      { slug: 'm5-c4', title: 'SQL 与数据类型：细节定生死', topic: 'char/varchar / count / JOIN / 类型选型', hook: 'varchar 与 char、count(*) 的真相、三种 JOIN、EXISTS 与 IN、自增达上限、一张表最多多少列——细节题集中爆破。', minutes: 130, hasContent: true },
+    ],
+  },
+  {
+    id: 'm6',
+    index: 6,
+    title: '面试精讲二·事务与架构',
+    subtitle: 'Interview · Transaction & Architecture',
+    theme: '把事务、日志、MVCC、锁、高可用与设计优化的高频面试题逐道讲透：从两阶段提交到分库分表，从范式到调优。',
+    chapters: [
+      { slug: 'm6-c1', title: '事务与日志：WAL 与两阶段提交', topic: '隔离级别 / WAL / redo·undo·binlog', hook: '事务怎么实现？默认隔离级别为何是 RR？WAL、两阶段提交、redo/undo/binlog 区别、Doublewrite 一网打尽。', minutes: 130, hasContent: true },
+      { slug: 'm6-c2', title: 'MVCC 与锁：读写不打架', topic: 'MVCC / 锁类型 / 死锁', hook: 'MVCC 怎么让读不加锁？二级索引有没有快照？锁有哪些类型、乐观悲观怎么选、死锁如何排查与化解。', minutes: 120, hasContent: true },
+      { slug: 'm6-c3', title: '高可用与扩展：主从、读写分离与分库分表', topic: '主从 / 读写分离 / 分库分表 / 数据同步', hook: '主从如何同步、延迟怎么处理、读写分离怎么落、分库分表的策略与坑、不停服迁移与 CDC 全量增量同步。', minutes: 140, hasContent: true },
+      { slug: 'm6-c4', title: '设计与优化：范式、引擎与调优', topic: '三大范式 / InnoDB vs MyISAM / SQL 调优', hook: '三大范式、逻辑删除与外键、视图游标、慢 SQL 监控与优化、InnoDB 与 MyISAM 区别、为何不存大字段与存储过程。', minutes: 140, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>
