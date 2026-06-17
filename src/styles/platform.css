@@ -4,6 +4,19 @@
   display: flex;
   flex-direction: column;
 }
+/* 原生 APP（Capacitor）安全区：避开刘海/状态栏与底部 Home 指示条。
+   网页端 env(safe-area-inset-*) 为 0，不受影响。 */
+.gnav {
+  padding-top: env(safe-area-inset-top);
+}
+.platform-footer {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.container,
+.browse {
+  padding-left: max(32px, env(safe-area-inset-left));
+  padding-right: max(32px, env(safe-area-inset-right));
+}
 .platform-main {
   flex: 1;
 }
