@@ -28,8 +28,9 @@ export const CATEGORIES = [
     subtitle: 'Frontend',
     icon: '🎨',
     subs: [
-      { id: 'vue', title: 'Vue', subtitle: 'Vue 生态' },
+      { id: 'language', title: 'JS/TS 基础', subtitle: 'Language' },
       { id: 'react', title: 'React', subtitle: 'React 生态' },
+      { id: 'vue', title: 'Vue', subtitle: 'Vue 生态' },
       { id: 'engineering', title: '前端工程化', subtitle: 'Engineering' },
     ],
   },

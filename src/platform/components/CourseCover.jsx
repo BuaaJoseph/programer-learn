@@ -75,6 +75,12 @@ export default function CourseCover({ course }) {
         <ForgeScene />
       ) : coverScene === 'frameworks' ? (
         <FrameworksScene />
+      ) : coverScene === 'react' ? (
+        <ReactScene />
+      ) : coverScene === 'vue' ? (
+        <VueScene />
+      ) : coverScene === 'jsts' ? (
+        <JsTsScene />
       ) : (
         <AttentionScene />
       )}
@@ -593,6 +599,71 @@ function FrameworksScene() {
       <circle cx={hub.x} cy={hub.y} r="34" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.4" />
       <text x={hub.x} y={hub.y - 2} textAnchor="middle" fontFamily="var(--display)" fontSize="13" fontWeight="700" fill="#ffffff">Qwen</text>
       <text x={hub.x} y={hub.y + 12} textAnchor="middle" fontFamily="var(--mono)" fontSize="7.5" fill="#ffffff" fillOpacity="0.85">百炼后端</text>
+    </g>
+  )
+}
+
+function ReactScene() {
+  // React 经典原子标志：中心核 + 三条椭圆轨道。声明式 UI = f(state) 的隐喻。
+  const cx = 200
+  const cy = 100
+  return (
+    <g>
+      <g transform={`translate(${cx} ${cy})`} stroke="#ffffff" strokeOpacity="0.55" strokeWidth="1.6" fill="none">
+        <ellipse rx="92" ry="34" />
+        <ellipse rx="92" ry="34" transform="rotate(60)" />
+        <ellipse rx="92" ry="34" transform="rotate(120)" />
+      </g>
+      <circle cx={cx} cy={cy} r="11" fill="#ffffff" fillOpacity="0.92" />
+      {/* 三个轨道上的电子 */}
+      <circle cx={cx + 92} cy={cy} r="5" fill="#ffffff" />
+      <circle cx={cx - 46} cy={cy - 29} r="5" fill="#ffffff" fillOpacity="0.85" />
+      <circle cx={cx - 46} cy={cy + 29} r="5" fill="#ffffff" fillOpacity="0.85" />
+      <text x={cx} y={cy + 70} textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">UI = f(state)</text>
+    </g>
+  )
+}
+
+function VueScene() {
+  // Vue 经典三角 logo + 「数据→视图自动更新」的响应式隐喻。
+  const cx = 200
+  const cy = 84
+  return (
+    <g>
+      {/* 外层 V 形三角 */}
+      <path d={`M ${cx - 78} ${cy - 40} L ${cx} ${cy + 70} L ${cx + 78} ${cy - 40} L ${cx + 48} ${cy - 40} L ${cx} ${cy + 18} L ${cx - 48} ${cy - 40} Z`} fill="#ffffff" fillOpacity="0.92" />
+      {/* 内层小三角 */}
+      <path d={`M ${cx - 48} ${cy - 40} L ${cx} ${cy + 18} L ${cx + 48} ${cy - 40} L ${cx + 24} ${cy - 40} L ${cx} ${cy - 4} L ${cx - 24} ${cy - 40} Z`} fill="#ffffff" fillOpacity="0.5" />
+      {/* 响应式：data → view */}
+      <g transform={`translate(${cx} 172)`}>
+        <rect x="-96" y="-13" width="74" height="26" rx="7" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+        <text x="-59" y="4" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff">data</text>
+        <path d="M -18 0 L 18 0" stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.4" markerEnd="url(#vueArr)" />
+        <rect x="22" y="-13" width="74" height="26" rx="7" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+        <text x="59" y="4" textAnchor="middle" fontFamily="var(--mono)" fontSize="9" fill="#ffffff">view</text>
+      </g>
+      <defs>
+        <marker id="vueArr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#ffffff" fillOpacity="0.8" />
+        </marker>
+      </defs>
+    </g>
+  )
+}
+
+function JsTsScene() {
+  // JS / TS 两块标志方块：动态的 JS 之上叠一层静态类型 TS。
+  return (
+    <g>
+      <g transform="translate(118 60)">
+        <rect x="0" y="0" width="92" height="92" rx="12" fill="#ffffff" fillOpacity="0.9" />
+        <text x="78" y="78" textAnchor="end" fontFamily="var(--display)" fontSize="34" fontWeight="800" fill="#0f1320">JS</text>
+      </g>
+      <g transform="translate(190 88)">
+        <rect x="0" y="0" width="92" height="92" rx="12" fill="#ffffff" fillOpacity="0.6" stroke="#ffffff" strokeOpacity="0.8" strokeWidth="1.4" />
+        <text x="78" y="78" textAnchor="end" fontFamily="var(--display)" fontSize="34" fontWeight="800" fill="#0f1320">TS</text>
+      </g>
+      <text x="200" y="196" textAnchor="middle" fontFamily="var(--mono)" fontSize="10" fill="#ffffff" fillOpacity="0.9">动态 JS + 静态类型 TS</text>
     </g>
   )
 }
