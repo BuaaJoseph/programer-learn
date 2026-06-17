@@ -81,6 +81,10 @@ export default function CourseCover({ course }) {
         <VueScene />
       ) : coverScene === 'jsts' ? (
         <JsTsScene />
+      ) : coverScene === 'android' ? (
+        <AndroidScene />
+      ) : coverScene === 'ios' ? (
+        <IosScene />
       ) : (
         <AttentionScene />
       )}
@@ -664,6 +668,49 @@ function JsTsScene() {
         <text x="78" y="78" textAnchor="end" fontFamily="var(--display)" fontSize="34" fontWeight="800" fill="#0f1320">TS</text>
       </g>
       <text x="200" y="196" textAnchor="middle" fontFamily="var(--mono)" fontSize="10" fill="#ffffff" fillOpacity="0.9">动态 JS + 静态类型 TS</text>
+    </g>
+  )
+}
+
+function AndroidScene() {
+  // Android 机器人头像：半圆头 + 两根天线 + 两只眼睛。
+  const cx = 200
+  const cy = 100
+  return (
+    <g>
+      {/* 头（半圆 + 方角底） */}
+      <path d={`M ${cx - 56} ${cy + 30} L ${cx - 56} ${cy} A 56 56 0 0 1 ${cx + 56} ${cy} L ${cx + 56} ${cy + 30} Z`} fill="#ffffff" fillOpacity="0.92" />
+      {/* 天线 */}
+      <g stroke="#ffffff" strokeWidth="3.4" strokeLinecap="round">
+        <line x1={cx - 30} y1={cy - 52} x2={cx - 18} y2={cy - 34} />
+        <line x1={cx + 30} y1={cy - 52} x2={cx + 18} y2={cy - 34} />
+      </g>
+      {/* 眼睛 */}
+      <circle cx={cx - 22} cy={cy - 10} r="5.5" fill="#0f1320" />
+      <circle cx={cx + 22} cy={cy - 10} r="5.5" fill="#0f1320" />
+      <text x={cx} y={cy + 66} textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">Kotlin · Compose</text>
+    </g>
+  )
+}
+
+function IosScene() {
+  // 一部手机轮廓 + 苹果咬痕暗示，传达 SwiftUI 声明式 UI。
+  const cx = 200
+  return (
+    <g>
+      {/* 手机外框 */}
+      <rect x={cx - 44} y="30" width="88" height="140" rx="16" fill="none" stroke="#ffffff" strokeOpacity="0.85" strokeWidth="2.4" />
+      {/* 刘海 */}
+      <rect x={cx - 14} y="36" width="28" height="6" rx="3" fill="#ffffff" fillOpacity="0.7" />
+      {/* 屏幕里的声明式卡片 */}
+      <g fill="#ffffff">
+        <rect x={cx - 32} y="56" width="64" height="14" rx="4" fillOpacity="0.85" />
+        <rect x={cx - 32} y="78" width="44" height="9" rx="3" fillOpacity="0.55" />
+        <rect x={cx - 32} y="94" width="56" height="9" rx="3" fillOpacity="0.55" />
+        <rect x={cx - 32} y="118" width="64" height="26" rx="7" fillOpacity="0.25" />
+        <text x={cx} y="135" textAnchor="middle" fontFamily="var(--mono)" fontSize="8" fill="#ffffff">Button</text>
+      </g>
+      <text x={cx} y="190" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">Swift · SwiftUI</text>
     </g>
   )
 }

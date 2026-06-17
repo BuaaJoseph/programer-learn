@@ -22,6 +22,8 @@ import designPatterns from '../courses/design-patterns/index.js'
 import reactEcosystem from '../courses/react-ecosystem/index.js'
 import vueEcosystem from '../courses/vue-ecosystem/index.js'
 import jsTsFoundations from '../courses/js-ts-foundations/index.js'
+import androidDev from '../courses/android-dev/index.js'
+// import iosDev from '../courses/ios-dev/index.js' // 章节补全后启用
 
 export const COURSES = [
   llmHandbook,
@@ -46,6 +48,8 @@ export const COURSES = [
   jsTsFoundations,
   reactEcosystem,
   vueEcosystem,
+  androidDev,
+  // iosDev, // 章节补全后启用
 ]
 
 export function getCourse(slug) {
