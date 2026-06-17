@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CATEGORIES } from '../../catalog/categories.js'
+import CategoryIcon from './CategoryIcon.jsx'
 import { useAuth } from '../../shared/AuthContext.jsx'
 
 export default function GlobalNav() {
@@ -32,7 +33,8 @@ export default function GlobalNav() {
               {CATEGORIES.map((cat) => (
                 <div className="gnav-menu-col" key={cat.id}>
                   <Link to={`/c/${cat.id}`} className="gnav-menu-head" onClick={() => setMenuOpen(false)}>
-                    <span>{cat.icon}</span> {cat.title}
+                    <span className="gnav-menu-ic"><CategoryIcon id={cat.id} size={16} /></span>
+                    <span>{cat.title}</span>
                   </Link>
                   <ul>
                     {cat.subs.map((sub) => (

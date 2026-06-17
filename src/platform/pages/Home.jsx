@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Link } from 'react-router-dom'
 import PlatformLayout from '../PlatformLayout.jsx'
 import CourseCard from '../components/CourseCard.jsx'
+import CategoryIcon from '../components/CategoryIcon.jsx'
 import { CATEGORIES } from '../../catalog/categories.js'
 import { coursesByCategory } from '../../catalog/courses.js'
 
@@ -78,8 +79,8 @@ function CategorySection({ cat, courses }) {
     <section className="cat-group" ref={sectionRef}>
       <div className="cat-group-head">
         <h2 className="section-title">
-          <span className="cat-group-icon">{cat.icon}</span>
-          {cat.title}
+          <span className="cat-group-icon"><CategoryIcon id={cat.id} size={20} /></span>
+          <span className="cat-group-name">{cat.title}</span>
           <span className="cat-group-sub">{cat.subtitle}</span>
         </h2>
         <Link className="cat-group-more" to={`/c/${cat.id}`}>

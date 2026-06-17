@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom'
 import PlatformLayout from '../PlatformLayout.jsx'
 import CourseCard from '../components/CourseCard.jsx'
+import CategoryIcon from '../components/CategoryIcon.jsx'
 import { CATEGORIES, findCategory, findSubCategory } from '../../catalog/categories.js'
 import { coursesByCategory, coursesBySubCategory } from '../../catalog/courses.js'
 
@@ -31,7 +32,8 @@ export default function Browse() {
           {CATEGORIES.map((c) => (
             <div className="browse-tree-cat" key={c.id}>
               <Link to={`/c/${c.id}`} className={`browse-tree-head ${c.id === cat && !sub ? 'active' : ''}`}>
-                <span>{c.icon}</span> {c.title}
+                <span className="browse-tree-ic"><CategoryIcon id={c.id} size={16} /></span>
+                <span className="browse-tree-name">{c.title}</span>
               </Link>
               <ul>
                 {c.subs.map((s) => (
@@ -54,13 +56,28 @@ export default function Browse() {
             <Link to="/">首页</Link> › <Link to={`/c/${cat}`}>{category.title}</Link>
             {activeSub && <> › {activeSub.sub.title}</>}
           </div>
-          <h1 className="browse-h1">
-            {category.title}
-            {activeSub ? ` · ${activeSub.sub.title}` : ''}
-          </h1>
-          <p className="section-desc">
-            {activeSub ? activeSub.sub.subtitle : category.subtitle} · 共 {courses.length} 门课程
-          </p>
+          <div className="browse-hero">
+            <span className="browse-hero-ic"><CategoryIcon id={category.id} size={26} /></span>
+            <div>
+              <h1 className="browse-h1">
+                {category.title}
+                {activeSub ? ` · ${activeSub.sub.title}` : ''}
+              </h1>
+              <p className="section-desc">
+                {activeSub ? activeSub.sub.subtitle : category.subtitle} · 共 {courses.length} 门课程
+              </p>
+            </div>
+          </div>
+
+          {!activeSub && category.subs.length > 0 && (
+            <div className="browse-chips">
+              {category.subs.map((s) => (
+                <Link key={s.id} className="browse-chip" to={`/c/${cat}/${s.id}`}>
+                  {s.title}
+                </Link>
+              ))}
+            </div>
+          )}
 
           {courses.length ? (
             <div className="course-grid two">
