@@ -22,7 +22,7 @@ import designPatterns from '../courses/design-patterns/index.js'
 import reactEcosystem from '../courses/react-ecosystem/index.js'
 import vueEcosystem from '../courses/vue-ecosystem/index.js'
 import jsTsFoundations from '../courses/js-ts-foundations/index.js'
-// import frontendEngineering from '../courses/frontend-engineering/index.js' // 章节补全后启用
+import frontendEngineering from '../courses/frontend-engineering/index.js'
 import androidDev from '../courses/android-dev/index.js'
 import iosDev from '../courses/ios-dev/index.js'
 
@@ -49,7 +49,7 @@ export const COURSES = [
   jsTsFoundations,
   reactEcosystem,
   vueEcosystem,
-  // frontendEngineering, // 章节补全后启用
+  frontendEngineering,
   androidDev,
   iosDev,
 ]
