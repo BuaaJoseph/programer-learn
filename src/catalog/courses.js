@@ -25,6 +25,9 @@ import jsTsFoundations from '../courses/js-ts-foundations/index.js'
 import frontendEngineering from '../courses/frontend-engineering/index.js'
 import androidDev from '../courses/android-dev/index.js'
 import iosDev from '../courses/ios-dev/index.js'
+import javaBasics from '../courses/java-basics/index.js'
+import messageQueue from '../courses/message-queue/index.js'
+import netty from '../courses/netty/index.js'
 
 export const COURSES = [
   llmHandbook,
@@ -35,9 +38,12 @@ export const COURSES = [
   jvm,
   javaConcurrency,
   spring,
+  javaBasics,
   mysqlInternals,
   redisInternals,
   rabbitmq,
+  messageQueue,
+  netty,
   dubboRpc,
   kafka,
   zookeeper,

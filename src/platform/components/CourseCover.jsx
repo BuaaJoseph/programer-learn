@@ -87,6 +87,8 @@ export default function CourseCover({ course }) {
         <IosScene />
       ) : coverScene === 'buildpipeline' ? (
         <BuildPipelineScene />
+      ) : coverScene === 'javacup' ? (
+        <JavaCupScene />
       ) : (
         <AttentionScene />
       )}
@@ -757,6 +759,26 @@ function BuildPipelineScene() {
         </marker>
       </defs>
       <text x="200" y="172" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">source → bundle → dist</text>
+    </g>
+  )
+}
+
+function JavaCupScene() {
+  // 一只冒着热气的咖啡杯，呼应 Java 的图标。
+  const cx = 200
+  return (
+    <g>
+      {/* 热气 */}
+      <g stroke="#ffffff" strokeOpacity="0.6" strokeWidth="2.4" fill="none" strokeLinecap="round">
+        <path d={`M ${cx - 26} 58 q -10 -14 0 -28 q 10 -14 0 -28`} />
+        <path d={`M ${cx} 58 q -10 -14 0 -28 q 10 -14 0 -28`} />
+        <path d={`M ${cx + 26} 58 q -10 -14 0 -28 q 10 -14 0 -28`} />
+      </g>
+      {/* 杯体 */}
+      <path d={`M ${cx - 52} 78 L ${cx + 52} 78 L ${cx + 44} 150 Q ${cx + 40} 164 ${cx + 26} 164 L ${cx - 26} 164 Q ${cx - 40} 164 ${cx - 44} 150 Z`} fill="#ffffff" fillOpacity="0.9" />
+      {/* 把手 */}
+      <path d={`M ${cx + 52} 90 q 30 4 26 34 q -4 26 -30 24`} fill="none" stroke="#ffffff" strokeOpacity="0.85" strokeWidth="7" />
+      <text x={cx} y="128" textAnchor="middle" fontFamily="var(--display)" fontSize="26" fontWeight="800" fill="#0f1320">JVM</text>
     </g>
   )
 }
