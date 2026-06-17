@@ -85,6 +85,8 @@ export default function CourseCover({ course }) {
         <AndroidScene />
       ) : coverScene === 'ios' ? (
         <IosScene />
+      ) : coverScene === 'buildpipeline' ? (
+        <BuildPipelineScene />
       ) : (
         <AttentionScene />
       )}
@@ -711,6 +713,50 @@ function IosScene() {
         <text x={cx} y="135" textAnchor="middle" fontFamily="var(--mono)" fontSize="8" fill="#ffffff">Button</text>
       </g>
       <text x={cx} y="190" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">Swift · SwiftUI</text>
+    </g>
+  )
+}
+
+function BuildPipelineScene() {
+  // 构建流水线：源码模块 → 打包齿轮 → 优化产物，传达「source → bundle → dist」。
+  const cy = 100
+  return (
+    <g>
+      {/* 左：散落的源码模块 */}
+      <g fill="#ffffff" fillOpacity="0.85">
+        <rect x="34" y="58" width="44" height="20" rx="4" />
+        <rect x="34" y="88" width="44" height="20" rx="4" />
+        <rect x="34" y="118" width="44" height="20" rx="4" />
+      </g>
+      <g stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.4">
+        <line x1="78" y1="68" x2="150" y2={cy} />
+        <line x1="78" y1="98" x2="150" y2={cy} />
+        <line x1="78" y1="128" x2="150" y2={cy} />
+      </g>
+      {/* 中：打包齿轮 */}
+      <g transform={`translate(178 ${cy})`}>
+        <circle r="30" fill="none" stroke="#ffffff" strokeOpacity="0.85" strokeWidth="3" />
+        {Array.from({ length: 8 }).map((_, i) => {
+          const a = (i * Math.PI) / 4
+          return <line key={i} x1={Math.cos(a) * 30} y1={Math.sin(a) * 30} x2={Math.cos(a) * 38} y2={Math.sin(a) * 38} stroke="#ffffff" strokeOpacity="0.85" strokeWidth="3" strokeLinecap="round" />
+        })}
+        <circle r="9" fill="#ffffff" fillOpacity="0.9" />
+      </g>
+      <g stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.6" markerEnd="url(#bpArr)">
+        <line x1="222" y1={cy} x2="280" y2={cy} />
+      </g>
+      {/* 右：优化后的产物条（大小递减） */}
+      <g fill="#ffffff">
+        <rect x="296" y="74" width="74" height="14" rx="4" fillOpacity="0.9" />
+        <rect x="296" y="94" width="56" height="14" rx="4" fillOpacity="0.7" />
+        <rect x="296" y="114" width="40" height="14" rx="4" fillOpacity="0.5" />
+      </g>
+      <defs>
+        <marker id="bpArr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#ffffff" fillOpacity="0.7" />
+        </marker>
+      </defs>
+      <text x="200" y="172" textAnchor="middle" fontFamily="var(--mono)" fontSize="11" fill="#ffffff" fillOpacity="0.9">source → bundle → dist</text>
     </g>
   )
 }
