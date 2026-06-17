@@ -188,6 +188,43 @@ export default function Ch1() {
         这反过来印证了「不可变 + 缓存 hashCode」对 key 有多重要，也呼应了上一卷不可变类的价值。
       </Callout>
 
+      <h3>面试题 7：String 的 + 拼接和 concat 方法有什么区别？</h3>
+      <p>
+        两者都能拼接字符串，但机制不同：<code>+</code> 是<strong>语法糖</strong>，编译器会转成 StringBuilder 操作；
+        <code>concat</code> 是 String 的<strong>实例方法</strong>，内部直接创建新字符数组拼接。
+      </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th><code>+</code> 拼接</th><th><code>concat</code></th></tr>
+        </thead>
+        <tbody>
+          <tr><td>本质</td><td>编译期转 StringBuilder</td><td>String 实例方法</td></tr>
+          <tr><td>拼 null</td><td>把 null 当 "null" 拼上</td><td>对 null 抛 NullPointerException</td></tr>
+          <tr><td>拼空串</td><td>正常</td><td>拼空串可能返回原对象</td></tr>
+          <tr><td>多次拼接</td><td>循环里低效（应改 StringBuilder）</td><td>每次都新建对象</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="warn" title="易错点：concat(null) 会抛 NPE">
+        <code>"a" + null</code> 得到 <code>"anull"</code>（+ 会把 null 转成字符串 "null"），
+        但 <code>"a".concat(null)</code> 会直接抛 <code>NullPointerException</code>。
+        这个差异常被用作笔试陷阱。日常拼接用 + 即可，对可能为 null 的值更友好。
+      </Callout>
+
+      <h3>面试题 8：String.intern() 到底做了什么？</h3>
+      <p>
+        <code>intern()</code> 的作用是：检查字符串常量池里有没有内容相等的字符串，
+        有就返回池中那个的引用，没有就把当前字符串<strong>加入池</strong>并返回。它能让运行期产生的字符串也享受常量池的复用。
+      </p>
+      <ul>
+        <li>对常量池已有的内容，<code>str.intern() == 字面量</code> 为 true。</li>
+        <li>JDK 7 后常量池在堆里，intern 时若池中没有，会把<strong>堆中对象的引用</strong>存入池（而非复制），这点和 JDK 6 不同。</li>
+      </ul>
+      <Callout variant="note" title="intern 的适用与代价">
+        intern 适合「大量重复字符串、想去重省内存」的场景（如解析大文件时重复出现的标识）。
+        但它有查找和入池成本，常量池过大也影响性能，所以不要对海量不重复字符串无脑 intern。
+        现代实践更常用 <code>Map</code> 自己做缓存去重，比依赖全局常量池更可控。
+      </Callout>
+
       <Summary
         points={[
           'String 不可变（final 类 + 私有 final 字节数组 + 不泄露引用），带来线程安全、常量池复用、可做哈希键、安全等好处。',

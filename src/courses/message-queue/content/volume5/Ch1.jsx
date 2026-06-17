@@ -111,7 +111,20 @@ export default function Ch1() {
         「最合适」往往不是「参数最强」，而是「团队能驾驭、能长期维护好」的那个。
       </Callout>
 
-      <h2>五、面试精讲</h2>
+      <h2>五、常见误区澄清</h2>
+      <p>
+        选型讨论里有几个流传很广却不准确的说法，面试时若能主动澄清会显得很有判断力：
+      </p>
+      <ul>
+        <li><strong>「Kafka 会丢消息所以不可靠」</strong>——不准确。Kafka 配 <code>acks=all</code> + 多副本 + 合理 <code>min.insync.replicas</code>
+          可达到很高可靠性，早年「丢消息」的印象多源于默认配置或误用，不是设计缺陷。</li>
+        <li><strong>「RabbitMQ 性能差」</strong>——片面。它单条延迟最低，只是<strong>吞吐和堆积能力</strong>不如另两者；
+          在中小流量的低延迟、灵活路由场景里它反而最合适。</li>
+        <li><strong>「RocketMQ 就是国产 Kafka」</strong>——不对。它借鉴了 Kafka 内核，但存储模型（全局 CommitLog）、
+          服务发现（NameServer）、业务特性（事务/延迟/轨迹）都做了重做，定位也偏业务消息而非纯流处理。</li>
+      </ul>
+
+      <h2>六、面试精讲</h2>
 
       <h3>Q1：Kafka、RocketMQ、RabbitMQ 怎么选？</h3>
       <p>
@@ -141,6 +154,11 @@ export default function Ch1() {
       <p>
         <strong>面试追问：</strong>「RocketMQ 能做流处理吗？」——能做基础的，但生态、连接器、社区积累远不及 Kafka，
         所以「流处理 + 大数据」这条赛道事实上是 Kafka 的主场。
+      </p>
+      <p>
+        <strong>再追问：</strong>「Pulsar 这类新 MQ 会取代 Kafka 吗？」——可以坦诚说：Pulsar 的存算分离架构在弹性扩缩、
+        多租户上有亮点，但 Kafka 生态太成熟、迁移成本高，短期内难被取代。这类问题答「看场景与生态成熟度，不盲目追新」即可，
+        体现技术判断的稳健。
       </p>
 
       <h3>Q3：消息堆积能力为什么 RabbitMQ 最弱？</h3>

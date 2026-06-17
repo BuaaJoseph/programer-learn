@@ -202,6 +202,28 @@ export default function Ch1() {
         既保留了 BIO 的好写，又获得了 NIO 级的高并发。这是 IO 模型演进的最新一环。
       </Callout>
 
+      <h3>面试题 7：什么是 Reactor 模型？它和 NIO 是什么关系？</h3>
+      <p>
+        Reactor 是基于 NIO 多路复用的<strong>事件驱动设计模式</strong>，是 Netty 等高性能框架的核心架构。
+        它用少数线程通过 Selector 监听所有连接的事件，事件就绪时<strong>分发（dispatch）</strong>给对应的处理器，
+        从而用极少线程处理海量连接。常见有三种演进形态：
+      </p>
+      <table>
+        <thead>
+          <tr><th>形态</th><th>结构</th><th>特点</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>单 Reactor 单线程</td><td>一个线程管所有</td><td>简单，但处理慢会阻塞全局</td></tr>
+          <tr><td>单 Reactor 多线程</td><td>一个线程分发，线程池处理业务</td><td>业务并行，但单线程分发可能成瓶颈</td></tr>
+          <tr><td>主从 Reactor</td><td>主线程管 accept，从线程组管 IO 读写</td><td>Netty 默认，扩展性最好</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="tip" title="NIO 是机制，Reactor 是模式">
+        关系可以这样理解：NIO（Selector/Channel/Buffer）提供了「单线程监听多连接」的底层<strong>能力</strong>，
+        而 Reactor 是把这套能力组织起来、做到「事件来了分发给谁处理」的<strong>架构模式</strong>。
+        Netty 就是在 NIO 之上实现了主从 Reactor。面试讲完 NIO 三件套，能再点出「Reactor 是其上的架构模式」会显得很有体系。
+      </Callout>
+
       <Summary
         points={[
           'IO 流按方向分输入/输出，按单位分字节流（二进制）与字符流（文本，涉及编码）；IO 体系大量用装饰器模式层层加能力。',

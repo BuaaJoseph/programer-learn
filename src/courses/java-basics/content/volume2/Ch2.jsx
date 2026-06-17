@@ -193,6 +193,41 @@ export default function Ch2() {
         面试被问「一个中文几个字节」，先反问「在内存里还是编码后？用什么编码？」才是高水平回答。
       </Callout>
 
+      <h3>面试题 7：BigInteger 和 BigDecimal 有什么区别？</h3>
+      <p>
+        两者都用于「超出基本类型范围或需要精确」的数值，区别在于：<code>BigInteger</code> 表示<strong>任意大的整数</strong>
+        （没有大小上限，只受内存限制），<code>BigDecimal</code> 表示<strong>任意精度的小数</strong>（带标度）。
+      </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>BigInteger</th><th>BigDecimal</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>表示</td><td>任意大整数</td><td>任意精度小数（无标度整数 + 标度）</td></tr>
+          <tr><td>解决</td><td>long 也装不下的大整数</td><td>浮点精度丢失</td></tr>
+          <tr><td>典型场景</td><td>大数运算、加密、阶乘</td><td>金额、利率等精确计算</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="note" title="共同点：不可变 + 用方法运算">
+        二者都是<strong>不可变</strong>对象，且不能用 <code>+ - * /</code> 运算符，必须调 <code>add</code>/<code>subtract</code>/
+        <code>multiply</code>/<code>divide</code> 等方法，每次运算返回新对象。这点和包装类不同——
+        别误以为能直接对 BigDecimal 用算术运算符。理解「不可变 + 方法运算」是用好它们的前提。
+      </Callout>
+
+      <h3>面试题 8：== 比较浮点时，NaN 和 0 有什么特殊行为？</h3>
+      <p>
+        浮点世界有两个反直觉的特殊值，面试偶尔会考：
+      </p>
+      <ul>
+        <li><strong>NaN（非数字）</strong>：<code>NaN == NaN</code> 永远是 <strong>false</strong>，连它自己都不等于自己！判断是否为 NaN 要用 <code>Double.isNaN(x)</code>。</li>
+        <li><strong>正零和负零</strong>：<code>0.0 == -0.0</code> 为 true，但 <code>Double.compare(0.0, -0.0)</code> 却认为正零大于负零，<code>new Double(0.0).equals(-0.0)</code> 也是 false。</li>
+      </ul>
+      <Callout variant="warn" title="为什么这会埋坑？">
+        如果用浮点做 Map 的 key 或排序，NaN 和正负零的这些特殊行为可能导致「查不到」「排序异常」。
+        所以浮点本就不适合做精确的 key/比较基准——又一个「钱和精确比较别用浮点」的佐证。
+        知道 <code>NaN != NaN</code> 这个冷知识，能体现你对 IEEE 754 的了解深度。
+      </Callout>
+
       <Summary
         points={[
           'float/double 用 IEEE 754 二进制浮点，0.1/0.2 等十进制小数是二进制无限循环小数，只能存近似值，故 0.1+0.2 != 0.3。',

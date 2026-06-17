@@ -88,6 +88,40 @@ export const VOLUMES = [
       { slug: 'jb7-c2', title: '新特性与规范：Java 8~25 与 POJO 家族', topic: '总结', hook: 'Java 8/11/17/21/25 的关键新特性脉络、PO/VO/BO/DTO/DAO/POJO 这些命名到底各指什么——收束全课并对齐工程实践。', minutes: 110, hasContent: true },
     ],
   },
+  {
+    id: 'jb8',
+    index: 8,
+    title: 'Java 集合',
+    subtitle: 'Collections',
+    theme: '集合框架是日常编码与面试的双重重灾区。先把 Collection 与 Map 两大体系总览清楚，再把 List 家族（数组 vs 链表、ArrayList 扩容、CopyOnWrite）、Map 家族（HashMap 原理与扩容、各类变体）、并发集合（ConcurrentHashMap 1.7 vs 1.8）逐层讲透。',
+    chapters: [
+      { slug: 'jb8-c1', title: 'List 与数组：体系总览与 ArrayList 原理', topic: '原理', hook: '集合两大体系总览、数组 vs 链表的本质差异、ArrayList 与 LinkedList 怎么选、ArrayList 扩容机制、CopyOnWriteArrayList 是什么、ConcurrentModificationException 如何产生——把 List 高频题一次讲清。', minutes: 130, hasContent: true },
+      { slug: 'jb8-c2', title: 'Map：HashMap 原理、扩容与各类变体', topic: '原理', hook: 'HashMap 的数组+链表+红黑树结构、Hash 碰撞如何解决、扩容机制、为何容量是 2 的 n 次方、负载因子为何 0.75、JDK1.8 的改动，以及 LinkedHashMap/TreeMap/WeakHashMap 等变体——Map 是面试必杀区。', minutes: 140, hasContent: true },
+      { slug: 'jb8-c3', title: '并发集合：ConcurrentHashMap 原理', topic: '原理', hook: 'ConcurrentHashMap 的实现原理、JDK1.7 分段锁与 1.8 CAS+synchronized+红黑树的区别、get 为何不加锁、为何不允许 null 键值、与 Hashtable 的对比——把线程安全的 Map 讲到位。', minutes: 120, hasContent: true },
+    ],
+  },
+  {
+    id: 'jb9',
+    index: 9,
+    title: '并发：线程与线程池',
+    subtitle: 'Threads & Thread Pool',
+    theme: '并发编程从这里入门。先把线程的创建、生命周期、同步、通信、死锁等基础讲透，再深入线程池：核心参数与工作流程、如何设线程数、拒绝策略、各类内置线程池、阻塞队列与定时任务。',
+    chapters: [
+      { slug: 'jb9-c1', title: '线程基础：创建、状态、同步与通信', topic: '原理', hook: '如何创建多线程、线程的六种状态、线程同步与线程安全、wait/notify 通信、协程与 Java 的关系、sleep 与 yield 的区别、死锁的成因与避免、如何控制线程执行顺序——并发基本功一网打尽。', minutes: 140, hasContent: true },
+      { slug: 'jb9-c2', title: '线程池：原理、参数、拒绝策略与队列', topic: '原理', hook: '线程池的核心参数与工作流程、如何合理设线程数、四种拒绝策略、各类内置线程池的区别、shutdown 与 shutdownNow、阻塞队列与 DelayQueue、定时任务与时间轮——线程池是并发面试的核心。', minutes: 140, hasContent: true },
+    ],
+  },
+  {
+    id: 'jb10',
+    index: 10,
+    title: '并发：锁与内存模型',
+    subtitle: 'Locks & JMM',
+    theme: '并发的深水区。先把 synchronized 的实现与锁升级、ReentrantLock 与 AQS、CAS 与 ABA、读写锁讲透，再到 Java 内存模型：三大特性、happens-before、volatile、原子类与并发工具类、ThreadLocal。',
+    chapters: [
+      { slug: 'jb10-c1', title: '锁：synchronized、AQS、CAS 与 ReentrantLock', topic: '原理', hook: 'synchronized 的对象头与 Monitor 与锁升级、轻量级锁的自旋、ReentrantLock 与 AQS 原理、CAS 与 ABA 问题、读写锁与 StampedLock、如何优化锁、volatile 与 synchronized 的区别——锁的全景图。', minutes: 140, hasContent: true },
+      { slug: 'jb10-c2', title: '内存模型与并发工具：JMM、原子类、ThreadLocal', topic: '原理', hook: 'JMM 与原子性/可见性/有序性、happens-before 规则、指令重排、volatile 作用、原子类与 LongAdder、Semaphore/CyclicBarrier/CountDownLatch、CompletableFuture、ForkJoinPool、ThreadLocal 全解——并发工具的收官。', minutes: 140, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>

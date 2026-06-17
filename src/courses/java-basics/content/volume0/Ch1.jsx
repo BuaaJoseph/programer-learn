@@ -202,6 +202,27 @@ export default function Ch1() {
         这就是「越跑越快」和「JVM 预热」的由来。基准测试 Java 性能时必须先充分预热，否则测到的是解释执行阶段的慢速，结论不准。
       </Callout>
 
+      <h3>面试题 7：Oracle JDK 和 OpenJDK 有什么区别？</h3>
+      <p>
+        日常说的「JDK」如今大多基于 <strong>OpenJDK</strong>（开源参考实现）。Oracle JDK 是 Oracle 基于 OpenJDK
+        构建的商业发行版，两者在功能上<strong>几乎一致</strong>，主要差别在许可与支持：
+      </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>OpenJDK</th><th>Oracle JDK</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>开源</td><td>是（GPL）</td><td>基于 OpenJDK，含商业条款</td></tr>
+          <tr><td>许可/费用</td><td>免费</td><td>生产环境可能需商业订阅</td></tr>
+          <tr><td>支持周期</td><td>社区/各发行方</td><td>Oracle 官方长期支持</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="tip" title="常见发行版">
+        除 Oracle 外，还有 Adoptium（Temurin）、Amazon Corretto、Azul Zulu、阿里 Dragonwell 等多个 OpenJDK 发行版，
+        多数对生产免费且提供长期支持。选型时关注「是否 LTS、谁提供安全补丁、许可是否免费」三点即可，
+        功能层面它们基本对齐 OpenJDK。能聊到这一层会显得对生态很熟。
+      </Callout>
+
       <Summary
         points={[
           'Java 既是语言也是平台：源码经 javac 编成与平台无关的字节码，再由各平台的 JVM 执行；这才是「一次编写到处运行」的真相。',

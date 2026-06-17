@@ -186,6 +186,41 @@ export default function Ch2() {
         十多年来稳如磐石。<strong>把原理吃透，新特性只是锦上添花</strong>——这正是这门基础课最想留给你的东西。
       </Callout>
 
+      <h3>面试题 7：Stream 是什么？和普通集合遍历有何不同？</h3>
+      <p>
+        Stream（Java 8）提供<strong>声明式</strong>的集合处理：你描述「想做什么」（过滤、映射、归约），
+        而不是写「怎么一步步循环」。它和普通 for 遍历的本质区别有三点：
+      </p>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>普通遍历</th><th>Stream</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>风格</td><td>命令式（怎么做）</td><td>声明式（做什么）</td></tr>
+          <tr><td>求值</td><td>立即执行</td><td>惰性：中间操作不执行，遇终结操作才触发</td></tr>
+          <tr><td>并行</td><td>需手动写多线程</td><td>parallelStream 一键并行</td></tr>
+          <tr><td>复用</td><td>集合可反复遍历</td><td>Stream 用完即废，不能重复消费</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="note" title="中间操作 vs 终结操作">
+        <code>filter</code>/<code>map</code>/<code>sorted</code> 是<strong>中间操作</strong>，返回新 Stream、惰性不执行；
+        <code>collect</code>/<code>forEach</code>/<code>count</code>/<code>reduce</code> 是<strong>终结操作</strong>，触发整条链真正执行。
+        没有终结操作，前面的中间操作一行都不会跑——这是 Stream「惰性求值」的关键，也是常见的「为什么我的 Stream 没执行」的答案。
+      </Callout>
+
+      <h3>面试题 8：Lambda 表达式的本质是什么？</h3>
+      <p>
+        Lambda 是<strong>函数式接口</strong>（只有一个抽象方法的接口，可加 <code>@FunctionalInterface</code>）的简洁实现写法。
+        它本质上是「把一段行为当作值传递」。底层并非简单的匿名内部类语法糖——编译器用
+        <code>invokedynamic</code> 指令在运行时按需生成实现，比匿名内部类更高效、不会每个 Lambda 都生成一个 .class。
+      </p>
+      <Callout variant="tip" title="Lambda 和匿名内部类的区别别答错">
+        三点核心差异：① Lambda 只能用于函数式接口，匿名内部类可实现任意接口/抽象类；
+        ② Lambda 的 <code>this</code> 指向<strong>外部类实例</strong>，匿名内部类的 this 指向<strong>它自己</strong>；
+        ③ Lambda 底层用 invokedynamic 动态生成、不额外产 class 文件，匿名内部类会编译出 <code>Outer$1.class</code>。
+        这呼应了第一卷讲匿名内部类时的对比，能串起来答就很完整。
+      </Callout>
+
       <h2>三、全课收束</h2>
       <p>
         到这里，这门课从「Java 与平台」起步，走过面向对象、类与对象、数值与字符串、异常与泛型、

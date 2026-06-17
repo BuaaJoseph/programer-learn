@@ -199,6 +199,39 @@ export default function Ch2() {
         这是个容易忽略的细节——以为加了 transient 就万事大吉，结果反序列化后该字段莫名其妙是 null。
       </Callout>
 
+      <h3>面试题 7：创建线程有哪几种方式？</h3>
+      <p>
+        承接 start 这道题，把「怎么创建线程」也理一遍。主流有四种方式：
+      </p>
+      <table>
+        <thead>
+          <tr><th>方式</th><th>做法</th><th>特点</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>继承 Thread</td><td>重写 run，new 后 start</td><td>简单，但占用唯一继承名额</td></tr>
+          <tr><td>实现 Runnable</td><td>实现 run，交给 Thread 执行</td><td>推荐，任务与线程解耦，无返回值</td></tr>
+          <tr><td>实现 Callable + Future</td><td>call 有返回值，配 FutureTask</td><td>能拿返回值、能抛异常</td></tr>
+          <tr><td>线程池 ExecutorService</td><td>submit 提交任务</td><td>生产首选，复用线程、可控</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="tip" title="本质上只有一种：实现 Runnable/Callable">
+        严格说，「继承 Thread」也是重写它的 run，而 Thread 本身就实现了 Runnable。
+        所以本质上线程要执行的「任务」都是一个 run/call 方法。生产中<strong>几乎都用线程池</strong>提交 Runnable/Callable，
+        而不是手动 new Thread——这把「任务」和「执行线程」彻底解耦，呼应了前面「线程不能复用、要用池」的结论。
+      </Callout>
+
+      <h3>面试题 8：sleep(0) 和 yield() 有什么用？</h3>
+      <p>
+        这两个都和「主动让出 CPU」有关，是 sleep 题的延伸：<code>Thread.yield()</code> 是给调度器一个「我愿意让出」的<strong>提示</strong>
+        （不保证一定让），让出后线程仍是<strong>可运行</strong>状态，可能立刻又被选中；
+        <code>Thread.sleep(0)</code> 效果类似，触发一次调度但不真正睡眠。
+      </p>
+      <Callout variant="note" title="它们都不释放锁，且不可靠">
+        和 sleep 一样，yield 也<strong>不释放锁</strong>，只是让出 CPU 时间片；而且 yield 只是「建议」，
+        不同平台/调度器行为不一，<strong>不能用它来保证线程执行顺序或做同步</strong>。
+        真正的线程协作要用 wait/notify、锁、或 java.util.concurrent 的工具，yield 基本只在极少数性能调优场景才用得到。
+      </Callout>
+
       <Summary
         points={[
           '序列化把对象转字节序列以存储/传输，需实现 Serializable；应显式声明 serialVersionUID，transient 与 static 字段不被序列化。',

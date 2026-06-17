@@ -198,6 +198,24 @@ export default function Ch2() {
         只有「子类在任何用到父类的地方都能替换父类」（里氏替换原则）时，继承才站得住。
       </Callout>
 
+      <h3>面试题 5：多态在底层是怎么实现的？</h3>
+      <p>
+        运行时多态靠 JVM 的<strong>动态分派</strong>实现，核心是<strong>虚方法表（vtable）</strong>。
+        每个类在方法区维护一张虚方法表，表里存着该类<strong>实际生效</strong>的方法地址（被重写的方法指向子类实现）。
+        调用一个可重写方法时，JVM 通过对象头找到它真实类型的虚方法表，再从表里取出对应方法地址来调——
+        所以最终调的是<strong>运行时真实类型</strong>的方法。
+      </p>
+      <ul>
+        <li>编译期：编译器只能确定「调用哪个方法签名」，但具体调哪份实现留到运行期。</li>
+        <li>运行期：靠虚方法表，根据对象真实类型分派到对应的重写方法。</li>
+        <li>例外：<code>static</code>、<code>private</code>、<code>final</code> 方法和构造器不参与动态分派（静态绑定）。</li>
+      </ul>
+      <Callout variant="note" title="为什么 static/private/final 不参与多态？">
+        因为它们<strong>不能被重写</strong>：private 子类看不见，final 禁止重写，static 属于类。
+        既然不会有「子类的不同实现」，自然不需要运行期再去查表分派，编译期就能直接定位，
+        这叫静态绑定。理解「能被重写的才走虚方法表」，多态的底层就通了。
+      </Callout>
+
       <Summary
         points={[
           '封装隐藏内部状态、暴露受控接口，解决「外部乱改内部」；继承复用并扩展，建立 is-a 关系，但要警惕过度耦合。',

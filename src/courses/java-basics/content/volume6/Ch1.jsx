@@ -199,6 +199,29 @@ export default function Ch1() {
         （如 OSGi、JSP 热部署、大量动态代理）。这也是这类系统要特别关注元空间（Metaspace）内存的原因。
       </Callout>
 
+      <h3>面试题 9：怎么自定义一个类加载器？常见用途有哪些？</h3>
+      <p>
+        自定义类加载器只需继承 <code>ClassLoader</code>，重写 <code>findClass</code>（在里面读字节并调
+        <code>defineClass</code> 生成 Class）。注意：通常<strong>只重写 findClass、保留 loadClass 的双亲委派</strong>，
+        除非确实要打破委派才重写 loadClass。
+      </p>
+      <table>
+        <thead>
+          <tr><th>用途</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>热部署</td><td>用新加载器加载改动后的类，替换旧版本（旧类随旧加载器被回收）</td></tr>
+          <tr><td>类隔离</td><td>不同应用/插件用各自加载器，互不干扰（Tomcat、OSGi）</td></tr>
+          <tr><td>加密/防护</td><td>加载时解密字节码，保护代码</td></tr>
+          <tr><td>非常规来源</td><td>从网络、数据库、加密包等加载类</td></tr>
+        </tbody>
+      </table>
+      <Callout variant="tip" title="重写 findClass 还是 loadClass？">
+        想<strong>保留</strong>双亲委派、只是扩展「从哪读字节」，重写 <code>findClass</code> 即可（推荐）；
+        想<strong>改变</strong>委派逻辑（如优先加载自己的类）才重写 <code>loadClass</code>。
+        这条选择直接对应前面「是否打破双亲委派」——理解了委派模型，自定义加载器就水到渠成。
+      </Callout>
+
       <Summary
         points={[
           '类生命周期：加载 → 连接（验证、准备、解析）→ 初始化 → 使用 → 卸载；口诀「加载、验证、准备、解析、初始化」。',

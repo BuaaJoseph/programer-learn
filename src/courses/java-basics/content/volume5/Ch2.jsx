@@ -178,6 +178,44 @@ export default function Ch2() {
         把反射、注解、动态代理、SPI 串成一条线理解，你就能看懂绝大多数框架的「魔法」从何而来。
       </Callout>
 
+      <h3>面试题 5：JDBC 是怎么用 SPI 自动加载驱动的？</h3>
+      <p>
+        JDBC 是 SPI 最经典的实战案例。早期要手动 <code>Class.forName("com.mysql.jdbc.Driver")</code> 注册驱动，
+        JDBC 4.0 后靠 SPI 实现了<strong>自动加载</strong>：MySQL 驱动 jar 里有
+        <code>META-INF/services/java.sql.Driver</code> 文件登记了它的实现类，
+        <code>DriverManager</code> 启动时用 <code>ServiceLoader</code> 扫描 classpath 自动发现并注册所有驱动。
+      </p>
+      <ul>
+        <li>接口 <code>java.sql.Driver</code> 在核心库，由启动类加载器加载。</li>
+        <li>驱动实现在 classpath，由应用类加载器加载——启动类加载器「看不到」它。</li>
+        <li>于是 DriverManager 用<strong>线程上下文类加载器</strong>反向加载实现，这正是上一卷讲的「打破双亲委派」的场景。</li>
+      </ul>
+      <Callout variant="note" title="SPI 串起了类加载这条线">
+        JDBC 自动加载驱动把本卷的 SPI 和上一卷的「双亲委派、线程上下文类加载器」完美串起来了：
+        SPI 让实现可插拔，而要让上层接口「找到」下层实现，必须借助线程上下文类加载器打破双亲委派。
+        面试若能用 JDBC 一个例子同时讲清 SPI + 打破双亲委派，会非常出彩。
+      </Callout>
+
+      <h3>面试题 6：Spring 的 @Transactional 为什么自调用会失效？</h3>
+      <p>
+        这是动态代理的高频实战坑。<code>@Transactional</code> 靠代理在方法外层加事务逻辑——
+        调用必须<strong>经过代理对象</strong>才会被增强。但如果在同一个类里，方法 A 直接调用<strong>本类</strong>的事务方法 B
+        （<code>this.B()</code>），这次调用走的是<strong>原始对象 this</strong> 而非代理，绕过了代理，事务自然失效。
+      </p>
+      <Example title="为什么 this 调用绕过了代理？">
+        <p>
+          代理对象内部持有真实对象，外部调 <code>proxy.A()</code> 时代理会织入逻辑再转发给 <code>realObj.A()</code>。
+          但 A 内部写 <code>this.B()</code> 时，<code>this</code> 是<strong>真实对象</strong>，不是代理，
+          所以 B 的事务/切面逻辑被跳过。解决办法：把 B 抽到另一个 Bean、或注入自身代理来调、或用 AspectJ 编织。
+          这个坑本质上印证了「动态代理只能拦截『经过代理』的外部调用」这条原理。
+        </p>
+      </Example>
+      <Callout variant="warn" title="CGLIB 也救不了自调用">
+        有人以为换成 CGLIB（基于子类）就能拦截自调用，其实不能——自调用的 <code>this</code> 指向的是
+        CGLIB 生成的子类实例本身没错，但调用是<strong>直接的方法调用</strong>，并不经过拦截器入口，
+        所以仍然不触发增强。这进一步说明：失效的根因是「调用没经过代理的拦截入口」，与代理方式无关。
+      </Callout>
+
       <Summary
         points={[
           '动态代理在运行时自动生成代理「壳」，把调用前后的横切逻辑集中处理，是 Spring AOP、RPC、Mock 的基础。',
