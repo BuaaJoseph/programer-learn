@@ -37,6 +37,30 @@ export const VOLUMES = [
       { slug: 'rpc3-c3', title: '选型：Dubbo(RPC) vs Feign(HTTP)', topic: 'RPC 选型', hook: 'RPC 长连接 + 二进制更快、治理更强；HTTP 更通用、跨语言更易——内部高频调用选 RPC，对外开放选 HTTP。', minutes: 90, hasContent: true },
     ],
   },
+  {
+    id: 'rpc4',
+    index: 4,
+    title: '面试精讲（一）：原理与治理',
+    subtitle: 'Interview · Internals & Governance',
+    theme: '把面试官最爱追问的「原理与治理」一次讲透：从 Dubbo 是什么、协议序列化，到 SPI 扩展、线程模型、异步，再到负载均衡、容错、路由、降级限流、灰度与监控。每道题都给你原理 + 对比 + 代码 + 追问。',
+    chapters: [
+      { slug: 'rpc4-c1', title: '总览与协议：Dubbo 是什么、怎么跑起来的', topic: '架构与协议', hook: 'Dubbo 解决「远程调用 + 服务治理」两件事；一次调用走代理 → 集群 → 协议编解码 → Netty 传输；协议有 dubbo/triple，序列化有 hessian2/protobuf 等。', minutes: 110, hasContent: true },
+      { slug: 'rpc4-c2', title: 'SPI 与扩展：自定义扩展、Filter、线程模型、异步', topic: 'SPI 与扩展', hook: 'Dubbo SPI 比 JDK SPI 多了按名加载、IoC、AOP 与自适应；Filter 是责任链；线程模型决定 IO 线程与业务线程怎么分工；异步靠 CompletableFuture 回到主线程。', minutes: 120, hasContent: true },
+      { slug: 'rpc4-c3', title: '集群与治理：均衡、容错、路由、降级限流、灰度', topic: '集群治理', hook: '负载均衡分摊流量、集群容错兜底失败、路由控制流向、降级限流熔断保命、Mock/Stub 兜底、分组与版本做隔离、灰度发布平滑升级、Monitor 采集监控。', minutes: 130, hasContent: true },
+    ],
+  },
+  {
+    id: 'rpc5',
+    index: 5,
+    title: '面试精讲（二）：实战与排查',
+    subtitle: 'Interview · Practice & Troubleshooting',
+    theme: '从「会用」到「用好、修得了」：配置方式与动态生效、直连与 ACL、高可用与分布式事务幂等、与 Spring Cloud 对比，最后是线程池调优、序列化优化、超时与启动慢排查、内存泄漏、调不通的全套排障与链路追踪。',
+    chapters: [
+      { slug: 'rpc5-c1', title: '配置与服务管理：配置方式、动态生效、直连、ACL、健康检查', topic: '配置与管理', hook: 'XML 与注解各有场景；动态配置走配置中心实时下发；直连绕过注册中心便于调试；ACL 做鉴权、健康检查与 Telnet 做运维。', minutes: 120, hasContent: true },
+      { slug: 'rpc5-c2', title: '高可用与分布式：高可用、跨机房、分布式事务、幂等、与 Spring Cloud 对比', topic: '高可用与分布式', hook: '高可用靠冗余 + 容错 + 隔离；跨机房靠就近路由；分布式事务用 TCC/Seata/消息最终一致；幂等用唯一键 + 去重；Dubbo vs Feign/Gateway 看定位。', minutes: 120, hasContent: true },
+      { slug: 'rpc5-c3', title: '性能与排查：线程池、序列化、超时、启动慢、内存泄漏、调不通', topic: '性能与排查', hook: '调优围绕线程池、连接、序列化、网络；排查围绕超时、延迟、启动慢、内存泄漏；调不通要会看注册、网络、序列化、版本分组，并用链路追踪定位。', minutes: 130, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>
