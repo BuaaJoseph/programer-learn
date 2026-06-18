@@ -89,6 +89,8 @@ export default function CourseCover({ course }) {
         <BuildPipelineScene />
       ) : coverScene === 'javacup' ? (
         <JavaCupScene />
+      ) : coverScene === 'python' ? (
+        <PythonScene />
       ) : (
         <AttentionScene />
       )}
@@ -779,6 +781,26 @@ function JavaCupScene() {
       {/* 把手 */}
       <path d={`M ${cx + 52} 90 q 30 4 26 34 q -4 26 -30 24`} fill="none" stroke="#ffffff" strokeOpacity="0.85" strokeWidth="7" />
       <text x={cx} y="128" textAnchor="middle" fontFamily="var(--display)" fontSize="26" fontWeight="800" fill="#0f1320">JVM</text>
+    </g>
+  )
+}
+
+function PythonScene() {
+  // 两条互扣的圆角蛇形，呼应 Python 双蛇 logo；下方 >>> 提示交互式。
+  const cx = 200
+  const cy = 96
+  return (
+    <g>
+      <g transform={`translate(${cx} ${cy})`}>
+        {/* 上半身 */}
+        <path d="M -6 -46 q -40 0 -40 30 l 0 16 q 0 14 22 14 l 30 0 q 14 0 14 12 l 0 8 -46 0" fill="none" stroke="#ffffff" strokeOpacity="0.9" strokeWidth="13" strokeLinecap="round" strokeLinejoin="round" />
+        {/* 下半身（旋转 180） */}
+        <path d="M 6 46 q 40 0 40 -30 l 0 -16 q 0 -14 -22 -14 l -30 0 q -14 0 -14 -12 l 0 -8 46 0" fill="none" stroke="#ffffff" strokeOpacity="0.55" strokeWidth="13" strokeLinecap="round" strokeLinejoin="round" />
+        {/* 眼睛 */}
+        <circle cx="-30" cy="-40" r="3.4" fill="#0f1320" />
+        <circle cx="30" cy="40" r="3.4" fill="#0f1320" />
+      </g>
+      <text x={cx} y="182" textAnchor="middle" fontFamily="var(--mono)" fontSize="13" fill="#ffffff" fillOpacity="0.9">{'>>> print("Hi")'}</text>
     </g>
   )
 }

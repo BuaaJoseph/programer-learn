@@ -28,9 +28,11 @@ import iosDev from '../courses/ios-dev/index.js'
 import javaBasics from '../courses/java-basics/index.js'
 import messageQueue from '../courses/message-queue/index.js'
 import netty from '../courses/netty/index.js'
+import pythonTutorial from '../courses/python-tutorial/index.js'
 
 export const COURSES = [
   llmHandbook,
+  pythonTutorial,
   agentInternals,
   buildAnAgent,
   agentFrameworks,
