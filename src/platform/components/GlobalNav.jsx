@@ -51,6 +51,8 @@ export default function GlobalNav() {
           )}
         </nav>
 
+        <Link to="/playground" className="gnav-play">▶ 在线运行</Link>
+
         <form className="gnav-search" onSubmit={submitSearch}>
           <input
             value={q}

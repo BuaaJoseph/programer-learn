@@ -779,3 +779,54 @@
     flex-wrap: wrap;
   }
 }
+
+/* ===== Python 在线运行（Pyodide） ===== */
+.gnav-play {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  color: var(--accent-strong); background: var(--accent-soft);
+  border: 1px solid var(--accent-line); white-space: nowrap; text-decoration: none;
+}
+.gnav-play:hover { background: var(--accent); color: #fff; }
+
+.pyrunner {
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--bg-subtle); margin: 20px 0;
+}
+.pyrunner-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.pyrunner-bar .dots { display: inline-flex; gap: 5px; }
+.pyrunner-bar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); display: block; }
+.pyrunner-title { font: 12px var(--mono); color: var(--ink-soft); flex: 1; }
+.pyrunner-actions { display: flex; gap: 8px; }
+.pyrunner-reset, .pyrunner-run {
+  font-size: 12.5px; font-weight: 600; border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink);
+}
+.pyrunner-run { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pyrunner-run:disabled, .pyrunner-reset:disabled { opacity: .55; cursor: default; }
+.pyrunner-editor {
+  width: 100%; box-sizing: border-box; border: 0; resize: vertical;
+  padding: 14px 16px; font: 13.5px/1.6 var(--mono); color: var(--ink);
+  background: var(--bg-subtle); tab-size: 4; outline: none; display: block;
+}
+.pyrunner-output {
+  margin: 0; padding: 12px 16px; font: 13px/1.55 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+  background: #0f1320; color: #e6e6e6; border-top: 1px solid var(--border);
+  max-height: 360px; overflow: auto;
+}
+.pyrunner-output.is-error { color: #ff9b9b; }
+.pyrunner-hint { padding: 7px 16px; font-size: 11.5px; color: var(--ink-soft); background: var(--bg); border-top: 1px dashed var(--border); }
+
+.playground-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 6px; }
+.playground-presets-label { font-size: 13px; color: var(--ink-soft); }
+.playground-chip {
+  font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink);
+}
+.playground-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.playground-note { margin-top: 18px; font-size: 13.5px; color: var(--ink-soft); }
+.playground-note a { color: var(--accent-strong); }
