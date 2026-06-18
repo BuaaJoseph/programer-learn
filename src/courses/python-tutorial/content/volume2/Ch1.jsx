@@ -5,6 +5,29 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryListCode = `fruits = ["苹果", "香蕉", "橙子"]
+
+# 增：在末尾添加
+fruits.append("葡萄")
+print("添加后：", fruits)
+
+# 改：修改某个位置
+fruits[0] = "西瓜"
+print("修改后：", fruits)
+
+# 删：删掉某个元素
+fruits.remove("香蕉")
+print("删除后：", fruits)
+
+# 查 + 切片
+print("第一个：", fruits[0])
+print("前两个：", fruits[0:2])
+
+# 排序（不改变原列表）
+nums = [3, 1, 4, 1, 5, 9, 2]
+print("排序：", sorted(nums))`
 
 const createCode = `fruits = ["苹果", "香蕉", "橙子"]
 nums = [10, 20, 30, 40]
@@ -185,6 +208,9 @@ export default function Ch1() {
         简单记：会变的、要增删的用<strong>列表</strong>（方括号）；固定不变的用<strong>元组</strong>（圆括号）。
         元组因为不可变，还能当字典的「键」（下一章会讲），列表则不行。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryListCode} />
 
       <Practice title="动手练一练">
         <ol>

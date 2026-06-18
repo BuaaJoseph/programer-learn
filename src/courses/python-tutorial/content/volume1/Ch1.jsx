@@ -5,6 +5,23 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryVarCode = `# 变量、运算、类型
+price = 100        # 整数 int
+discount = 0.8     # 小数 float
+final = price * discount
+print("打折后价格：", final)
+
+# type() 查看类型
+print(type(price))
+print(type(discount))
+print(type(final))
+
+# 类型转换：字符串 → 整数
+qty_str = "3"
+qty = int(qty_str)
+print(f"买 {qty} 件，共需 {final * qty} 元")`
 
 const assignCode = `name = "小红"
 age = 18
@@ -201,6 +218,9 @@ print(type("你好"))`} />
         忘了转换，直接拿 <code>input()</code> 的结果做加减乘除，要么报错，要么得到奇怪的结果
         （比如 <code>"3" * 2</code> 会得到 <code>"33"</code> 而不是 6）。读数字记得 <code>int(input(...))</code>。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryVarCode} />
 
       <Practice title="动手练一练">
         <ol>

@@ -5,6 +5,30 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 定义一个类，创建对象并调用方法
+class BankAccount:
+    def __init__(self, owner, balance=0):   # 构造方法
+        self.owner = owner                   # 实例属性
+        self.balance = balance
+
+    def deposit(self, amount):               # 方法：存钱
+        self.balance += amount
+        print(f"{self.owner} 存入 {amount}，余额 {self.balance}")
+
+    def withdraw(self, amount):              # 方法：取钱
+        if amount > self.balance:
+            print("余额不足！")
+            return
+        self.balance -= amount
+        print(f"{self.owner} 取出 {amount}，余额 {self.balance}")
+
+acc = BankAccount("小明", 100)
+acc.deposit(50)
+acc.withdraw(120)
+acc.withdraw(200)
+print("最终余额:", acc.balance)`
 
 const withoutClass = `# 用一堆零散的变量描述一个学生，很容易乱
 name1 = "小明"
@@ -218,6 +242,9 @@ export default function Ch1() {
       <p>真正的威力在于：你可以造出很多对象，用列表统一管理。</p>
       <CodeBlock lang="python" title="用列表管理多个对象" code={manyObjects} />
       <CodeBlock lang="text" title="运行结果" code={manyObjectsResult} />
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Practice title="练一练">
         写一个 <code>Dog</code> 类：构造方法接收名字和年龄；加一个 <code>bark()</code> 方法打印

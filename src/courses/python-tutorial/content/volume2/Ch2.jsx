@@ -5,6 +5,23 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryDictSetCode = `# 字典：增、改、查、遍历
+scores = {"语文": 88, "数学": 95}
+scores["英语"] = 90        # 增
+scores["语文"] = 92        # 改
+print("数学成绩：", scores["数学"])   # 查
+
+for subject, score in scores.items():
+    print(f"{subject}: {score}")
+
+# 集合：去重 + 交并
+a = {1, 2, 3, 3, 2}        # 重复会自动去掉
+b = {3, 4, 5}
+print("去重后：", a)
+print("交集：", a & b)
+print("并集：", a | b)`
 
 const createCode = `student = {
     "name": "小明",
@@ -180,6 +197,9 @@ export default function Ch2() {
         用 <code>in</code> 判断某个值是否存在时，集合比列表<strong>快得多</strong>。
         当你只关心「在不在」、且数据量大时，优先用集合。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryDictSetCode} />
 
       <Practice title="动手练一练">
         <ol>

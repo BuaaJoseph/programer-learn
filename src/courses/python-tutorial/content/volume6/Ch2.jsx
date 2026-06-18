@@ -5,6 +5,34 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：try/except 捕获异常 + json 互转
+import json
+
+# Python 字典 -> JSON 字符串
+data = {"name": "小明", "age": 18, "hobbies": ["篮球", "编程"]}
+text = json.dumps(data, ensure_ascii=False)
+print("JSON 字符串:", text)
+
+# JSON 字符串 -> Python 字典
+obj = json.loads(text)
+print("名字:", obj["name"], "| 第一个爱好:", obj["hobbies"][0])
+
+# 用 try/except 兜住可能的错误
+def safe_get(d, key):
+    try:
+        return d[key]
+    except KeyError:
+        return f"(没有键 {key})"
+
+print("city ->", safe_get(obj, "city"))
+
+# 解析非法 JSON 也能优雅处理
+try:
+    json.loads("这不是合法的 JSON")
+except json.JSONDecodeError as e:
+    print("解析失败:", e.msg)`
 
 const crashDemo = `# 没有异常处理：一出错，程序直接崩溃停掉
 num = int(input("输入一个整数："))   # 用户输入 "abc"
@@ -270,6 +298,9 @@ export default function Ch2() {
           按类型处理失败</strong>，程序才不会因为一次意外就整个崩掉。
         </p>
       </Example>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Summary
         points={[

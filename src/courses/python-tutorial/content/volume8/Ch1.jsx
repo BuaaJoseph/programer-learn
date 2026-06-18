@@ -5,6 +5,34 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：生成器 yield + 一个简单装饰器
+# 1) 生成器：依次吐出前 n 个偶数
+def even_numbers(n):
+    count = 0
+    num = 0
+    while count < n:
+        yield num
+        num += 2
+        count += 1
+
+print("前 5 个偶数:", list(even_numbers(5)))
+
+# 2) 装饰器：调用前后打印日志
+def log_call(func):
+    def wrapper(*args, **kwargs):
+        print(f"-> 调用 {func.__name__}{args}")
+        result = func(*args, **kwargs)
+        print(f"<- 返回 {result}")
+        return result
+    return wrapper
+
+@log_call
+def add(a, b):
+    return a + b
+
+add(3, 4)`
 
 const iterableDemo = `# 这些都是"可迭代对象"，能用 for 遍历
 for x in [1, 2, 3]:       # 列表
@@ -237,6 +265,9 @@ export default function Ch1() {
           原样转交给被包装的函数，做到"通用"。
         </p>
       </Example>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <h2>四、with 与上下文管理器一瞥</h2>
       <p>

@@ -5,6 +5,18 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryHelloCode = `# 第一个程序：打个招呼，再算点小账
+print("你好，Python！")
+print("欢迎来到编程的世界～")
+
+# Python 也是个好用的计算器
+a = 12
+b = 8
+print("12 + 8 =", a + b)
+print("12 * 8 =", a * b)
+print("我今年", 2026 - 1991, "岁的 Python 陪你一起学")`
 
 const checkVersionBash = `# 在终端（命令行）里输入下面这一行，回车
 python --version
@@ -180,6 +192,9 @@ export default function Ch1() {
         编程是「练」出来的，不是「看」会的。这套教程的每一章都配了可以直接运行的小例子，
         请务必动手敲一遍、改一改参数看看结果变化——这比单纯读十遍都管用。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryHelloCode} />
 
       <Practice title="动手练一练">
         <ol>

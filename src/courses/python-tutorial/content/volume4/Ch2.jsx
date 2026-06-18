@@ -5,6 +5,26 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：lambda + map / filter + sorted(key=)
+nums = [5, 2, 8, 1, 9, 3]
+
+# map：每个数平方
+squares = list(map(lambda x: x * x, nums))
+print("平方:", squares)
+
+# filter：只留大于 3 的
+big = list(filter(lambda x: x > 3, nums))
+print("大于3:", big)
+
+# sorted：按字典字段排序
+people = [{"name": "小明", "age": 18},
+          {"name": "小红", "age": 16},
+          {"name": "小刚", "age": 20}]
+by_age = sorted(people, key=lambda p: p["age"])
+for p in by_age:
+    print(p["name"], p["age"])`
 
 const argsCode = `def total(*nums):          # *nums 收集任意多个位置参数，变成元组
     print(nums)            # 看看它长什么样
@@ -183,6 +203,9 @@ export default function Ch2() {
         后面做 Agent 时，我们会把一个个「工具函数」交给框架，由框架在需要时调用——
         这正是「把函数当参数 / 当数据传递」的思想。现在打好这个底，后面会很顺。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Practice title="动手练一练">
         <ol>

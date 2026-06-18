@@ -5,6 +5,26 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 标准库：math / random / datetime 各用一下
+import math
+import random
+import datetime
+
+# math：数学运算
+print("根号 2 =", round(math.sqrt(2), 4))
+print("圆面积(r=3) =", round(math.pi * 3 ** 2, 2))
+
+# random：随机（每次运行结果不同）
+random.seed(42)                      # 固定种子，方便演示
+print("掷骰子:", random.randint(1, 6))
+print("随机选:", random.choice(["红", "绿", "蓝"]))
+
+# datetime：日期时间
+today = datetime.date(2026, 6, 18)
+print("日期:", today)
+print("是星期几(0=周一):", today.weekday())`
 
 const importCode = `import math               # 导入整个 math 模块
 
@@ -185,6 +205,9 @@ export default function Ch1() {
         <code>sys</code> 模块常用 <code>sys.argv</code>（读取命令行传进来的参数）和 <code>sys.exit()</code>（提前退出程序）。
         这些模块你不用全记住，知道「遇到这类需求去查这个库」就够了。
       </p>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Practice title="动手练一练">
         <ol>

@@ -5,6 +5,25 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：正则 re.findall / re.sub + 一点类型注解
+import re
+from typing import List
+
+def extract_phones(text: str) -> List[str]:   # 类型注解
+    return re.findall(r"\\d{11}", text)        # 找出所有 11 位数字
+
+def mask_phones(text: str) -> str:
+    return re.sub(r"\\d{11}", "***", text)     # 把手机号替换成 ***
+
+msg = "联系电话 13800001234，备用 13912345678"
+print("找到手机号:", extract_phones(msg))
+print("脱敏后:", mask_phones(msg))
+
+# 提取所有邮箱
+emails = re.findall(r"\\w+@\\w+\\.\\w+", "客服 a@qq.com 或 b@163.com")
+print("邮箱:", emails)`
 
 const reBasic = `import re
 
@@ -212,6 +231,9 @@ export default function Ch2() {
       </Callout>
       <CodeBlock lang="python" title="注解不会拦住你" code={typeNote} />
       <CodeBlock lang="text" title="运行结果" code={typeNoteResult} />
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <h2>三、常用内置函数</h2>
       <p>这些函数不用 import，直接就能用，处理列表 / 序列时极其顺手。</p>

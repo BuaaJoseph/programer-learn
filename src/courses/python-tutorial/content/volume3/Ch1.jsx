@@ -5,6 +5,29 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryLoopCode = `# for + if：打印 1~10 里的偶数
+n = 10
+print(f"1~{n} 里的偶数：")
+for i in range(1, n + 1):
+    if i % 2 == 0:
+        print(i, end=" ")
+print()   # 换行
+
+# while：累加 1+2+...+5
+total = 0
+k = 1
+while k <= 5:
+    total += k
+    k += 1
+print("1+2+3+4+5 =", total)
+
+# 九九乘法表片段（第 3 行）
+row = 3
+for col in range(1, row + 1):
+    print(f"{col}x{row}={col * row}", end="  ")
+print()`
 
 const ifCode = `age = 18
 if age >= 18:
@@ -222,6 +245,9 @@ export default function Ch1() {
         外层 <code>i</code> 从 1 到 9 是每一行；内层 <code>j</code> 从 1 到 <code>i</code> 打印这一行的每个乘式，
         <code>\t</code> 让它们对齐；内层结束后用一个空 <code>print()</code> 换行。
       </p>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryLoopCode} />
 
       <Practice title="动手练一练">
         <ol>

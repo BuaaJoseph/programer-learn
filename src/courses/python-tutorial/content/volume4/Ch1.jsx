@@ -5,6 +5,22 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：默认参数 + 多返回值
+def stats(nums, label="数据"):
+    total = sum(nums)
+    avg = total / len(nums)
+    return total, avg          # 一次返回两个值（元组）
+
+data = [80, 90, 100, 70]
+s, a = stats(data)             # 拆包接住
+print("数据的总和:", s)
+print("平均值:", a)
+
+# 传入自定义 label
+s2, a2 = stats([60, 60], label="成绩")
+print(f"成绩总和: {s2}, 平均: {a2}")`
 
 const defCode = `def say_hello():
     print("你好！")
@@ -219,6 +235,9 @@ export default function Ch1() {
         实际开发中，<code>global</code> 能不用就不用——过度依赖全局变量会让代码难以维护。
         更好的做法是把需要的数据用参数传进函数，用 <code>return</code> 把结果传出来。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Practice title="动手练一练">
         <ol>

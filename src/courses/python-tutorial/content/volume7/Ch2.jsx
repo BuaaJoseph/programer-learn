@@ -5,6 +5,36 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 综合：继承 + super + 方法重写 + __str__
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        return "某种声音"
+
+    def __str__(self):                       # 决定 print 时的显示
+        return f"{self.name}（{self.speak()}）"
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        super().__init__(name)               # 调用父类构造方法
+        self.breed = breed
+
+    def speak(self):                          # 重写父类方法
+        return "汪汪"
+
+    def __str__(self):
+        base = super().__str__()             # 复用父类的 __str__
+        return base + f" 品种={self.breed}"
+
+a = Animal("神秘生物")
+d = Dog("旺财", "柴犬")
+for x in [a, d]:
+    print(x)                                 # 触发 __str__
+print("旺财会叫:", d.speak())`
 
 const inheritBasic = `# 父类：通用的"动物"
 class Animal:
@@ -239,6 +269,9 @@ export default function Ch2() {
       <h3>__len__：让 len() 可用</h3>
       <CodeBlock lang="python" title="__len__" code={lenDemo} />
       <CodeBlock lang="text" title="运行结果" code={lenResult} />
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Practice title="练一练">
         给上一章的 <code>BankAccount</code> 加一个 <code>__str__</code>，

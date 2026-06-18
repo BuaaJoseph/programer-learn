@@ -5,6 +5,26 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCode = `# 浏览器里也有一个临时文件系统，可以真的读写文件
+# 写入
+with open("demo.txt", "w", encoding="utf-8") as f:
+    f.write("第一行：学习 Python\\n")
+    f.write("第二行：今天很开心\\n")
+    f.write("第三行：继续加油\\n")
+
+# 读回全部
+with open("demo.txt", "r", encoding="utf-8") as f:
+    content = f.read()
+print("===== 全部内容 =====")
+print(content)
+
+# 逐行读，加上行号
+print("===== 逐行编号 =====")
+with open("demo.txt", "r", encoding="utf-8") as f:
+    for i, line in enumerate(f, start=1):
+        print(i, line.strip())`
 
 const openModes = `# 用 open() 打开文件，第二个参数是"模式"
 f = open("note.txt", "r")   # r = read，只读（默认）
@@ -232,6 +252,9 @@ export default function Ch1() {
           <li>读取时用 <code>enumerate(f, start=1)</code> 给每行配上从 1 开始的编号。</li>
         </ul>
       </Example>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」。</p>
+      <PyRunner initialCode={tryCode} />
 
       <Summary
         points={[

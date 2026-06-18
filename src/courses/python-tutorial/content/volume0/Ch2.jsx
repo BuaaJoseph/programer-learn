@@ -5,6 +5,23 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryPrintCode = `# print 的几种花样
+name = "小明"
+age = 18
+
+# 1) 多个参数，默认用空格隔开
+print("姓名：", name, "年龄：", age)
+
+# 2) 自定义分隔符
+print("2026", "06", "18", sep="-")
+
+# 3) f-string：把变量直接嵌进字符串里
+print(f"我是{name}，今年{age}岁，明年{age + 1}岁")
+
+# 4) 转义换行 \\n：一句话里换行
+print("第一行\\n第二行")`
 
 const helloCode = `print("Hello, World!")`
 
@@ -186,6 +203,9 @@ Hello, World!`} />
         报错不可怕！Python 的报错信息会告诉你<strong>哪个文件、第几行、什么类型</strong>的错。
         看到报错，先看最后一行的错误类型，再看它指出的行号，问题往往就在那附近。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryPrintCode} />
 
       <Practice title="动手练一练">
         <ol>

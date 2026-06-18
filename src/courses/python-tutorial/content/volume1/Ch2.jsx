@@ -5,6 +5,25 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryStrCode = `s = "Hello, Python"
+
+# 索引：第 0 个字符、最后一个字符
+print(s[0], s[-1])
+
+# 切片：取一段
+print(s[0:5])     # Hello
+print(s[7:])      # Python
+
+# 常用方法
+print(s.upper())          # 全大写
+print(s.replace("Hello", "你好"))
+print(len(s), "个字符")
+
+# f-string 拼接
+name = "小明"
+print(f"{name}说：{s}")`
 
 const createCode = `a = '单引号字符串'
 b = "双引号字符串"
@@ -197,6 +216,9 @@ export default function Ch2() {
           <tr><td><code>\\</code></td><td>一个反斜杠本身</td></tr>
         </tbody>
       </table>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryStrCode} />
 
       <Practice title="动手练一练">
         <ol>

@@ -5,6 +5,30 @@ import CodeBlock from '@/components/cards/CodeBlock.jsx'
 import Example from '@/components/cards/Example.jsx'
 import Summary from '@/components/cards/Summary.jsx'
 import Practice from '@/components/cards/Practice.jsx'
+import PyRunner from '@/platform/components/PyRunner.jsx'
+
+const tryCompCode = `# 列表推导式：1~5 的平方
+squares = [x ** 2 for x in range(1, 6)]
+print("平方：", squares)
+
+# 带条件的推导式：只要偶数
+evens = [x for x in range(1, 11) if x % 2 == 0]
+print("偶数：", evens)
+
+# 字典推导式：数字 -> 立方
+cubes = {x: x ** 3 for x in range(1, 5)}
+print("立方字典：", cubes)
+
+# enumerate：同时拿到下标和值
+fruits = ["苹果", "香蕉", "橙子"]
+for i, name in enumerate(fruits, start=1):
+    print(f"第{i}个：{name}")
+
+# zip：把两个列表配对
+names = ["小明", "小红"]
+ages = [18, 17]
+for name, age in zip(names, ages):
+    print(f"{name} 今年 {age} 岁")`
 
 const beforeCode = `# 普通写法：把 1~5 的平方收集到一个新列表
 squares = []
@@ -183,6 +207,9 @@ export default function Ch2() {
       <Callout variant="note" title="zip 以最短的为准">
         如果几个列表长度不一样，<code>zip</code> 会在最短的那个用完时停下，多出来的元素被忽略。
       </Callout>
+
+      <p><strong>动手试试：</strong>改改下面的代码再点「运行」，看看结果。</p>
+      <PyRunner initialCode={tryCompCode} />
 
       <Practice title="动手练一练">
         <ol>
