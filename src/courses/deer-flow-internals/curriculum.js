@@ -93,6 +93,16 @@ export const VOLUMES = [
       { slug: 'df7-c3', title: 'IM 渠道接入：Channel 抽象与 inbound→agent run', topic: '渠道', hook: 'Feishu/Slack/Telegram 等如何统一成 Channel；ChannelManager 如何带 internal-token + CSRF 伪装成可信浏览器调用，把外部消息变成一次 agent run。', minutes: 120, hasContent: true },
     ],
   },
+  {
+    id: 'df8',
+    index: 8,
+    title: '附录：提示词全集（System Prompts）',
+    subtitle: 'The Prompt Sheet',
+    theme: '把 deer-flow 各环节用到的系统提示词集中起来、全部译成中文，并讲清「静态模板 + 每轮动态注入」是如何根据用户输入与配置组装的。这是一张可随时查阅的提示词速查表。',
+    chapters: [
+      { slug: 'df8-c1', title: '提示词全集：各环节系统提示词（中文）与动态组装', topic: '提示词', hook: '主智能体大模板、每轮动态注入（记忆/日期/上传/技能激活）、子代理编排段与子代理自身提示词、澄清、记忆更新、标题、摘要、TODO——逐段中文翻译 + 组装规则。', minutes: 150, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((v) =>

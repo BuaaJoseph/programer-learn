@@ -21,6 +21,7 @@ export const CONTENT = {
   'df7-c1': lazy(() => import('./volume7/Ch1.jsx')),
   'df7-c2': lazy(() => import('./volume7/Ch2.jsx')),
   'df7-c3': lazy(() => import('./volume7/Ch3.jsx')),
+  'df8-c1': lazy(() => import('./volume8/Ch1.jsx')),
 }
 export function hasContent(slug) {
   return Object.prototype.hasOwnProperty.call(CONTENT, slug)
