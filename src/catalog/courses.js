@@ -7,6 +7,7 @@ import claudeSkills from '../courses/claude-skills/index.js'
 import agentInternals from '../courses/agent-internals/index.js'
 import buildAnAgent from '../courses/build-an-agent/index.js'
 import agentFrameworks from '../courses/agent-frameworks/index.js'
+import deerFlowInternals from '../courses/deer-flow-internals/index.js'
 import rabbitmq from '../courses/rabbitmq/index.js'
 import dubboRpc from '../courses/dubbo-rpc/index.js'
 import kafka from '../courses/kafka/index.js'
@@ -36,6 +37,7 @@ export const COURSES = [
   agentInternals,
   buildAnAgent,
   agentFrameworks,
+  deerFlowInternals,
   claudeSkills,
   jvm,
   javaConcurrency,
