@@ -67,6 +67,32 @@ def compose(docs):
 if __name__ == '__main__':
     print(handoff_demo('什么是 RAG'))`
 
+const blackboardCode = `# 共享黑板：用版本号防止「谁都能改、谁也说不清状态」
+class Blackboard:
+    def __init__(self):
+        self._state = {}
+        self._version = 0
+        self._log = []          # 谁、什么时候、改了什么——黑板必须可审计
+
+    def write(self, agent, key, value):
+        self._state[key] = value
+        self._version += 1
+        self._log.append((self._version, agent, key))
+
+    def read(self, key):
+        return self._state.get(key)
+
+    def snapshot(self):
+        # 下游读的是一个一致快照，避免读到一半被别人改写
+        return dict(self._state), self._version
+
+
+# 用法：检索写入，写作读取，全程留痕
+bb = Blackboard()
+bb.write('retriever', 'docs', [{'title': 'RAG', 'text': '...'}])
+state, ver = bb.snapshot()
+# state['docs'] 即检索成果；ver 让你能判断「我读的是不是最新版」`
+
 export default function Ch7_3() {
   return (
     <>
@@ -106,6 +132,55 @@ export default function Ch7_3() {
         <p>
           三种机制由轻到重：agent-as-tool 最轻，blackboard 居中，message bus 最重。
           小团队的几个 Agent，直接当工具互相调用往往就够了。别因为「总线听起来更解耦」就给三个 Agent 上一套消息中间件。
+        </p>
+      </Callout>
+
+      <h2>三种机制怎么权衡</h2>
+      <p>
+        选机制本质是在<strong>耦合度</strong>和<strong>可控性</strong>之间做交换。下面这张表帮你快速对号：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>机制</th>
+            <th>耦合度</th>
+            <th>控制流</th>
+            <th>适合规模</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>agent-as-tool</td>
+            <td>紧（直接调用）</td>
+            <td>同步、清晰可追</td>
+            <td>2~5 个、层级分明</td>
+          </tr>
+          <tr>
+            <td>blackboard</td>
+            <td>中（共享状态）</td>
+            <td>松散、需自行协调</td>
+            <td>需互看中间成果</td>
+          </tr>
+          <tr>
+            <td>message bus</td>
+            <td>松（发布订阅）</td>
+            <td>异步、需跨消息追踪</td>
+            <td>多、动态、要扩展</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        共享黑板最容易被低估的坑是<strong>并发写</strong>——两个 Agent 同时改同一个 key，后写的悄悄盖掉前者。
+        所以黑板至少要做两件事：<strong>留痕</strong>（谁改了什么）和<strong>快照读</strong>（下游读到一致状态而非读一半）。
+        下面这段就是一个带版本号和审计日志的最小黑板：
+      </p>
+      <CodeBlock lang="python" title="blackboard.py" code={blackboardCode} />
+      <Callout variant="warn" title="message bus 的隐藏成本">
+        <p>
+          总线最诱人的是「解耦」，但解耦的另一面是<strong>失去了一条线性的因果链</strong>。
+          单 Agent 调试时你能顺着调用栈一路看下去；上了总线，一个请求会炸裂成十几条异步消息，
+          要拼出「到底发生了什么」得靠 trace id 跨服务串联。三个 Agent 别上总线——
+          这条成本只在 Agent 多到「直接互相引用会变成蜘蛛网」时才值得付。
         </p>
       </Callout>
 
@@ -150,6 +225,20 @@ export default function Ch7_3() {
           <strong>宁可响亮地失败，也不要安静地骗人。</strong>
         </p>
       </Callout>
+
+      <Example title="契约救命的一个真实场景">
+        <p>
+          一个三段 pipeline：检索 → 写作 → 审校。某天上线后摘要里频繁出现「资料不足，无法回答」这种半成品。
+          排查发现：检索专家在某些 query 下返回了空列表，但<strong>没报错</strong>，写作专家拿着空 docs 硬写，
+          于是编了一段「资料不足」的废话，审校专家也没拦住。
+        </p>
+        <p>
+          引入统一契约后，检索专家在空结果时显式返回 <code>{'success=false'}</code> 加
+          <code>reason='未命中'</code>；写作专家第一行就校验 <code>{'prev.success'}</code>，
+          上游失败直接向上传播，协调器在出口处统一降级成「正在为你转人工」。
+          同样一个 bug，现在<strong>三秒就能从日志里定位到是检索那一环</strong>，而不是整条链路重跑猜半天。
+        </p>
+      </Example>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

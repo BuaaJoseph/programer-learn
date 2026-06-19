@@ -90,6 +90,42 @@ if __name__ == '__main__':
 
     print_tree(root)`
 
+const aggregateCode = `# 有了 span 树，聚合就是「遍历这棵树，按维度累加」
+from collections import defaultdict
+
+def walk(span):
+    # 深度优先遍历，把整棵树压平成一串 span
+    yield span
+    for c in span.children:
+        yield from walk(c)
+
+
+def cost_by_model(root):
+    # 按模型汇总 token，定位「钱花在哪个模型上」
+    agg = defaultdict(lambda: {'in': 0, 'out': 0, 'calls': 0})
+    for s in walk(root):
+        if s.kind == 'llm':
+            m = s.attrs.get('model', 'unknown')
+            agg[m]['in'] += s.attrs.get('tokens_in', 0)
+            agg[m]['out'] += s.attrs.get('tokens_out', 0)
+            agg[m]['calls'] += 1
+    return dict(agg)
+
+
+def slowest_spans(root, top=3):
+    # 按耗时排序，立刻看出延迟热点在哪一步
+    spans = [s for s in walk(root) if s.children == []]   # 只看叶子
+    spans.sort(key=lambda s: s.duration_ms, reverse=True)
+    return [(s.name, s.duration_ms) for s in spans[:top]]
+
+
+def first_error(root):
+    # 一棵树里第一个报错的 span —— 调试时最先想看的东西
+    for s in walk(root):
+        if s.error:
+            return s.name, s.error
+    return None`
+
 export default function Ch8_1() {
   return (
     <>
@@ -129,6 +165,19 @@ export default function Ch8_1() {
         </p>
       </Example>
 
+      <h3>为什么是树，而不是一串日志</h3>
+      <p>
+        你可能会问：我打一行行带时间戳的日志不也能看吗？能，但你会丢掉最重要的信息——<strong>因果与归属</strong>。
+        一串平铺的日志告诉你「11 点调了 LLM、11 点 01 调了工具」，却说不清这次工具调用是<em>哪一次</em>
+        LLM 决策触发的；当并发上来，几条请求的日志交织在一起，更是彻底乱套。树结构天然回答了
+        「谁触发了谁、这一步属于哪次请求」，这正是 Agent 这种嵌套调用系统的查错命门。
+      </p>
+      <p>
+        实现上的关键技巧，是用 <code>contextvars</code> 记住「当前正处在哪个 span 里」，
+        新开的 span 自动认这个为父亲。这样业务代码只管 <code>{'with span(...)'}</code>，
+        父子关系自动织成树，无需手动传递 parent——这就是后面那段代码的核心机制。
+      </p>
+
       <h3>监控 vs 可观测性：不是一回事</h3>
       <p>
         很多人把这俩混着说，但区别很关键。<em>监控</em>（monitoring）是<strong>盯着你预先定义好的指标</strong>：
@@ -152,6 +201,22 @@ export default function Ch8_1() {
         <li><strong>关联键</strong>：trace_id、user_id、session_id，方便按维度聚合与串联多轮对话。</li>
       </ul>
 
+      <h2>从一棵树到一万棵树：聚合</h2>
+      <p>
+        单条 trace 是用来<strong>调试个案</strong>的；当成千上万条 trace 汇到一起，它又能回答<strong>系统级</strong>
+        的问题：钱主要花在哪个模型？哪一步是延迟瓶颈？哪类请求最容易报错？聚合的本质很朴素——
+        <strong>遍历每棵 span 树，按你关心的维度累加</strong>。下面这几个小函数就分别回答了「成本归属」
+        「延迟热点」「第一处报错」三个最高频的问题：
+      </p>
+      <CodeBlock lang="python" title="trace_aggregate.py" code={aggregateCode} />
+      <Callout variant="info" title="一个反直觉的发现">
+        <p>
+          很多团队第一次跑 <code>cost_by_model</code> 都会吃一惊：以为成本大头是写作那次大模型调用，
+          结果发现是<strong>分诊 / 规划那一步被反复调用</strong>，小模型单价低但次数多，累计反而最贵。
+          没有聚合，你只会凭直觉去优化错的地方。<strong>先量，再优化</strong>，是下一章成本治理的前提。
+        </p>
+      </Callout>
+
       <KeyIdea title="trace 的四大用途">
         <p>把 trace 记全之后，它能同时干四件事，这也是为什么它值得投入：</p>
         <ul>
@@ -168,6 +233,16 @@ export default function Ch8_1() {
           这些是<strong>个人身份信息</strong>（PII），在很多地区受法律严管。<strong>在写入 trace 之前</strong>
           必须做脱敏：掩码或哈希。别指望「日志反正没人看」——一旦日志泄露，脱敏与否就是合规事故和普通故障的区别。
           把脱敏做成 tracing 工具的<strong>默认入口</strong>，而不是靠每个调用点自觉。
+        </p>
+      </Callout>
+
+      <Callout variant="tip" title="别把所有东西都记进 span">
+        <p>
+          可观测性有成本，过度埋点会反噬。常见的两个坑：一是<strong>记得太细</strong>——给每个循环变量都开 span，
+          trace 树深到没法看，存储也撑爆；二是<strong>把超大 payload 原样塞进属性</strong>——
+          一段 50KB 的检索原文进 span，几千条请求就把日志系统打爆。务实做法：
+          对大字段只记<strong>长度 + 哈希 + 前 200 字</strong>，需要全文时按哈希去对象存储捞。
+          埋点的颗粒度，跟着「将来真的会去查的问题」走。
         </p>
       </Callout>
 

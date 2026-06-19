@@ -189,6 +189,55 @@ def handle(session_id, user_id, query, mem: Memory, kb: KnowledgeBase) -> str:
         mem.append_turn(session_id, 'assistant', reply)   # 回写短期记忆
         return reply`
 
+const dataflowCode = `# 一条请求在系统里流动的「数据契约」长什么样
+# 每一层只认上一层产出的结构，层与层之间靠契约解耦（第 7 卷思想）。
+
+# 1) 路由层产出：结构化意图（小模型 + JSON 输出）
+intent = {
+    'type': 'refund',          # faq / order / refund / unknown
+    'order_id': 'A1023',
+    'amount': 150.0,
+    'confidence': 0.92,        # 置信度低可触发「请你确认一下」的澄清话术
+}
+
+# 2) 专家层产出：统一回复契约（成败显式，便于服务层兜底）
+reply = {
+    'success': True,
+    'text': '已为订单 A1023 退款 150 元。',
+    'handled_by': 'refund_agent',
+    'escalated': False,        # 是否转人工，服务层据此决定要不要建工单
+}
+
+# 3) 服务层产出：对外响应（脱敏后、不含内部字段）
+response = {
+    'reply': reply['text'],    # 只把对外该看的字段透出去
+    'session_id': 'S-7781',
+}
+# 关键：内部字段（confidence/handled_by/escalated）只进 trace 和日志，
+# 不透传给前端 —— 单一出口处统一收口与脱敏。`
+
+const testCode = `# tests/test_refund_guard.py —— 高风险动作必须有测试兜底
+import pytest
+from app.tools import issue_refund, RefundError
+
+def test_refund_within_limit(monkeypatch):
+    # 正常路径：金额合规、订单可退 -> 成功退款
+    result = issue_refund('A1023', 150.0, reason='不喜欢')
+    assert result['status'] == 'refunded'
+    assert result['amount'] == 150.0
+
+def test_refund_over_auto_limit():
+    # 超自动上限(200) -> 必须转人工，绝不自动放款
+    result = issue_refund('A1023', 500.0, reason='太贵')
+    assert result['status'] == 'need_human'
+
+def test_refund_exceeds_order_amount():
+    # 退款金额 > 订单金额 -> 拒绝（防模型算出越界/幻觉金额）
+    with pytest.raises(RefundError):
+        issue_refund('A1023', 99999.0, reason='薅羊毛')
+# 这三条用例覆盖了护栏的三条关键分支：放行 / 升级 / 拒绝。
+# 高风险动作的护栏，永远要用测试钉死，而不是靠人工每次回归。`
+
 export default function Ch8_4() {
   return (
     <>
@@ -316,6 +365,93 @@ export default function Ch8_4() {
           逐个加上护栏、缓存、限流、熔断。<strong>每一步都有可运行的系统</strong>，比憋一个大版本可靠得多。
         </p>
       </Callout>
+
+      <h2>数据在层与层之间怎么流</h2>
+      <p>
+        把模块拼起来只是骨架，真正决定系统好不好维护的，是<strong>层与层之间传的是什么</strong>。
+        这里复用第 7 卷的核心纪律：每一层只认上一层产出的<strong>结构化契约</strong>，
+        互相不去碰对方的内部实现。下面把一条退款请求在三层之间流动的数据形状写出来：
+      </p>
+      <CodeBlock lang="python" title="data_contract.py" code={dataflowCode} />
+      <p>
+        注意最后那条注释：<code>confidence</code>、<code>handled_by</code>、<code>escalated</code>
+        这些内部字段只进 trace 和日志，<strong>绝不透传给前端</strong>。这正是第 7 卷「单一出口」
+        和第 1 章「PII 脱敏」在终点的合流——所有对外的东西都在服务层这一个口子收口、脱敏、再吐出去。
+      </p>
+
+      <h2>高风险动作要用测试钉死</h2>
+      <p>
+        整个系统里最不能出错的就是退款这种<strong>会动真钱</strong>的动作。第 6 卷讲过护栏要在代码层硬校验，
+        但「写了护栏」和「护栏真的有效」之间还差一层——<strong>测试</strong>。LLM 的行为会随 prompt、
+        模型版本漂移，唯一不漂移的是你为护栏写的单元测试。下面三条用例分别钉死护栏的三条关键分支：
+        合规放行、超额升级、越界拒绝。
+      </p>
+      <CodeBlock lang="python" title="tests/test_refund_guard.py" code={testCode} />
+      <Callout variant="warn" title="为什么护栏测试比 Agent 测试更重要">
+        <p>
+          Agent 的「回答得好不好」是模糊的、随机的，很难写确定性断言；但护栏的「该不该放款」
+          是<strong>非黑即白</strong>的，必须、也能够用确定性测试覆盖。这是一条很实用的优先级：
+          <strong>测试资源优先砸在确定性强、出错代价高的环节上</strong>——护栏、金额校验、权限边界，
+          而不是去纠结模型某句话的措辞。
+        </p>
+      </Callout>
+
+      <h2>上线前的最后一张检查表</h2>
+      <p>
+        系统搭完、测试过了，临门一脚前再对照这张表过一遍——它把前三章的运维要点和本章的安全要点
+        浓缩成了可勾选的清单：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>检查项</th>
+            <th>出处</th>
+            <th>没做会怎样</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>每次 LLM/工具调用都在 span 里</td>
+            <td>第 1 章</td>
+            <td>出问题查不到是哪一步</td>
+          </tr>
+          <tr>
+            <td>trace 写入前已做 PII 脱敏</td>
+            <td>第 1 章</td>
+            <td>日志泄露即合规事故</td>
+          </tr>
+          <tr>
+            <td>分诊 / 判别走小模型</td>
+            <td>第 2 章</td>
+            <td>账单成倍虚高</td>
+          </tr>
+          <tr>
+            <td>短期历史有裁剪上限</td>
+            <td>第 2 章</td>
+            <td>上下文雪球，成本失控</td>
+          </tr>
+          <tr>
+            <td>密钥走环境变量、启动即校验</td>
+            <td>第 3 章</td>
+            <td>泄露 / 运行时才崩</td>
+          </tr>
+          <tr>
+            <td>外部调用有超时 + 重试 + 熔断</td>
+            <td>第 3 章</td>
+            <td>依赖一抖整站被拖垮</td>
+          </tr>
+          <tr>
+            <td>退款护栏有单元测试覆盖</td>
+            <td>第 6 章</td>
+            <td>漂移一发生就放错钱</td>
+          </tr>
+          <tr>
+            <td>能 5 分钟灰度回滚</td>
+            <td>第 3 章</td>
+            <td>坏版本全量炸用户</td>
+          </tr>
+        </tbody>
+      </table>
 
       <h2>八卷如何映射到这个项目</h2>
       <p>这台机器就是八卷知识的总装。逐一对照，你会看到每一卷都没有白学：</p>

@@ -1,8 +1,66 @@
 // 全站课程注册表。新增课程：在 src/courses/ 下建模块，再在这里 import 注册一行即可。
 // 平台的「数据库」镜像——将来接后端时，返回结构与此对齐，迁移平滑。
 import llmHandbook from '../courses/llm-handbook/index.js'
+import mysqlInternals from '../courses/mysql-internals/index.js'
+import redisInternals from '../courses/redis-internals/index.js'
+import claudeSkills from '../courses/claude-skills/index.js'
+import agentInternals from '../courses/agent-internals/index.js'
+import buildAnAgent from '../courses/build-an-agent/index.js'
+import agentFrameworks from '../courses/agent-frameworks/index.js'
+import rabbitmq from '../courses/rabbitmq/index.js'
+import dubboRpc from '../courses/dubbo-rpc/index.js'
+import kafka from '../courses/kafka/index.js'
+import zookeeper from '../courses/zookeeper/index.js'
+import nginx from '../courses/nginx/index.js'
+import elasticsearch from '../courses/elasticsearch/index.js'
+import jvm from '../courses/jvm/index.js'
+import javaConcurrency from '../courses/java-concurrency/index.js'
+import spring from '../courses/spring/index.js'
+import network from '../courses/network/index.js'
+import os from '../courses/os/index.js'
+import designPatterns from '../courses/design-patterns/index.js'
+import reactEcosystem from '../courses/react-ecosystem/index.js'
+import vueEcosystem from '../courses/vue-ecosystem/index.js'
+import jsTsFoundations from '../courses/js-ts-foundations/index.js'
+import frontendEngineering from '../courses/frontend-engineering/index.js'
+import androidDev from '../courses/android-dev/index.js'
+import iosDev from '../courses/ios-dev/index.js'
+import javaBasics from '../courses/java-basics/index.js'
+import messageQueue from '../courses/message-queue/index.js'
+import netty from '../courses/netty/index.js'
+import pythonTutorial from '../courses/python-tutorial/index.js'
 
-export const COURSES = [llmHandbook]
+export const COURSES = [
+  llmHandbook,
+  pythonTutorial,
+  agentInternals,
+  buildAnAgent,
+  agentFrameworks,
+  claudeSkills,
+  jvm,
+  javaConcurrency,
+  spring,
+  javaBasics,
+  mysqlInternals,
+  redisInternals,
+  rabbitmq,
+  messageQueue,
+  netty,
+  dubboRpc,
+  kafka,
+  zookeeper,
+  nginx,
+  elasticsearch,
+  network,
+  os,
+  designPatterns,
+  jsTsFoundations,
+  reactEcosystem,
+  vueEcosystem,
+  frontendEngineering,
+  androidDev,
+  iosDev,
+]
 
 export function getCourse(slug) {
   return COURSES.find((c) => c.meta.slug === slug) || null

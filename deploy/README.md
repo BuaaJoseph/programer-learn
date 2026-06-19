@@ -9,6 +9,10 @@
 - nginx 在**单独端口 8081** 上提供静态文件；域名 `learn.aihaven.site` 在 80 端口反代到 8081。
 - 完全不动你现有的「80 默认站点 / 8080 服务」。
 
+> ℹ️ **生产服务器（8.211.163.94）已安装 Node**。因此 `deploy.sh` 默认走「源码现场构建」，
+> 始终部署最新内容，**无需再手动刷新预构建包**。下文的预构建包相关说明仅作为「无 Node 环境」的备用方案保留。
+> 项目目录在服务器上为 `/home/learn/programer-learn`。
+
 ## 一键部署（服务器上执行，需 root）
 
 ```bash
@@ -22,6 +26,56 @@ sudo bash deploy/deploy.sh
 
 脚本会自动：装了 node 就源码构建，没装就解包 `deploy/learn-site.tar.gz`；
 把站点同步到 `/var/www/learn`；安装 nginx 配置并 reload。
+
+## 更新已部署的站点 / 上新课
+
+```bash
+cd programer-learn
+git pull        # 或：git fetch origin && git reset --hard origin/<分支>
+sudo bash deploy/deploy.sh
+```
+
+更新后强刷浏览器（Ctrl/Cmd + Shift + R）或用无痕窗口查看。
+
+### 两条部署路径，区别很重要
+
+`deploy.sh` 会根据服务器**有没有 Node** 走不同路径：
+
+| 服务器环境 | deploy.sh 行为 | 注意事项 |
+| --- | --- | --- |
+| **装了 Node/npm** | 用最新源码 `npm run build` 现场构建 | 一劳永逸，永远是最新内容 |
+| **没装 Node** | 解包仓库内预构建的 `deploy/learn-site.tar.gz` | 该包需在**开发侧**更新内容后重新生成并提交，否则 `git pull` 拉到的还是旧内容 |
+
+> ⚠️ 如果你服务器没装 Node，又发现「更新代码后页面没变」，几乎都是因为预构建包没刷新。
+> 开发侧用 `bash deploy/pack.sh` 重新打包并提交即可。
+
+### 推荐：给服务器装 Node（一劳永逸）
+
+装上后 `deploy.sh` 直接走源码构建，再不依赖预构建包：
+
+```bash
+# CentOS / RHEL / 阿里云 Linux
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo yum install -y nodejs
+
+# Ubuntu / Debian
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+sudo apt-get install -y nodejs
+
+node -v && npm -v   # 验证
+```
+
+装完流程不变，仍是 `git pull && sudo bash deploy/deploy.sh`，但会自动用最新源码构建。
+
+## 开发侧：内容更新后刷新预构建包
+
+> 仅在「服务器没装 Node」时需要。
+
+```bash
+bash deploy/pack.sh                      # 重新构建并打包 deploy/learn-site.tar.gz
+git add deploy/learn-site.tar.gz && git commit -m "chore: 刷新预构建包" && git push
+```
+
 
 ## 不想用脚本？手动三步
 

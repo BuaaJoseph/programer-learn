@@ -94,6 +94,24 @@ send_refund = {
     },
 }`
 
+const errorCode = `# 自解释的错误：把「错在哪 + 怎么改」直接写给模型看
+def search_orders(user_id, limit=10, status=None):
+    # 1) 参数校验：与 schema 呼应，是最后一道防线
+    if not user_id.startswith('u_'):
+        return {'error': 'invalid_user_id',
+                'message': f'user_id 必须形如 u_12345，你传的是 {user_id!r}，请修正后重试'}
+    if limit > 50:
+        return {'error': 'limit_too_large',
+                'message': f'limit 最大为 50，你填了 {limit}，已自动按 50 处理'}
+    # 2) 业务异常也要翻译成模型能懂的话，而不是抛裸异常
+    try:
+        rows = db.query_orders(user_id, limit, status)
+    except RecordNotFound:
+        return {'error': 'user_not_found',
+                'message': f'查无此用户 {user_id}，请先确认用户 ID 是否正确'}
+    # 3) 成功：返回结构稳定、字段自解释的结果
+    return {'orders': rows, 'count': len(rows)}`
+
 export default function Ch4_2() {
   return (
     <>
@@ -137,6 +155,18 @@ export default function Ch4_2() {
         </p>
       </KeyIdea>
 
+      <p>
+        为什么 description 比参数定义更要命？因为参数填错，往往还能靠 Schema 校验拦下来、或让模型重填；但
+        <strong>选错工具</strong>或<strong>该用不用</strong>，这种错误发生在更上游，校验根本拦不住。模型在生成的那一刻，
+        脑子里只有这堆工具的 name 和 description，它就是凭这点文字做的决策。一个写得含糊的 description，
+        相当于给模型一张模糊的地图，它当然容易走错路。所以打磨 description 的投入产出比，远高于事后写一堆纠错代码。
+      </p>
+      <p>
+        一个实用的写法模板：description 至少包含三句话——<strong>它做什么</strong>（一句话能力概述）、
+        <strong>什么时候用</strong>（触发场景，最好举几个典型问法）、<strong>什么时候不用 / 有什么副作用</strong>（边界和警示）。
+        前两句帮模型「该出手时出手」，第三句帮模型「不该出手时收手」，两者同等重要。很多人只写了前两句，
+        结果工具被滥用到不相干的场景。</p>
+
       <Example title="同一个工具，差描述 vs 好描述">
         <p>
           含糊的 <code>query / 查询数据</code> 会让模型在任何「查」的场景都想调它，参数也不知道怎么填；
@@ -153,6 +183,23 @@ export default function Ch4_2() {
         （明确写「不用于 X」）、给工具分组、必要时先用一个「分类/检索」步骤筛出候选工具子集，再交给模型选。
         工具越多，description 的措辞就越要锱铢必较。
       </p>
+      <p>
+        路由问题的根源在于：所有工具的 description 会一股脑塞进 context，模型要在生成时同时权衡几十段描述。这有两个代价——
+        一是<strong>占 token</strong>，几十个工具的 schema 可能吃掉几千 token，每次调用都付费；二是<strong>注意力稀释</strong>，
+        选项太多反而降低选对的概率，就像人面对几十个相似按钮也会犹豫。所以「把所有工具一次性全给模型」并不是越多越好。
+        当工具规模上去，常见的工程做法是<strong>两阶段路由</strong>：先用一个轻量步骤（关键词匹配、向量检索，甚至一次小模型调用）
+        从全量工具里筛出最相关的 5~10 个候选，再把这个子集喂给主模型去选。这既省 token 又提准确率。
+      </p>
+      <table>
+        <thead>
+          <tr><th>工具规模</th><th>推荐策略</th><th>主要风险</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>2~5 个</td><td>全部直接给模型</td><td>几乎不会选错</td></tr>
+          <tr><td>5~20 个</td><td>全给，但 description 严格互斥、分组</td><td>边界重叠导致偶发选错</td></tr>
+          <tr><td>20 个以上</td><td>两阶段路由，先筛候选子集</td><td>token 浪费 + 注意力稀释</td></tr>
+        </tbody>
+      </table>
 
       <Callout variant="warn" title="副作用与幂等性：写操作的命根子">
         <p>
@@ -175,6 +222,14 @@ export default function Ch4_2() {
         工具出错时，别只返回 <code>{'{error: true}'}</code> 或抛一个裸异常。模型看不到你的日志，它只能看到你回灌的
         那段文字。所以错误信息要<strong>能指导模型的下一步</strong>：说清楚错在哪、怎么改。比如参数越界，就返回
         「limit 最大为 50，你填了 100，请改小后重试」——模型读到这句，下一轮往往能自己修正（这正是第 4 章「把错误变成学习信号」的基础）。
+      </p>
+      <CodeBlock lang="python" title="self_explaining_errors.py" code={errorCode} />
+      <p>
+        注意上面这个实现里藏着三层防线：参数格式校验、业务异常翻译、稳定的成功返回结构。三层都把「机器味」的错误
+        翻译成了「给模型读的人话」。一个对比鲜明的反例是直接 <code>raise ValueError('bad input')</code> 然后把堆栈
+        塞回去——模型读到一坨 Python traceback，既不知道是哪个参数错了，也不知道该怎么改，多半会原样重试、陷入死循环。
+        好的错误信息应当包含三件事：<strong>错误类型</strong>（机器可判断）、<strong>人话解释</strong>（模型可理解）、
+        <strong>修复建议</strong>（模型可执行）。
       </p>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>

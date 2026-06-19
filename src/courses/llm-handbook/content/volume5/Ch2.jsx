@@ -73,6 +73,33 @@ ctx = mem.build_context('你是编程助手。', recall_query='user')
 resp = client.chat.completions.create(model='gpt-4o-mini', messages=ctx)
 print(resp.choices[0].message.content)`
 
+const tokenBudgetCode = `# 给上下文做「预算分配」：把固定窗口切成几块，各管各的上限。
+# 真实系统不会让某一层无限膨胀，而是先定预算，再让各层在预算内取舍。
+
+CONTEXT_LIMIT = 8000   # 模型窗口（留出输出余量后的可用 token）
+
+BUDGET = {
+    'system':   400,    # 系统指令，固定不动
+    'facts':    600,    # 长期记忆检索回来的事实
+    'summary':  1000,   # 早前对话摘要
+    'recent':   5000,   # 最近窗口原文
+    'reserve':  1000,   # 给模型输出预留
+}
+
+def fit(text, max_tokens, count):
+    """简化：超预算就截断（真实系统会先按重要度排序再裁）。"""
+    toks = count(text)
+    if toks <= max_tokens:
+        return text
+    # 按比例粗暴截断；生产里应按句子/消息边界裁，避免切碎语义
+    keep = int(len(text) * max_tokens / toks)
+    return text[:keep] + ' …(截断)'
+
+# 关键点：预算之和必须 <= CONTEXT_LIMIT，否则照样撑爆。
+assert sum(BUDGET.values()) <= CONTEXT_LIMIT
+# 哪一层最该挤？通常是 summary 和 recent 互相让——
+# 对话越长，summary 预算适当加大、recent 适当缩小。`
+
 export default function Ch5_2() {
   return (
     <>
@@ -109,6 +136,18 @@ export default function Ch5_2() {
         </li>
       </ul>
 
+      <table>
+        <thead>
+          <tr><th>策略</th><th>token 增长</th><th>保真度</th><th>额外开销</th><th>适用场景</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>全量保留</td><td>O(N²)</td><td>最高</td><td>无</td><td>短对话、客服单轮工单</td></tr>
+          <tr><td>滑动窗口</td><td>O(N·k) 近线性</td><td>低（远处全丢）</td><td>无</td><td>对早期信息不敏感的闲聊</td></tr>
+          <tr><td>摘要压缩</td><td>受控</td><td>中（丢细节）</td><td>每次压缩一次 LLM 调用</td><td>长对话、需保留早期决定</td></tr>
+          <tr><td>混合</td><td>受控</td><td>近处高 / 远处中</td><td>偶尔压缩</td><td>绝大多数严肃 Agent</td></tr>
+        </tbody>
+      </table>
+
       <Example title="同一段 20 轮对话，四种策略的差别">
         <p>
           用户第 2 轮说「我在做一个电商后台」，第 18 轮问「刚才那个项目用什么数据库好？」。
@@ -117,6 +156,15 @@ export default function Ch5_2() {
           且最近几轮的代码细节还完整保留着。这就是为什么严肃系统几乎都选混合。
         </p>
       </Example>
+
+      <KeyIdea title="摘要的时机比算法更关键">
+        <p>
+          很多人把精力花在「怎么把摘要 prompt 写得更好」，却忽略了一个更要命的工程问题：<strong>什么时候触发压缩</strong>。
+          每轮都压，既浪费 LLM 调用、又像上一章说的会反复击穿前缀缓存；压得太晚，则可能这一轮就直接撑爆窗口。
+          常见做法是设一个<strong>双阈值</strong>：历史 token 超过软阈值（如窗口的 70%）就在下一个「对话间隙」异步压缩，
+          硬阈值（如 90%）则立即同步压缩。把压缩当成「后台垃圾回收」来调度，而不是每轮都跑，是省钱又稳的关键。
+        </p>
+      </KeyIdea>
 
       <h2>长期记忆：读写分离</h2>
       <p>
@@ -130,6 +178,12 @@ export default function Ch5_2() {
         而是根据当前问题<em>按需检索</em>出相关的几条，临时拼进上下文。写归写、读归读，库可以无限大，
         但每轮只取回最相关的一小撮。
       </p>
+      <p>
+        写入这一步是整个长期记忆里<strong>最容易做砸</strong>的地方。两个常见坑：一是「什么都记」，把每句寒暄都抽成事实，
+        库越长越脏，检索时全是噪声；二是「事实冲突」，用户上周说「我用 React」，这周说「换 Vue 了」，如果只追加不更新，
+        库里就同时存着两条矛盾的事实，检索回来模型反而懵了。所以严肃的写入逻辑要做<strong>去重与更新</strong>：
+        抽取时判断这条事实是不是已有事实的更新版本，是就覆盖、不是才新增。
+      </p>
       <KeyIdea title="记忆系统 = 一个「该记什么 / 该取什么」的决策器">
         <p>
           把这一章的所有策略统一成一句话：记忆系统的本质，是在每一轮替模型回答两个问题——
@@ -138,6 +192,18 @@ export default function Ch5_2() {
           变聪明的是你喂给它的那段上下文。
         </p>
       </KeyIdea>
+
+      <h2>给上下文做预算分配</h2>
+      <p>
+        当短期、长期、系统指令几路信息都想往上下文里挤，就需要一个「总调度」。成熟系统的做法不是放任各层膨胀，
+        而是先把固定窗口<strong>切成几块预算</strong>：系统指令固定一小块、检索事实一块、摘要一块、最近窗口一大块，
+        再各自在预算内取舍，并且一定要给模型的<strong>输出</strong>留余量。预算之和必须小于等于窗口，否则一切策略都白搭。
+      </p>
+      <CodeBlock lang="python" title="context_budget.py" code={tokenBudgetCode} />
+      <p>
+        预算分配让取舍变得显式可调：对话变长时，把 summary 的预算调大、recent 调小；接入了重要文档时，把 facts 的预算加大。
+        这比「拍脑袋截断」可控得多，也方便排查「为什么模型突然忘了某件事」——多半是那一层的预算被挤爆了。
+      </p>
 
       <h2>记忆 vs RAG：别搞混</h2>
       <p>
@@ -158,12 +224,31 @@ export default function Ch5_2() {
         </p>
       </Callout>
 
+      <Callout variant="warn" title="记忆系统的三个常见误区">
+        <ul>
+          <li>
+            <strong>「把整个长期库塞进上下文」</strong>——库会无限增长，全塞进去等于没分离，迟早撑爆。长期记忆的意义就在于「只取相关的几条」。
+          </li>
+          <li>
+            <strong>「摘要越频繁越好」</strong>——每轮压缩既费钱又击穿缓存，还会因「摘要的摘要」层层失真。压缩要按阈值调度，不是越勤越好。
+          </li>
+          <li>
+            <strong>「记忆抽取交给规则就够了」</strong>——靠关键词规则抽事实漏得厉害；但全交给 LLM 抽又贵又可能幻觉出不存在的事实。实践中常是规则做粗筛 + LLM 做精提 + 人工可纠错。
+          </li>
+        </ul>
+      </Callout>
+
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
         给 Agent 设计记忆，不是选「一个最好的策略」，而是搭一条<strong>流水线</strong>：最近几轮走滑动窗口保原文，
         溢出的旧对话滚动压成摘要，跨会话的关键事实抽出来写进长期库、用时再检索回来。每一层都在为下一次调用
         「攒出一段既省 token 又信息够用的上下文」。把这条流水线封装成一个 <code>MemoryManager</code>，
         业务代码就只管 <code>add()</code> 和 <code>build_context()</code>，复杂度全藏在里面。
+      </p>
+      <p>
+        封装的另一个好处是<strong>可观测</strong>：把每轮各层占用的 token、检索命中了哪几条事实、是否触发了压缩，
+        都打到日志里。线上一旦出现「模型忘事」或「答非所问」，你能立刻定位是滑窗丢了、摘要失真了，还是检索没召回——
+        而不是对着一个黑箱抓瞎。记忆是 Agent 最容易出诡异 bug 的地方，可观测性几乎是必需品。
       </p>
 
       <Practice title="实现一个可运行的 MemoryManager">
@@ -178,6 +263,10 @@ export default function Ch5_2() {
           动手改两个旋钮感受取舍：把 <code>window</code> 调小，省 token 但近处细节也少了；把 <code>summary_trigger</code>
           调大，摘要触发得晚、保真度高但 token 涨得快。没有银弹，只有针对你的场景调出的那个平衡点。
         </p>
+        <p>
+          进阶练习：给 <code>remember</code> 加一段去重逻辑——写入新事实前先 <code>recall</code> 同主题的旧事实，若语义重复就覆盖而非新增；
+          再给 <code>build_context</code> 套上上面的预算分配，让每一层都不超过各自上限。改完你就有了一个接近生产形态的记忆内核。
+        </p>
       </Practice>
 
       <Summary
@@ -185,9 +274,11 @@ export default function Ch5_2() {
           '记忆要分层：短期记忆管最近几轮的细节，长期记忆管跨会话的重要事实，两层用不同策略。',
           '短期四策略——全量保留、滑动窗口、摘要压缩、混合——本质都是在「保真度 vs token 预算」上选点。',
           '混合策略（最近留原文 + 更早滚动摘要）兼顾近处清晰与远处概括，是工程上最常用的方案。',
-          '长期记忆走读写分离：写入时抽取要点存库，读取时按当前问题检索出相关几条再拼进上下文。',
+          '摘要的时机比算法更关键：用软/硬双阈值调度压缩，当后台垃圾回收来跑，别每轮都压。',
+          '长期记忆走读写分离：写入时抽取要点存库（要去重、要更新冲突事实），读取时按问题检索相关几条再拼进上下文。',
+          '用预算分配把固定窗口切成几块（system/facts/summary/recent/reserve），让取舍显式可调、问题可定位。',
           '记忆 ≠ RAG：记忆存「关于用户 / 会话的事实」，RAG 检索「外部公共知识」，成熟 Agent 通常两者都用。',
-          '把短期 + 长期封装成一个 MemoryManager，业务只管 add 与 build_context，复杂度全部内聚。',
+          '把短期 + 长期封装成一个 MemoryManager，业务只管 add 与 build_context，并把各层占用打进日志保证可观测。',
         ]}
       />
     </>

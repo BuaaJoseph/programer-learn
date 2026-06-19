@@ -115,6 +115,45 @@ def coordinator(query):
 if __name__ == '__main__':
     print(coordinator('帮我讲讲什么是 RAG'))`
 
+const reviewerCode = `# 扩展：加一个审校专家，把 pipeline 升级成 evaluator-optimizer
+def reviewer_agent(query, article):
+    resp = client.messages.create(
+        model='claude-haiku-4-5',     # 审校是判断题，小模型 + 温度 0 够用
+        max_tokens=200,
+        temperature=0,
+        system=('你是审校。判断这段回答是否「只依据资料、无编造、答到了问题」。'
+                '通过回 PASS；否则回 FAIL: 后跟一句具体修改意见。'),
+        messages=[{'role': 'user',
+                   'content': '问题：' + query + '\\n回答：' + article}],
+    )
+    text = resp.content[0].text.strip()
+    if text.startswith('PASS'):
+        return ok({'passed': True})
+    return ok({'passed': False, 'notes': text[5:].strip()})
+
+
+# 协调器主循环里多走一拍：写 -> 审 -> 不过则带着意见重写
+def coordinator_with_review(query, max_rewrites=2):
+    retrieval = retriever_agent(query)
+    if not retrieval.success:
+        return {'success': False, 'reason': retrieval.reason}
+
+    feedback = ''
+    for attempt in range(max_rewrites + 1):
+        written = writer_agent(query, retrieval)   # 真实现里把 feedback 拼进 prompt
+        if not written.success:
+            return {'success': False, 'reason': written.reason}
+        verdict = reviewer_agent(query, written.data['article'])
+        if verdict.data['passed']:
+            return {'success': True,
+                    'answer': written.data['article'],
+                    'rewrites': attempt}            # 几轮才过，留痕可观测
+        feedback = verdict.data['notes']            # 带着意见进下一轮
+    # 重写到上限仍不过：显式收口，绝不死循环
+    return {'success': True,
+            'answer': written.data['article'],
+            'warning': '达重写上限，未完全通过审校'}`
+
 export default function Ch7_4() {
   return (
     <>
@@ -161,6 +200,19 @@ export default function Ch7_4() {
         </ul>
       </Callout>
 
+      <h2>为什么把状态放在 state 字典里</h2>
+      <p>
+        注意协调器没有把检索结果、写作结果当成局部变量随手用，而是统一塞进一个 <code>state</code> 字典。
+        这不是啰嗦——它是多 Agent 系统能<strong>可观测、可恢复、可调试</strong>的前提。把每一拍的产物都落进
+        state，你就随时能回答三个关键问题：现在跑到哪一步了？上一步产出了什么？如果在这里崩了，
+        我能不能从 state 续跑而不必从头再来？
+      </p>
+      <p>
+        这也是单 Agent 和多 Agent 的一个分水岭。单 Agent 的「状态」就是那段对话历史，模型自己记着；
+        多 Agent 里没有一段统一的对话，<strong>state 字典就是这个系统的「短期记忆」</strong>，
+        由协调器显式持有和推进。把它设计好，等于给系统装了一块仪表盘。
+      </p>
+
       <h2>分诊用便宜小模型</h2>
       <p>
         协调器开头那一步「这条请求该怎么走」，是个轻量分类任务，<strong>不该用最贵的大模型去做</strong>。
@@ -168,6 +220,43 @@ export default function Ch7_4() {
         把贵模型的算力省给真正需要推理和生成的写作专家。这是多 Agent 省成本的一个常用技巧：
         <strong>按任务难度匹配模型档位</strong>，而不是全程一个大模型到底。
       </p>
+      <table>
+        <thead>
+          <tr>
+            <th>环节</th>
+            <th>任务性质</th>
+            <th>建议档位</th>
+            <th>温度</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>分诊 / 路由</td>
+            <td>短分类</td>
+            <td>小模型（haiku）</td>
+            <td>0</td>
+          </tr>
+          <tr>
+            <td>审校 / 判断</td>
+            <td>是非判断</td>
+            <td>小模型</td>
+            <td>0</td>
+          </tr>
+          <tr>
+            <td>写作 / 推理</td>
+            <td>开放生成</td>
+            <td>大模型（sonnet）</td>
+            <td>0.3~0.7</td>
+          </tr>
+        </tbody>
+      </table>
+      <Callout variant="info" title="为什么分类要温度 0">
+        <p>
+          分诊和审校这类「应该有唯一正确答案」的任务，你要的是<strong>可复现</strong>：同样的输入永远走同样的路。
+          温度一高，同一个问题今天判 need_write、明天判 chitchat，整个系统的行为就变得无法测试。
+          而写作这类创造性任务，适度的温度反而让产出更自然——温度不是越低越好，而是<strong>跟着任务性质走</strong>。
+        </p>
+      </Callout>
 
       <Example title="走通一条请求的完整调用树">
         <p>用户问「帮我讲讲什么是 RAG」，系统内部会这样跑：</p>
@@ -204,7 +293,29 @@ export default function Ch7_4() {
           让协调器在主循环里多走一拍「写 → 审 → 不过则重写」，亲手把它从 pipeline 升级成 evaluator-optimizer。
           这一步走通，你就为第 8 卷的毕业项目热好身了。
         </p>
+        <p>
+          下面就是这个扩展的参考实现——审校用小模型做是非判断，不过就带着意见回炉重写，
+          重写有上限、到顶也显式收口，绝不死循环：
+        </p>
+        <CodeBlock lang="python" title="add_reviewer.py" code={reviewerCode} />
       </Practice>
+
+      <Callout variant="warn" title="搭多 Agent 最常见的三个翻车点">
+        <ul>
+          <li>
+            <strong>忘了轮数 / 重写上限</strong>——只要循环里有「不达标就重来」，就必须有上限。
+            两个 Agent 互相不满意能把账单跑穿。
+          </li>
+          <li>
+            <strong>异常没兜住</strong>——一次模型超时、一次 JSON 解析失败，没有 <code>try/except</code>
+            就会让整条链路崩在半路，用户看到的是 500 而不是降级回复。
+          </li>
+          <li>
+            <strong>多个出口</strong>——图省事在某个专家内部直接 return 给用户，绕过了协调器出口。
+            一旦这么干，统一兜底、打点、脱敏全部失效，系统很快退化成意大利面。
+          </li>
+        </ul>
+      </Callout>
 
       <Summary
         points={[

@@ -49,6 +49,37 @@ def run(user_goal):
 
 run('给一篇技术博客写一份中文推广文案，并配三条社交媒体短文')`
 
+const topoCode = `# 按依赖拓扑排序执行 + 先校验计划（无环、依赖都存在）。
+# 这是把「先规划再执行」从玩具推向可用的关键一步。
+
+def validate_plan(steps):
+    ids = {s['id'] for s in steps}
+    for s in steps:
+        for dep in s.get('depends_on', []):
+            if dep not in ids:                 # 引用了不存在的步骤
+                raise ValueError(f"步骤{s['id']} 依赖不存在的 {dep}")
+    # 用 Kahn 算法检测环：能拓扑排序完，就说明无环
+    order = topo_order(steps)
+    if len(order) != len(steps):
+        raise ValueError('计划里存在循环依赖')
+    return order
+
+def topo_order(steps):
+    by_id = {s['id']: s for s in steps}
+    indeg = {s['id']: len(s.get('depends_on', [])) for s in steps}
+    ready = [i for i, d in indeg.items() if d == 0]   # 没有依赖的可以先做
+    order = []
+    while ready:
+        cur = ready.pop()
+        order.append(cur)
+        for s in steps:                                # 谁依赖 cur，依赖数减一
+            if cur in s.get('depends_on', []):
+                indeg[s['id']] -= 1
+                if indeg[s['id']] == 0:
+                    ready.append(s['id'])
+    return order
+# order 给出一个满足依赖的执行序；同一「就绪层」里的步骤其实可以并行跑。`
+
 export default function Ch6_2() {
   return (
     <>
@@ -71,6 +102,10 @@ export default function Ch6_2() {
         还有一个工程上的好处：拆开之后每一步都能<strong>单独验证、单独重试</strong>。第 3 步错了，你只重跑第 3 步，
         而不是从头来过；某步可以换更便宜的模型、某步可以并行——这些优化只有在拆开后才谈得上。
       </p>
+      <p>
+        再补一条往往被忽略的好处：<strong>成本可控且可分级用模型</strong>。拆开后，简单的子步（格式转换、抽取要点）可以交给便宜的小模型（如 Haiku 档），
+        难的子步（规划、综合判断）才用强模型（Opus 档）。一份不拆的大任务只能整体用一个最强模型从头跑到尾，既贵又慢。分解让你按难度「分摊算力」，这是生产系统省钱的常见手段。
+      </p>
 
       <h3>分解的三种形态</h3>
       <p>
@@ -89,6 +124,16 @@ export default function Ch6_2() {
           但要警惕拆不到底、无限递归。
         </li>
       </ul>
+      <table>
+        <thead>
+          <tr><th>形态</th><th>步骤关系</th><th>能否并行</th><th>典型场景</th><th>主要风险</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>线性 chain</td><td>一条直线、强先后</td><td>否</td><td>调研→提纲→初稿→润色</td><td>中途一步错，后面全偏</td></tr>
+          <tr><td>DAG</td><td>有依赖、无依赖独立</td><td>无依赖的可并行</td><td>多竞品分别调研后汇总</td><td>依赖写错导致顺序乱</td></tr>
+          <tr><td>递归</td><td>执行时再拆</td><td>视情况</td><td>深度不定的探索任务</td><td>拆不到底、无限递归</td></tr>
+        </tbody>
+      </table>
 
       <h3>先规划，再执行</h3>
       <p>
@@ -96,6 +141,10 @@ export default function Ch6_2() {
         JSON，列出每个子任务的目标和依赖关系——然后执行器再按这份计划逐条做。把「规划」和「执行」分成两个独立阶段有三个好处：
         计划是结构化的，便于程序检查（步骤数对不对、依赖有没有环）；计划可以在执行前给人看一眼、改一改；执行某步失败时，
         可以只重做那一步，或回到 planner 重新规划。
+      </p>
+      <p>
+        这里有个工程上的好习惯：让 planner 输出 JSON 时配合<strong>结构化输出约束</strong>（用 <code>output_config.format</code> 指定 schema），
+        而不是只在 prompt 里写「请输出 JSON」然后祈祷它别多说话。前者从 API 层保证返回的就是合法 JSON，省掉了「模型在 JSON 前面加了句『好的，这是计划：』导致 <code>json.loads</code> 崩溃」这类高频 bug。
       </p>
 
       <Example title="一份结构化计划长什么样">
@@ -125,6 +174,22 @@ export default function Ch6_2() {
         </p>
       </KeyIdea>
 
+      <h2>静态计划 vs 动态重规划</h2>
+      <p>
+        「先规划再执行」最朴素的版本是<strong>静态计划</strong>：planner 一次性产出计划，执行器从头跑到尾，绝不回头改。它简单、可审、省 token，
+        但有个致命弱点——现实会打脸。第 2 步发现「这篇博客其实没有 3 个卖点，只有 1 个」，后面基于「3 个卖点」的步骤就全错了，而静态计划不会自我纠正。
+      </p>
+      <p>
+        对策是<strong>动态重规划</strong>：执行中某步的产出与计划假设严重不符时，把当前进展和偏差信息回喂给 planner，让它<strong>改计划</strong>再继续。
+        这正是上一章 Plan-and-Execute「计划被现实打脸需要重规划机制」的落地。代价是更复杂、更费 token，所以实践中常折中：默认走静态计划，只在显式检测到「某步失败」或「关键假设不成立」时才触发一次重规划，而不是每步都问 planner。
+      </p>
+      <Callout variant="tip" title="什么时候触发重规划">
+        <p>
+          别让 Agent 每步都重规划（贵且容易反复横跳）。设几个明确的触发条件：某步连续重试 N 次仍失败、某步产出与依赖假设矛盾、或执行器主动报告「我卡住了」。
+          命中任一条件才回 planner，否则按原计划走完。把重规划当成「异常处理路径」，不是「主流程」。
+        </p>
+      </Callout>
+
       <Callout variant="warn" title="任务分解的三个坑">
         <p>拆错的方式比拆对的方式多，常见三类：</p>
         <ul>
@@ -149,6 +214,10 @@ export default function Ch6_2() {
         <strong>真正需要的上下文</strong>（依赖步骤的产出），别把全部历史一股脑塞进去；并且控制步骤总数——结合上一章的轮数上限，
         一份「步骤适中、边界清晰、依赖明确」的计划，是后面反思和评估都能稳定运转的地基。
       </p>
+      <p>
+        还要把「计划」本身当成<strong>可观测对象</strong>：把 planner 产出的计划、每步的输入输出、是否触发了重规划，全打进日志。
+        Agent 出问题时，十有八九是计划拆歪了（粒度、边界、依赖），而不是某次执行运气差——能把计划摊在眼前看，定位问题就快得多。
+      </p>
 
       <Practice title="写一个 planner：让模型输出结构化子任务并按序执行">
         <p>
@@ -161,16 +230,23 @@ export default function Ch6_2() {
           把执行顺序从「按 id」改成「按依赖拓扑排序」，让没有依赖的步骤能并行；最后故意给一个会让模型拆出 12 步的复杂目标，
           亲眼看看「拆太碎」时整体成功率怎么掉下来。
         </p>
+        <p>
+          下面这段就是上述前两件事的参考实现——计划校验（无环、依赖都存在）加拓扑排序。把它接到 <code>run</code> 前面，你的 planner 就从「假设 id 升序即依赖正确」的玩具，
+          变成了能挡住坏计划、能识别可并行步骤的可用骨架。
+        </p>
+        <CodeBlock lang="python" title="topo_plan.py" code={topoCode} />
       </Practice>
 
       <Summary
         points={[
           '注意力和上下文都有限，所以大目标必须拆成可执行的小步，每步只专注一件事，质量和可控性都上去。',
+          '拆开还能按难度分级用模型：简单步用便宜小模型、难步用强模型，按难度分摊算力是生产省钱的常见手段。',
           '分解有三种形态：线性（一条直线）、DAG（有依赖、无依赖可并行）、递归（执行时再拆，注意防无限递归）。',
-          '最实用的是「先规划再执行」：planner 产出结构化 JSON 计划，便于程序校验、人工预审、单步重试。',
+          '最实用的是「先规划再执行」：planner 产出结构化 JSON 计划（配 output_config.format 约束更稳），便于程序校验、人工预审、单步重试。',
           '拆得好的标准是每个子任务都能独立执行、独立验证，像装配线上职责清楚的工位。',
+          '静态计划简单可审但不会自我纠正；动态重规划能应对现实打脸，但要设明确触发条件、当异常路径用，不要每步都重规划。',
           '三个坑：拆太碎（0.9 的 10 次方 ≈ 0.35，错误连乘）、拆太粗（又抓不住）、边界不清（重做或漏做）。',
-          '工程上让计划结构化、每步只喂必要上下文、控制步骤总数，这是反思与评估能稳定运转的地基。',
+          '把计划当可观测对象（计划、每步 IO、是否重规划全打日志），出问题多半是计划拆歪，摊开看定位最快。',
         ]}
       />
     </>

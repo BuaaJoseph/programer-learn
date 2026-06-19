@@ -99,6 +99,40 @@ for sample in val_ds.select(range(5)):
     out = model.generate(ids, max_new_tokens=128)
     print(tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True))`
 
+const compareCode = `# 上线前必做：新模型 vs 基座，在同一份留出集上对比。
+# 别只问「新模型好不好」，要问「它比原来更好吗」。
+def ab_eval(base_model, ft_model, tok, held_out, judge):
+    base_win = ft_win = tie = 0
+    for sample in held_out:
+        prompt = sample['messages'][:-1]
+        a = generate(base_model, tok, prompt)   # 基座的回答
+        b = generate(ft_model, tok, prompt)     # 微调后的回答
+        verdict = judge(prompt, a, b)            # 人工或更强模型当裁判
+        if verdict == 'B':   ft_win += 1
+        elif verdict == 'A': base_win += 1
+        else:                tie += 1
+    n = len(held_out)
+    print(f'微调胜 {ft_win/n:.0%}  基座胜 {base_win/n:.0%}  平 {tie/n:.0%}')
+    # 微调胜率没有显著高于基座，就别上线 —— 不一样不等于更好`
+
+const judgeCode = `# 用更强的模型当「裁判」批量打分（LLM-as-a-judge）。
+# 关键是给裁判一个明确的评分标准，并强制结构化输出，方便解析。
+JUDGE_PROMPT = """你是严格的评审。请就【准确性】【是否符合简洁客服风格】两项，
+对下面的回答打 1-5 分，并给一句理由。只输出 JSON：
+{{"accuracy": <int>, "style": <int>, "reason": "<str>"}}
+
+用户问题：{question}
+待评回答：{answer}"""
+
+def judge_one(client, question, answer):
+    msg = JUDGE_PROMPT.format(question=question, answer=answer)
+    resp = client.chat.completions.create(
+        model='gpt-4o',                 # 裁判要比被评模型强
+        messages=[{'role': 'user', 'content': msg}],
+        temperature=0,                  # 评分要稳定可复现，关掉随机性
+    )
+    return resp.choices[0].message.content   # 解析这段 JSON 即可`
+
 export default function Ch3_6() {
   return (
     <>
@@ -121,6 +155,24 @@ export default function Ch3_6() {
         <li><strong>训练</strong>——跑起来，盯着 train/val 两条 loss 曲线。</li>
         <li><strong>评估</strong>——别只看 loss，要真的拿没见过的输入让它答，看效果。</li>
       </ul>
+      <p>
+        这五步看似线性，实际是个<strong>循环</strong>。绝大多数情况下你不会一次就训对：第一轮跑完评估，发现某类问题答得差，
+        于是回到「备数据」补样本，再训一轮。所以把每一步都做成可重复、可记录的脚本至关重要——你迭代的不是一次训练，
+        而是「训练→评估→改数据→再训练」这个圈。圈转得越快，模型收敛到可用状态就越快，而圈的转速取决于你的流水线有多自动化。
+      </p>
+      <table>
+        <thead>
+          <tr><th>对比维度</th><th>托管 API</th><th>本地 PEFT</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>数据去向</td><td>上传给第三方</td><td>不出本地</td></tr>
+          <tr><td>能否拿到权重</td><td>不能</td><td>能</td></tr>
+          <tr><td>基础设施</td><td>零运维</td><td>自备显卡/环境</td></tr>
+          <tr><td>成本模型</td><td>按训练量+调用量收费</td><td>一次性算力，后续自托管</td></tr>
+          <tr><td>上手速度</td><td>最快</td><td>需配环境</td></tr>
+          <tr><td>适合谁</td><td>快速验证、数据可外发</td><td>数据敏感、长期迭代、控成本</td></tr>
+        </tbody>
+      </table>
 
       <h2>路线一：托管微调 API</h2>
       <p>
@@ -181,6 +233,32 @@ export default function Ch3_6() {
           数字看不出来的问题，眼睛能看出来。
         </li>
       </ul>
+      <p>
+        三层里最容易被偷懒跳过、却最关键的是<strong>「和基座对比」</strong>。新模型答得不错，不代表它比原来的基座更好——
+        也许基座本来就答得一样好，你白训了一场。正确的评估姿势是 A/B：同一份留出集，基座和微调后各答一遍，让裁判逐对判优劣，
+        统计微调的<strong>胜率</strong>。胜率没有显著超过基座，就别上线。记住一句话：<strong>「不一样」不等于「更好」。</strong>
+      </p>
+      <CodeBlock lang="python" title="ab_eval.py" code={compareCode} />
+      <p>
+        人工抽检最可靠但最贵，规模上不去。一个折中是 <strong>LLM-as-a-judge</strong>：用一个比被评模型更强的模型当裁判批量打分。
+        要点有三：给裁判明确的评分维度（别只说「打个分」）、强制结构化输出方便解析、把 temperature 设为 0 保证评分可复现。
+        它不能完全替代人工（裁判也有偏见，比如偏爱长答案），但能把人工的工作量从「逐条读」降到「抽检裁判判得准不准」。
+      </p>
+      <CodeBlock lang="python" title="llm_judge.py" code={judgeCode} />
+
+      <Callout variant="warn" title="评估里的隐形陷阱">
+        <ul>
+          <li>
+            <strong>留出集泄漏</strong>——评估集如果和训练集有重叠或近似重复（见第 4 章），分数会虚高，你会高估模型。
+          </li>
+          <li>
+            <strong>只测训练分布</strong>——评估集只覆盖训练里见过的问法，测不出模型在真实长尾输入上的崩溃。刻意放一些「没训过的类型」进去。
+          </li>
+          <li>
+            <strong>裁判偏好</strong>——LLM 裁判倾向于给更长、更礼貌、格式更花的回答打高分，可能和你真正想要的「简洁」背道而驰。校准裁判的标准。
+          </li>
+        </ul>
+      </Callout>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

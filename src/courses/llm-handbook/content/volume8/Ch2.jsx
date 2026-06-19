@@ -53,6 +53,31 @@ if __name__ == '__main__':
     print(f'分级路由:     USD {mixed:,.0f} / 天')
     print(f'省下:         {(1 - mixed / all_large):.0%}')`
 
+const cacheCode = `# prompt 缓存：把每次都一样的前缀（系统提示 + 知识库）标记为可缓存
+# 命中后这部分输入 token 大幅打折，且省去重复处理的延迟。
+from anthropic import Anthropic
+
+client = Anthropic()
+
+SYSTEM_PROMPT = open('big_system_prompt.txt').read()   # 几千 token，每次都一样
+KB_SNIPPET    = open('product_kb.txt').read()          # 知识库，很少变
+
+def answer(user_msg):
+    return client.messages.create(
+        model='claude-sonnet-4-5',
+        max_tokens=300,
+        system=[
+            # 把稳定不变的大段前缀标记为缓存断点：第二次起命中折扣
+            {'type': 'text', 'text': SYSTEM_PROMPT,
+             'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': KB_SNIPPET,
+             'cache_control': {'type': 'ephemeral'}},
+        ],
+        messages=[{'role': 'user', 'content': user_msg}],   # 变化的部分放最后
+    )
+# 关键纪律：把「稳定的放前面、变化的放后面」。
+# 缓存按前缀匹配，一旦前面有一个字节变了，后面全部失效、白缓存。`
+
 export default function Ch8_2() {
   return (
     <>
@@ -84,6 +109,15 @@ export default function Ch8_2() {
           这就是为什么「能用一次调用解决就别用两次」。
         </p>
       </Callout>
+
+      <h3>输出为什么贵：一个值得记住的机制</h3>
+      <p>
+        输入 token 是模型<strong>一次性并行读入</strong>的：几千 token 的 prompt 在一次前向传播里就吃进去了。
+        而输出是<strong>自回归逐字生成</strong>的——每吐一个 token，都要把「已有上下文 + 已生成的部分」
+        重新跑一遍前向计算。换句话说，生成 400 个输出 token，约等于做了 400 次递增的前向计算，
+        算力远高于读入。这就是输出单价是输入 3~5 倍的物理根源，也是为什么<strong>压缩输出长度</strong>
+        是性价比极高的优化：让 Agent「只回结论、不复述问题、不写客套」，账单立竿见影。
+      </p>
 
       <h3>先量后优：别凭感觉优化</h3>
       <p>
@@ -133,6 +167,85 @@ export default function Ch8_2() {
           省的是一整段上下文的输入成本加一次网络往返。
         </li>
       </ul>
+
+      <h2>把 prompt 缓存吃透</h2>
+      <p>
+        六招里最容易「装了却没生效」的就是 prompt 缓存。它的原理是<strong>按前缀做匹配</strong>：
+        系统提示、知识库这些每次请求都一字不差的大段前缀，第一次照常计费，之后命中就大幅打折、
+        还省去重复处理的延迟。但它有一条铁律——<strong>稳定的内容放前面，变化的内容放后面</strong>。
+        缓存是前缀匹配，只要前面有一个字节变了，后面全部失效。
+      </p>
+      <CodeBlock lang="python" title="prompt_cache.py" code={cacheCode} />
+      <Callout variant="warn" title="缓存最常见的两个失效坑">
+        <ul>
+          <li>
+            <strong>把动态内容混在前缀里</strong>——比如在系统提示里拼进当前时间、用户名。
+            这等于每次请求前缀都不同，缓存永远不命中，白白付了缓存写入的成本。
+          </li>
+          <li>
+            <strong>前缀太短不划算</strong>——缓存有最小长度门槛，几十 token 的前缀缓存了也省不下什么。
+            缓存只对「又大又稳」的前缀（大段系统提示、长知识库）才真正划算。
+          </li>
+        </ul>
+      </Callout>
+
+      <h2>延迟和成本不是一回事</h2>
+      <p>
+        新手常把这两件事混为一谈，其实它们的优化手段方向不同，甚至会冲突。下面这张表把六招按
+        「主要省成本还是省延迟」分了类：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>手段</th>
+            <th>省成本</th>
+            <th>省延迟</th>
+            <th>注意</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>裁剪上下文</td>
+            <td>强</td>
+            <td>强</td>
+            <td>裁过头会丢信息，伤质量</td>
+          </tr>
+          <tr>
+            <td>模型分级路由</td>
+            <td>强</td>
+            <td>中</td>
+            <td>小模型也更快</td>
+          </tr>
+          <tr>
+            <td>prompt 缓存</td>
+            <td>强</td>
+            <td>中</td>
+            <td>前缀必须稳定</td>
+          </tr>
+          <tr>
+            <td>并行调用</td>
+            <td>无</td>
+            <td>强</td>
+            <td>不省钱，只压总耗时</td>
+          </tr>
+          <tr>
+            <td>流式输出</td>
+            <td>无</td>
+            <td>仅体感</td>
+            <td>总延迟不变，首字更快</td>
+          </tr>
+          <tr>
+            <td>减少调用次数</td>
+            <td>强</td>
+            <td>强</td>
+            <td>合并步骤可能升复杂度</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        看清这张表你就明白：<strong>并行和流式只动延迟、不动账单</strong>，而裁剪、分级、缓存、减少调用
+        才是真正省钱的四招。优化前先想清楚你当下最痛的是哪个指标，别用省延迟的招去解决成本问题。
+      </p>
 
       <KeyIdea title="质量 × 成本 × 延迟：三角权衡">
         <p>

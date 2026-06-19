@@ -38,6 +38,32 @@ trainer = DPOTrainer(
 )
 trainer.train()`
 
+const dpoLossCode = `# DPO 的损失函数，拆开看其实很直观（伪代码）
+# pi  = 当前正在优化的策略模型
+# ref = 冻结的参考模型（通常就是 SFT 模型的副本）
+import torch.nn.functional as F
+
+def dpo_loss(pi_chosen_logp, pi_rejected_logp,
+             ref_chosen_logp, ref_rejected_logp, beta=0.1):
+    # 每个回答相对参考模型「变好/变差」了多少（log 概率比）
+    chosen_shift   = pi_chosen_logp   - ref_chosen_logp
+    rejected_shift = pi_rejected_logp - ref_rejected_logp
+
+    # 我们希望 chosen 比 rejected 被抬得更高；差值越大越好
+    margin = beta * (chosen_shift - rejected_shift)
+
+    # -logsigmoid(margin)：margin 越大 loss 越小
+    # beta 同时扮演 KL 约束：beta 越大，越不允许偏离 ref
+    return -F.logsigmoid(margin).mean()`
+
+const rmCode = `# 奖励模型的训练目标（成对排序损失，Bradley-Terry 模型）
+# r(x) 是奖励模型对回答 x 打的标量分
+def reward_model_loss(r_chosen, r_rejected):
+    import torch.nn.functional as F
+    # 让 chosen 的分高于 rejected，差距越大 loss 越小
+    # 注意：只学「谁更好」，不强求分数的绝对刻度 —— 这正是排序优于打分的原因
+    return -F.logsigmoid(r_chosen - r_rejected).mean()`
+
 export default function Ch3_5() {
   return (
     <>
@@ -76,6 +102,13 @@ export default function Ch3_5() {
         改成让标注员<strong>排序</strong>——「A 和 B 哪个更好」——就稳健多了。比较是人类天生擅长的判断，
         「A 比 B 好」这种相对结论，比「A 值 7 分」这种绝对结论一致性高得多。RM 就是从大量这样的成对比较中，学出一个连续的打分函数。
       </p>
+      <p>
+        这背后有个经典的统计模型叫 <strong>Bradley-Terry</strong>：它假设每个回答有一个隐含的「实力分」，两者相比时，
+        实力分高的获胜概率服从一个 sigmoid。RM 的训练就是去拟合这个隐含分——损失函数让 chosen 的分高于 rejected，
+        差距越大损失越小。妙处在于：模型只需要学「谁更好」，<strong>从不需要学绝对刻度</strong>。这就是为什么排序数据天生比
+        打分数据干净——它绕开了「7 分到底意味着什么」这个无解的问题。
+      </p>
+      <CodeBlock lang="python" title="reward_model_loss.py" code={rmCode} />
 
       <KeyIdea title="KL 散度约束：别跑太偏">
         <p>
@@ -97,6 +130,35 @@ export default function Ch3_5() {
       <p>
         DPO 把 RLHF 的多阶段流程压成一个<strong>像 SFT 一样直接的训练</strong>，里面有个超参 <code>beta</code> 扮演着
         和前面 KL 约束等价的角色——控制优化后的模型能离原模型多远。因为简单、稳定、不需要额外的 RM，DPO 现在是开源社区做对齐的主流选择。
+      </p>
+
+      <p>
+        DPO 凭什么能跳过 RM？核心洞察是：RLHF 里「最优策略」和「奖励函数」之间存在一个可以反解的数学关系——
+        给定带 KL 约束的最优策略，奖励函数可以直接用<strong>策略相对参考模型的 log 概率比</strong>表示出来。这样一来，
+        奖励模型就不必显式存在了，它被「折叠」进了策略本身的损失里。下面这段伪代码把 DPO 损失拆开，你会发现它本质就是：
+        让 chosen 相对参考模型被抬得比 rejected 更高。
+      </p>
+      <CodeBlock lang="python" title="dpo_loss.py" code={dpoLossCode} />
+      <p>
+        看懂这段你就明白 <code>beta</code> 为什么同时是「优化强度」和「KL 约束」——它整体缩放了 chosen 与 rejected 的差距信号。
+        <code>beta</code> 太小，模型容易过度拉开两者概率、跑偏甚至崩坏；太大则几乎不动，学不到偏好。常用 <code>0.1</code> 起步。
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>对比项</th><th>RLHF (PPO)</th><th>DPO</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>需要奖励模型</td><td>需要，单独训</td><td>不需要，折叠进损失</td></tr>
+          <tr><td>训练阶段数</td><td>多（SFT + RM + PPO）</td><td>一步搞定，像 SFT</td></tr>
+          <tr><td>训练稳定性</td><td>低，RL 难调</td><td>高，监督式</td></tr>
+          <tr><td>能否在线探索</td><td>能（采样后打分）</td><td>不能（只用离线偏好对）</td></tr>
+          <tr><td>工程复杂度</td><td>高（多模型常驻）</td><td>低</td></tr>
+        </tbody>
+      </table>
+      <p>
+        最后那一行是 DPO 的真正代价：它<strong>只能从你给定的离线偏好对里学</strong>，无法像 PPO 那样让模型自己采样新回答、
+        再用 RM 打分去探索。所以当你的偏好数据覆盖不全时，PPO 的在线探索仍有不可替代的价值——这也是大厂依然保留 PPO 路线的原因。
       </p>
 
       <Example title="一对偏好数据">
@@ -124,6 +186,22 @@ export default function Ch3_5() {
         </ul>
         <p>这两者都说明：对齐是在「有用」和「无害」之间走钢丝，过犹不及，调的就是这个平衡。</p>
       </Callout>
+      <p>
+        为什么对齐天然会产生这些副作用？因为 RM 学的是「人类标注员当时更喜欢哪个」，而人类偏好本身就带偏：人会下意识地
+        更喜欢顺着自己说的、更长更礼貌的、看起来更安全的回答。模型一旦把这些偏好优化到极致，就会过度地谄媚、啰嗦、保守——
+        这不是 bug，而是它<strong>太听话</strong>的结果。理解这点很重要：副作用往往不是「没对齐好」，而是「对齐过头」，
+        是优化目标本身的偏差被放大。缓解办法包括在偏好数据里刻意加入「该拒绝谄媚」「无害请求要正常回答」的对比样本，
+        把这些边界也明确教给模型。
+      </p>
+
+      <Example title="谄媚是怎么被训出来的">
+        <p>
+          想象偏好数据里有这样一对：用户说「我觉得 1+1=3，对吧？」回答 A「是的，您说得对」被标注员判为「更友善」，
+          回答 B「其实 1+1=2，您可能记错了」被判为「有点扫兴」。如果这类标注大量存在，RM 就学到「附和=高分」，
+          PPO/DPO 会把模型推向附和。修复它不能靠调超参，只能<strong>回到数据</strong>：补一批「礼貌地纠正用户错误」被判为更优的样本，
+          让模型重新理解什么叫真正的「有帮助」。这再次印证了那条贯穿全卷的主线——<strong>对齐的方向盘，握在标注偏好手里</strong>。
+        </p>
+      </Example>
 
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>

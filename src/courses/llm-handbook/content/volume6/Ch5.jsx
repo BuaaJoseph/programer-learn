@@ -54,6 +54,31 @@ def evaluate():
 
 evaluate()`
 
+const passRateCode = `# 应对「随机」：同一用例多跑几次，看 pass@k 与稳定性，而不是只信一次。
+def pass_rate(case, run_agent, runs=5):
+    results = []
+    for _ in range(runs):
+        out = run_agent(case['input'])
+        ok = case['assert'](out) if case['assert'] else None
+        results.append(ok)
+    hard = [r for r in results if r is not None]
+    rate = sum(hard) / len(hard) if hard else None
+    return {
+        'id': case['id'],
+        'pass_rate': rate,            # 通过率：5 次里对了几次
+        'stable': len(set(hard)) <= 1 # 是否每次结论一致（不一致=不稳定，要警惕）
+    }
+
+# 位置偏见校正：对比两个答案时，交换位置各评一次取平均，
+# 避免 judge 单纯偏好排在前面的那个。
+def judge_pairwise(rubric, ans_a, ans_b, judge_pick):
+    pick1 = judge_pick(rubric, ans_a, ans_b)   # A 在前
+    pick2 = judge_pick(rubric, ans_b, ans_a)   # B 在前
+    # 两次都选「靠前」的那个 → 是位置偏见，判平；否则取一致结论
+    if pick1 == 'first' and pick2 == 'first':
+        return 'tie'
+    return 'A' if (pick1, pick2) == ('first', 'second') else 'B'`
+
 export default function Ch6_5() {
   return (
     <>
@@ -92,6 +117,17 @@ export default function Ch6_5() {
         <li><strong>人工抽检</strong>：人来看一批样本。最准、最贵，适合定标准、抽查 judge 是否靠谱，不适合大规模日常跑。</li>
         <li><strong>线上指标</strong>：上线后看真实信号——任务完成率、用户重试率、人工接管率、点踩率。最真实，但滞后，且要先上线才有。</li>
       </ul>
+      <table>
+        <thead>
+          <tr><th>手段</th><th>准</th><th>快/便宜</th><th>可规模化</th><th>最适合</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>断言硬测</td><td>高（客观题）</td><td>最快最便宜</td><td>是</td><td>有唯一答案的部分</td></tr>
+          <tr><td>LLM-as-judge</td><td>中，有偏见</td><td>较快</td><td>是</td><td>开放/质量评估</td></tr>
+          <tr><td>人工抽检</td><td>最高</td><td>最慢最贵</td><td>否</td><td>定标准、校准 judge</td></tr>
+          <tr><td>线上指标</td><td>最真实</td><td>滞后</td><td>是</td><td>上线后的真实表现</td></tr>
+        </tbody>
+      </table>
 
       <Example title="同一个问题，三层一起看">
         <p>任务：「查出过去 30 天销量最高的商品并说明依据。」Agent 答「是 A 商品」。光看结果不够：</p>
@@ -110,6 +146,10 @@ export default function Ch6_5() {
           重跑一遍，分数是涨了还是跌了一目了然。这套东西攒下来，就是你的<em>回归测试</em>：防止「修好一个问题、悄悄弄坏三个」。
         </p>
       </KeyIdea>
+      <p>
+        用例集怎么攒？最好的来源是<strong>真实失败案例</strong>。线上每出一次 bug、每接到一次用户投诉，就把那个输入连同「正确该是什么」沉淀成一条用例。
+        这样你的 eval set 会随时间越来越贴合真实分布，而不是停留在你拍脑袋想的几个理想化例子上。一份只有「美好用例」的 eval set 会给你虚高的信心。
+      </p>
 
       <Callout variant="warn" title="LLM-as-judge 的三种偏心">
         <p>
@@ -122,12 +162,30 @@ export default function Ch6_5() {
         </ul>
       </Callout>
 
+      <KeyIdea title="judge 要打分，但谁来给 judge 打分？">
+        <p>
+          LLM-as-judge 最容易被忽略的一环是<strong>校准 judge 本身</strong>。judge 给的分数可能整体偏高、可能对某类答案系统性误判，你怎么知道？
+          做法是：先让人工评一小批（比如 50 条）作为「金标准」，再让 judge 评同一批，算两者的一致率。一致率够高，才说明 judge 的分数可信、可以放心规模化；
+          一致率低，就得改 judge 的 rubric 或换模型。<strong>没校准过的 judge 分数，只是另一种「感觉」，不是「数据」。</strong>
+        </p>
+      </KeyIdea>
+
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
         把评估当成<strong>和写代码同等重要的工程</strong>来对待：尽量把能客观判定的部分压到<strong>断言</strong>上（又快又准又免费），
         剩下开放的部分才交给 <strong>LLM-judge</strong>，并用<strong>人工抽检</strong>定期校准 judge 靠不靠谱。针对「随机」这条特性，
         同一用例多跑几次看通过率，而不是只信一次。最后把这套用例集接进 CI，当作<strong>回归测试</strong>常态化跑——这样你每次改动
         才有底气说「确实变好了」，而不是「感觉变好了」。
+      </p>
+      <p>
+        把这一卷六章串起来看：<strong>评估是闭环的最后一环，也是回到起点的那一环</strong>。第 1 章的循环、第 2 章的分解、第 3 章的反思、第 4 章的护栏，
+        每一处改动好不好，最终都要靠这一章的 eval set 来判定；而线上跑出来的失败又会变成新的用例，反过来推动前几章的改进。没有评估，前面所有的「优化」都只是盲调；有了评估，整个 Agent 才进入「可度量、可迭代」的工程正轨。
+      </p>
+
+      <CodeBlock lang="python" title="robust_eval.py" code={passRateCode} />
+      <p>
+        上面两段补齐了最小框架最缺的两块：<code>pass_rate</code> 用「同一用例多跑几次」直面随机性，顺带标出「结论不稳定」的危险用例；
+        <code>judge_pairwise</code> 用「交换位置各评一次」压制位置偏见。把它们接进下面的 <code>mini_eval.py</code>，评估就从「测一次的快照」升级成了「可信的统计」。
       </p>
 
       <Practice title="写一个最小 eval 框架">
@@ -138,8 +196,11 @@ export default function Ch6_5() {
         </p>
         <CodeBlock lang="python" title="mini_eval.py" code={evalCode} />
         <p>
-          三处可扩展：给每条用例跑 3 次取通过率，应对随机性；给 judge 做「位置交换各评一次取平均」，压制位置偏见；
+          三处可扩展：给每条用例跑 3 次取通过率（用上面的 <code>pass_rate</code>），应对随机性；给 judge 做「位置交换各评一次取平均」（用上面的 <code>judge_pairwise</code>），压制位置偏见；
           把 <code>evaluate</code> 的汇总写成一份 JSON 报告存档，下次改动后 diff 一下分数，这就把它升级成了回归测试。
+        </p>
+        <p>
+          进阶练习：再加一步「校准 judge」——人工给 5 条用例打分，让 judge 评同一批，算一致率；一致率不达标就回去改 rubric。亲手体会「先信任裁判，再用裁判」的顺序。
         </p>
       </Practice>
 
@@ -149,8 +210,10 @@ export default function Ch6_5() {
           '评什么分三层：结果（对不对）、轨迹（过程合不合理）、质量（好不好），三层合看才是真相。',
           '怎么评有四手段：断言硬测（能用就用）、LLM-as-judge（开放题、可规模化）、人工抽检（校准）、线上指标（最真实但滞后）。',
           'LLM-judge 有三种偏心：位置偏见（偏前面）、啰嗦偏见（偏长）、自我偏好（偏自己风格），都要主动校正。',
-          '评估的起点是用例集：输入加该满足的条件，让评估变得可重复、可对比。',
-          '把用例集接进 CI 当回归测试常态化跑，每次改动才有数说「确实变好了」而非「感觉变好了」。',
+          'judge 本身要先用人工金标准校准一致率，没校准过的 judge 分数只是另一种「感觉」。',
+          '评估的起点是用例集，最好从真实失败案例沉淀，让它越来越贴近真实分布而非理想化例子。',
+          '用随机多跑取通过率应对不确定性；把用例集接进 CI 当回归测试，每次改动才有数说「确实变好了」。',
+          '评估是 Agent 闭环的最后一环也是回到起点的一环：前几章的改动靠它判定，线上失败又反哺成新用例。',
         ]}
       />
     </>

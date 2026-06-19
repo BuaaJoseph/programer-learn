@@ -1,0 +1,2 @@
+smolagents>=1.20.0
+openai>=1.40.0

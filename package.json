@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:app": "CAP_BUILD=1 vite build",
+    "app:sync": "npm run build:app && cap sync",
+    "app:android": "npm run build:app && cap sync android && cap open android",
+    "app:ios": "npm run build:app && cap sync ios && cap open ios"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -14,6 +18,10 @@
     "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/ios": "^8.4.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.8"
   }

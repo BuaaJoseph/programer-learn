@@ -4,6 +4,19 @@
   display: flex;
   flex-direction: column;
 }
+/* 原生 APP（Capacitor）安全区：避开刘海/状态栏与底部 Home 指示条。
+   网页端 env(safe-area-inset-*) 为 0，不受影响。 */
+.gnav {
+  padding-top: env(safe-area-inset-top);
+}
+.platform-footer {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.container,
+.browse {
+  padding-left: max(32px, env(safe-area-inset-left));
+  padding-right: max(32px, env(safe-area-inset-right));
+}
 .platform-main {
   flex: 1;
 }
@@ -61,11 +74,27 @@
 .gnav-menu-head {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-family: var(--display);
   font-weight: 700;
   color: var(--ink);
   margin-bottom: 8px;
+  white-space: nowrap;
+}
+.gnav-menu-head:hover {
+  color: var(--accent-strong);
+}
+.gnav-menu-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
 }
 .gnav-menu-col ul {
   list-style: none;
@@ -193,6 +222,98 @@
   color: var(--accent-strong);
 }
 
+/* ============ 首页按分类分组 ============ */
+.cat-group {
+  margin-bottom: 44px;
+}
+.cat-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.cat-group-head .section-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.cat-group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
+.cat-group-name {
+  white-space: nowrap;
+}
+.cat-group-sub {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-weight: 500;
+  align-self: flex-end;
+  padding-bottom: 3px;
+}
+.cat-icon {
+  display: block;
+}
+.cat-group-more {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cat-group-more:hover {
+  color: var(--accent-strong);
+}
+
+/* 分类翻页器 */
+.cat-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+.cat-pager-btn {
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.cat-pager-btn:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-sm);
+}
+.cat-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cat-pager-info {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  min-width: 48px;
+  text-align: center;
+}
+
 /* ============ 课程卡片网格 ============ */
 .course-grid {
   display: grid;
@@ -220,12 +341,13 @@
   color: var(--ink);
 }
 .course-card-cover {
-  height: 96px;
-  display: grid;
-  place-items: center;
-  font-size: 2.6rem;
-  background: linear-gradient(135deg, var(--c, var(--accent)) 0%, #ffffff 220%);
-  background-color: var(--accent-soft);
+  height: 104px;
+  overflow: hidden;
+}
+.course-cover-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .course-card-body {
   padding: 16px 18px 18px;
@@ -304,15 +426,41 @@
 .browse-tree-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   font-weight: 600;
   color: var(--ink);
-  padding: 6px 8px;
+  padding: 7px 9px;
   border-radius: var(--radius-sm);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.browse-tree-head:hover {
+  background: var(--bg-sunken);
+}
+.browse-tree-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  color: var(--ink-soft);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+.browse-tree-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .browse-tree-head.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+.browse-tree-head.active .browse-tree-ic {
+  color: var(--accent-strong);
+  background: var(--bg);
+  border-color: var(--accent-line);
 }
 .browse-tree-cat ul {
   list-style: none;
@@ -334,9 +482,47 @@
   color: var(--accent-strong);
   font-weight: 600;
 }
+.browse-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 2px;
+}
+.browse-hero-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  flex-shrink: 0;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
 .browse-h1 {
   font-size: 2rem;
-  margin: 8px 0 4px;
+  margin: 0;
+}
+.browse-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0 4px;
+}
+.browse-chip {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  transition: all 0.14s ease;
+}
+.browse-chip:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
 }
 .empty-note {
   padding: 40px;
@@ -354,14 +540,11 @@
   align-items: stretch;
 }
 .course-hero-cover {
-  width: 180px;
+  width: 200px;
   flex-shrink: 0;
   border-radius: var(--radius);
-  display: grid;
-  place-items: center;
-  font-size: 4rem;
-  background: linear-gradient(135deg, var(--c, var(--accent)) 0%, #ffffff 240%);
-  background-color: var(--accent-soft);
+  overflow: hidden;
+  min-height: 150px;
 }
 .course-hero-body {
   flex: 1;
@@ -596,3 +779,54 @@
     flex-wrap: wrap;
   }
 }
+
+/* ===== Python 在线运行（Pyodide） ===== */
+.gnav-play {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  color: var(--accent-strong); background: var(--accent-soft);
+  border: 1px solid var(--accent-line); white-space: nowrap; text-decoration: none;
+}
+.gnav-play:hover { background: var(--accent); color: #fff; }
+
+.pyrunner {
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--bg-subtle); margin: 20px 0;
+}
+.pyrunner-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.pyrunner-bar .dots { display: inline-flex; gap: 5px; }
+.pyrunner-bar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); display: block; }
+.pyrunner-title { font: 12px var(--mono); color: var(--ink-soft); flex: 1; }
+.pyrunner-actions { display: flex; gap: 8px; }
+.pyrunner-reset, .pyrunner-run {
+  font-size: 12.5px; font-weight: 600; border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink);
+}
+.pyrunner-run { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pyrunner-run:disabled, .pyrunner-reset:disabled { opacity: .55; cursor: default; }
+.pyrunner-editor {
+  width: 100%; box-sizing: border-box; border: 0; resize: vertical;
+  padding: 14px 16px; font: 13.5px/1.6 var(--mono); color: var(--ink);
+  background: var(--bg-subtle); tab-size: 4; outline: none; display: block;
+}
+.pyrunner-output {
+  margin: 0; padding: 12px 16px; font: 13px/1.55 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+  background: #0f1320; color: #e6e6e6; border-top: 1px solid var(--border);
+  max-height: 360px; overflow: auto;
+}
+.pyrunner-output.is-error { color: #ff9b9b; }
+.pyrunner-hint { padding: 7px 16px; font-size: 11.5px; color: var(--ink-soft); background: var(--bg); border-top: 1px dashed var(--border); }
+
+.playground-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 6px; }
+.playground-presets-label { font-size: 13px; color: var(--ink-soft); }
+.playground-chip {
+  font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink);
+}
+.playground-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.playground-note { margin-top: 18px; font-size: 13.5px; color: var(--ink-soft); }
+.playground-note a { color: var(--accent-strong); }

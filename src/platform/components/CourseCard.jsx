@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { categoryPath } from '../../catalog/categories.js'
 import { useProgressContext } from '../../context/AppContext.jsx'
+import CourseCover from './CourseCover.jsx'
 
 export default function CourseCard({ course }) {
   const { countFor } = useProgressContext()
@@ -12,8 +13,8 @@ export default function CourseCard({ course }) {
 
   return (
     <Link className="course-card" to={`/course/${meta.slug}`}>
-      <div className="course-card-cover" style={{ '--c': meta.accent }}>
-        <span>{meta.cover}</span>
+      <div className="course-card-cover">
+        <CourseCover course={course} />
       </div>
       <div className="course-card-body">
         <div className="course-card-crumb">{path.map((p) => p.title).join(' › ')}</div>

@@ -1,0 +1,238 @@
+import Lead from '@/components/cards/Lead.jsx'
+import KeyIdea from '@/components/cards/KeyIdea.jsx'
+import Example from '@/components/cards/Example.jsx'
+import Practice from '@/components/cards/Practice.jsx'
+import Callout from '@/components/cards/Callout.jsx'
+import CodeBlock from '@/components/cards/CodeBlock.jsx'
+import Summary from '@/components/cards/Summary.jsx'
+import ACID from '@/courses/mysql-internals/illustrations/ACID.jsx'
+
+const transferSql = `-- 转账：A(id=1) 给 B(id=2) 转 100 元
+-- 整个过程要么全成功，要么全回滚，不允许只扣不加
+
+START TRANSACTION;   -- 等价于 BEGIN，显式开启一个事务
+
+UPDATE account SET balance = balance - 100 WHERE id = 1;
+UPDATE account SET balance = balance + 100 WHERE id = 2;
+
+-- 到这里两条语句的修改都还只在当前事务里可见
+-- 确认无误后提交，修改才真正持久化、对其他会话可见
+COMMIT;
+
+-- 如果中途发现余额不足或程序报错，则整体撤销：
+-- ROLLBACK;`
+
+const savepointSql = `START TRANSACTION;
+
+UPDATE account SET balance = balance - 100 WHERE id = 1;
+SAVEPOINT after_debit;          -- 打一个保存点
+
+UPDATE account SET balance = balance + 100 WHERE id = 2;
+
+ROLLBACK TO SAVEPOINT after_debit;  -- 只回滚到保存点，扣款仍保留
+COMMIT;`
+
+const longTrxSql = `-- 揪出当前最“老”的活跃事务（长事务排查第一步）
+SELECT
+  trx_id,
+  trx_state,
+  trx_started,
+  TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS running_secs,
+  trx_rows_locked,
+  trx_rows_modified,
+  trx_mysql_thread_id
+FROM information_schema.INNODB_TRX
+ORDER BY trx_started ASC;       -- 最早开始的排最前，往往就是元凶
+
+-- 看 undo 历史链有多长（长事务会让它居高不下，拖慢 purge）
+SHOW ENGINE INNODB STATUS\\G    -- 关注 TRANSACTIONS 段的 History list length
+
+-- 找到罪魁线程后，必要时强制干掉它（生产慎用）
+-- KILL <trx_mysql_thread_id>;`
+
+const ddlTrxSql = `-- 坑：DDL 会隐式提交当前事务！
+START TRANSACTION;
+INSERT INTO account VALUES (3, 0);
+CREATE TABLE tmp_t (id INT);   -- ← 这条 DDL 触发隐式 COMMIT，上面的 INSERT 已落地
+ROLLBACK;                       -- 这个 ROLLBACK 回滚不了 INSERT，它早被提交了
+
+-- 结论：事务里别夹 DDL（CREATE/ALTER/DROP/TRUNCATE 等都会隐式提交）`
+
+export default function Ch1() {
+  return (
+    <>
+      <Lead>
+        <p>
+          你写过无数条 <code>UPDATE</code>，但有没有想过：当一条转账要「先扣 A、再加 B」时，万一扣完 A 之后程序崩了怎么办？
+          钱凭空消失了。事务（<em>transaction</em>）就是为了解决这个问题——它把一组操作打包成一个不可分割的整体，
+          要么全部成功，要么全部当作没发生过。这一章我们把事务和它背后的 <em>ACID</em> 四性彻底讲透。
+        </p>
+      </Lead>
+
+      <h2>事务是什么</h2>
+      <p>
+        事务是一组要么<strong>全部成功</strong>、要么<strong>全部回滚</strong>的数据库操作。在 MySQL 里，
+        一个事务由三个关键命令界定：<code>BEGIN</code>（或 <code>START TRANSACTION</code>）开启，
+        <code>COMMIT</code> 提交（让修改永久生效），<code>ROLLBACK</code> 回滚（撤销本事务内的全部修改）。
+      </p>
+      <p>
+        关键在于：在 <code>COMMIT</code> 之前，事务内的修改对其他会话是不可见的，而且随时可以被一笔勾销。
+        这就给了我们一个「安全的暂存区」——可以先做一批互相依赖的改动，确认整体没问题了再一次性落地。
+      </p>
+
+      <Example title="一次转账的两种结局">
+        <p>“A 给 B 转 100 元”由两步组成：A 减 100、B 加 100。事务保证这两步的命运绑在一起。</p>
+        <ul>
+          <li><strong>成功路径</strong>：两条 UPDATE 都执行 → <code>COMMIT</code> → A 少了 100、B 多了 100，账平。</li>
+          <li><strong>失败路径</strong>：第二步出错（比如 B 账户被冻结）→ <code>ROLLBACK</code> → A 的扣款也被撤销，钱没丢。</li>
+        </ul>
+        <p>绝不会出现“A 扣了但 B 没加”这种中间状态对外可见的情况。</p>
+      </Example>
+
+      <ACID />
+
+      <h2>ACID 四性逐条拆解</h2>
+      <p>
+        ACID 是事务的四个保证：原子性（Atomicity）、一致性（Consistency）、隔离性（Isolation）、持久性（Durability）。
+        很多人能背出来，但说不清每一条具体靠什么实现。下面把它和 InnoDB 的内部机制对应起来。
+      </p>
+
+      <h3>原子性（A）：靠 undo log</h3>
+      <p>
+        原子性是说事务内的操作不可分割。InnoDB 在你每次修改数据前，会先把「修改前的旧值」记进 <em>undo log</em>。
+        一旦 <code>ROLLBACK</code> 或事务异常中断，InnoDB 就拿着 undo log 把数据按反向操作逐条还原回去——
+        这就是「撤销」能成立的物理基础。undo log 我们在第 4 章会展开。
+      </p>
+
+      <h3>持久性（D）：靠 redo log</h3>
+      <p>
+        持久性是说一旦 <code>COMMIT</code> 成功，哪怕下一秒断电，数据也不会丢。InnoDB 并不会在提交时立刻把数据页刷到磁盘
+        （那太慢），而是先把「这次改了什么」顺序写进 <em>redo log</em>。重启后即使数据页还没落盘，
+        也能靠 redo log 把已提交的修改重做一遍。这套「先写日志」的思路就是 WAL，同样留到第 4 章细讲。
+      </p>
+
+      <h3>隔离性（I）：靠锁 + MVCC</h3>
+      <p>
+        隔离性是说多个事务并发执行时，彼此不能互相干扰得到错误结果。InnoDB 用两套机制配合实现：
+        <strong>锁</strong>（写写冲突、需要强一致读时用，见第 3 章）和 <em>MVCC</em>（多版本并发控制，让普通读不加锁也能读到一致的快照）。
+        隔离性是四性里最复杂、也最容易踩坑的，第 2 章整章都在讲它。
+      </p>
+
+      <h3>一致性（C）：前三者 + 约束共同保证的目标</h3>
+      <p>
+        一致性不是一个独立机制，而是一个<strong>目标</strong>：事务执行前后，数据始终满足业务与数据库的所有规则
+        （主键唯一、外键有效、余额非负、转账前后总额不变等）。它是由原子性、隔离性、持久性，再加上数据库的约束
+        （constraint）和你自己写的业务逻辑<strong>共同</strong>达成的。换句话说，A、I、D 是手段，C 是结果。
+      </p>
+
+      <Callout variant="note" title="一致性（C）常被误解：它是约束 + 业务共同的产物">
+        <p>
+          很多人以为只要数据库保证了 A、I、D，一致性就自动成立——这是误区。数据库只能守住<strong>它知道的规则</strong>：
+          主键唯一、外键有效、非空约束、CHECK 约束（8.0 起真正生效）。但“转账前后两账户总额不变”“库存不能为负”这类
+          <strong>业务一致性</strong>，数据库并不知道，得靠你在事务里写对逻辑（比如扣库存时加 <code>WHERE stock {'>='} qty</code> 判断）。
+          所以一致性是“数据库约束 + 你的业务代码 + A/I/D 机制”三者合力的结果，缺哪一环都可能破坏一致性。
+        </p>
+      </Callout>
+
+      <KeyIdea title="四性的分工">
+        <p>
+          记住这条对应关系，ACID 就不再是死记硬背：<strong>原子性由 undo log 实现，持久性由 redo log 实现，
+          隔离性由锁和 MVCC 实现，而一致性是前三者加约束共同守护的最终目标</strong>。后面三章正好分别展开隔离性（锁与 MVCC）和日志（redo 与 undo）。
+        </p>
+      </KeyIdea>
+
+      <h2>自动提交：你可能一直在用却没注意</h2>
+      <p>
+        MySQL 默认开启 <em>autocommit</em>：每一条单独的 SQL 都被自动包成一个事务并立即提交。这就是为什么你平时
+        随手敲一条 <code>UPDATE</code> 不用 <code>COMMIT</code> 也能生效——它已经被自动提交了。
+      </p>
+      <p>
+        当你显式执行 <code>BEGIN</code> / <code>START TRANSACTION</code> 时，autocommit 会临时让位，
+        直到你 <code>COMMIT</code> 或 <code>ROLLBACK</code> 才结束。你也可以用 <code>SET autocommit = 0</code> 整体关掉它，
+        之后每条语句都需要手动提交。
+      </p>
+
+      <h3>隐式提交：这些语句会偷偷结束你的事务</h3>
+      <p>
+        一个隐蔽的坑：并非所有语句都受事务控制。<strong>DDL（<code>CREATE</code>/<code>ALTER</code>/<code>DROP</code>/<code>TRUNCATE</code>）、
+        以及 <code>LOCK TABLES</code>、再次 <code>START TRANSACTION</code> 等语句，会触发隐式提交</strong>——
+        把当前事务里已执行的修改直接 COMMIT 掉。所以如果你在事务中间夹了一条 <code>CREATE TABLE</code>，
+        之后的 <code>ROLLBACK</code> 是回滚不了前面那些 DML 的，它们早被隐式提交了。记住：<strong>事务里只放 DML，别夹 DDL</strong>。
+      </p>
+      <CodeBlock lang="sql" title="ddl_implicit_commit.sql" code={ddlTrxSql} />
+
+      <Callout variant="warn" title="忘记提交 / 长事务的代价">
+        <p>
+          关掉 autocommit 又忘了 <code>COMMIT</code>，是线上最隐蔽的坑之一：你的修改对别人不可见，而且这个事务持有的锁和
+          undo 版本会一直挂着。长时间不提交的<strong>长事务</strong>会撑大 undo log、阻塞其他事务、拖慢 MVCC 的版本清理（purge），
+          严重时表面现象就是「明明没几条 SQL，数据库却越来越慢」。养成「开事务必有明确终点」的习惯。
+        </p>
+      </Callout>
+
+      <h2>顺带一提：保存点 SAVEPOINT</h2>
+      <p>
+        在一个事务内部，你还可以用 <code>SAVEPOINT name</code> 打标记，之后 <code>ROLLBACK TO SAVEPOINT name</code>
+        可以只回滚到该标记处，而不撤销整个事务。它适合长流程里「局部重试」，日常用得不多，知道有这个能力即可。
+      </p>
+      <CodeBlock lang="sql" title="savepoint.sql" code={savepointSql} />
+
+      <Example title="一次长事务引发的全站雪崩">
+        <p>
+          某服务上线一个“批量导出”功能：开一个事务，循环 5 万次，每次查一条、调一次外部 HTTP 接口拼数据，最后统一提交。
+          上线后数据库 CPU 不高，但写接口大面积超时。排查：
+        </p>
+        <ul>
+          <li><code>information_schema.INNODB_TRX</code> 里有个事务已经跑了 600 秒还没提交（卡在等外部 HTTP）。</li>
+          <li>它持有的行锁迟迟不放，后面的更新全在排队；同时它撑着 undo 版本链不让 purge，<code>History list length</code> 涨到几百万。</li>
+        </ul>
+        <p>
+          修复：把外部调用<strong>移出事务</strong>，先在事务外把数据查好、调好，事务里只做最后那一下写入并立刻提交。
+          铁律：<strong>事务里绝不能有网络 IO、用户交互、sleep 这类不可控的等待</strong>。
+        </p>
+      </Example>
+
+      <Callout variant="note" title="高频面试追问">
+        <ul>
+          <li><strong>“事务的四大特性各自靠什么实现？”</strong>——原子性 undo log、持久性 redo log、隔离性 锁+MVCC、一致性 是前三者+约束的结果（标准答案，务必能脱口而出）。</li>
+          <li><strong>“autocommit 关了忘提交会怎样？”</strong>——修改对别人不可见、长期持锁、撑大 undo，是最隐蔽的线上事故源。</li>
+          <li><strong>“为什么长事务危险？”</strong>——持锁久阻塞他人 + undo 链无法回收拖慢 MVCC purge + 回滚段膨胀占空间，三重危害。</li>
+        </ul>
+      </Callout>
+
+      <h2>这对实际开发意味着什么</h2>
+      <p>
+        凡是「多步修改必须同生共死」的场景——下单扣库存、转账、积分变动配合订单状态——都必须放进同一个事务，
+        而不是寄希望于「应用层一步步执行不出错」。同时要警惕事务边界：把不相干的远程调用、慢查询、用户交互塞进事务里，
+        会无谓地拉长事务、放大锁竞争。原则是<strong>事务要小、要快、要有明确的提交或回滚出口</strong>。
+      </p>
+      <p>
+        线上排查长事务的第一招，就是查 <code>INNODB_TRX</code> 按开始时间升序排，最老的那个往往就是元凶；
+        再结合 <code>History list length</code> 判断 undo 是否在堆积。
+      </p>
+      <CodeBlock lang="sql" title="long_trx.sql" code={longTrxSql} />
+
+      <Practice title="亲手跑一遍转账事务">
+        <p>
+          建一张 <code>account</code> 表，初始化两条余额，然后分别走「提交」和「回滚」两条路径，对比最终余额，
+          体会 <code>COMMIT</code> 与 <code>ROLLBACK</code> 的差别。
+        </p>
+        <CodeBlock lang="sql" title="transfer.sql" code={transferSql} />
+        <p>
+          再试一个反例：执行第一条 <code>UPDATE</code> 后<strong>先别提交</strong>，开另一个客户端连接去查这条记录，
+          你会发现别的会话看到的还是旧余额——这正是隔离性在起作用，也是下一章的主题。
+        </p>
+      </Practice>
+
+      <Summary
+        points={[
+          '事务是一组要么全部成功、要么全部回滚的操作，由 BEGIN/START TRANSACTION、COMMIT、ROLLBACK 界定。',
+          '原子性靠 undo log（记录反向操作以撤销），持久性靠 redo log（先写日志保证已提交数据崩溃不丢）。',
+          '隔离性靠锁 + MVCC 实现；一致性不是独立机制，而是前三者加上约束共同守护的最终目标。',
+          'MySQL 默认开启 autocommit，单条 SQL 自动成事务并提交；显式 BEGIN 后须手动 COMMIT/ROLLBACK。',
+          '长事务和忘记提交会撑大 undo、长期持锁、拖慢系统，事务要小而快、出口明确。',
+          'SAVEPOINT 可在事务内部分回滚到某个标记处，适合长流程局部重试。',
+        ]}
+      />
+    </>
+  )
+}

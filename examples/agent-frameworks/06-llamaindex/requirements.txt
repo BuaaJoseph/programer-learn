@@ -1,0 +1,3 @@
+llama-index>=0.12.0
+llama-index-llms-openai-like>=0.3.0
+llama-index-embeddings-dashscope>=0.3.0

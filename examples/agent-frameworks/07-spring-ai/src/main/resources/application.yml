@@ -1,0 +1,12 @@
+spring:
+  ai:
+    openai:
+      api-key: ${DASHSCOPE_API_KEY}
+      # ⚠ 关键坑：base-url 只写到 compatible-mode 为止，不要带 /v1。
+      # Spring AI 的 OpenAI client 默认会拼 completions-path = /v1/chat/completions，
+      # 最终请求 = base-url + completions-path = .../compatible-mode/v1/chat/completions（正确）。
+      # 若 base-url 写成 .../compatible-mode/v1，会拼成 .../v1/v1/chat/completions → 404。
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      chat:
+        options:
+          model: qwen-plus

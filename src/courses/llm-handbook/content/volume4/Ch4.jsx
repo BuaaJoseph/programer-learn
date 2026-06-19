@@ -59,6 +59,66 @@ def safe_call(fn, args, schema, *, timeout=10, max_retries=3):
     # ④ 兜底降级：重试都用完仍失败，返回一个安全的降级结果
     return {'ok': False, 'kind': 'degraded', 'message': '工具暂不可用，已降级，请稍后再试或换方案'}`
 
+const circuitCode = `import time
+
+class CircuitBreaker:
+    '''熔断器：一个依赖连续失败到一定次数，就「跳闸」一段时间，
+    期间直接快速失败，不再徒劳调用 —— 避免雪崩，也省 token 和延迟。'''
+    def __init__(self, fail_threshold=5, cooldown=30):
+        self.fail_threshold = fail_threshold
+        self.cooldown = cooldown
+        self.fails = 0
+        self.open_until = 0.0          # 跳闸状态的截止时间
+
+    def allow(self):
+        # 在冷却期内：拒绝调用，快速失败
+        if time.time() < self.open_until:
+            return False
+        return True
+
+    def record(self, ok):
+        if ok:
+            self.fails = 0             # 成功一次就清零，闸门恢复
+        else:
+            self.fails += 1
+            if self.fails >= self.fail_threshold:
+                self.open_until = time.time() + self.cooldown   # 跳闸
+
+# 用法：调用前先 allow()，调用后 record(成功与否)
+breaker = CircuitBreaker()
+def guarded_call(fn, args):
+    if not breaker.allow():
+        return {'ok': False, 'kind': 'degraded', 'message': '该依赖暂时熔断，已跳过'}
+    res = safe_call(fn, args, schema={})
+    breaker.record(res['ok'])
+    return res`
+
+const observeCode = `import logging, time, uuid
+
+log = logging.getLogger('agent')
+
+def traced_tool(name, fn):
+    '''给每次工具调用打结构化日志：可观测性是排障的前提。
+    没有 trace，线上出问题你连「哪一步、为什么失败」都无从查起。'''
+    def wrapper(args):
+        trace_id = uuid.uuid4().hex[:8]
+        t0 = time.time()
+        log.info('tool_start', extra={'trace': trace_id, 'tool': name, 'args': args})
+        try:
+            res = fn(args)
+            log.info('tool_ok', extra={
+                'trace': trace_id, 'tool': name,
+                'ms': int((time.time() - t0) * 1000),
+            })
+            return res
+        except Exception as e:
+            log.error('tool_fail', extra={
+                'trace': trace_id, 'tool': name, 'err': str(e),
+                'ms': int((time.time() - t0) * 1000),
+            })
+            raise
+    return wrapper`
+
 export default function Ch4_4() {
   return (
     <>
@@ -86,6 +146,29 @@ export default function Ch4_4() {
           而且要用<em>指数退避</em>（exponential backoff），别一窝蜂猛打。
         </li>
       </ul>
+      <p>
+        为什么这个区分如此关键？因为<strong>用错打法的代价是对称放大的</strong>。把模型的错当环境的错去重试，会陷入死循环：
+        模型每次都填同样的越界参数，你每次都重试、每次都失败，白白烧 token 还卡住任务。反过来，把环境的错当模型的错去回灌，
+        模型会一脸茫然——它根本修不了别人服务器的 503，只能瞎改参数或干脆放弃。所以分类不是洁癖，而是<strong>决定 Agent 能否自愈</strong>的分水岭。
+      </p>
+      <table>
+        <thead>
+          <tr><th></th><th>模型的错</th><th>环境的错</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>典型表现</td><td>参数越界、调错/调不存在的工具</td><td>超时、429 限流、5xx</td></tr>
+          <tr><td>根因</td><td>模型的决策</td><td>下游服务的瞬时状态</td></tr>
+          <tr><td>重试有用吗</td><td>无用，结果一样</td><td>有用，下次可能就成</td></tr>
+          <tr><td>正确打法</td><td>回灌自解释错误，让模型自改</td><td>指数退避 + 抖动，原地重试</td></tr>
+          <tr><td>用错的后果</td><td>当环境错重试 → 死循环烧钱</td><td>当模型错回灌 → 模型茫然乱改</td></tr>
+        </tbody>
+      </table>
+      <p>
+        实践中还有第三类容易被忽略：<strong>下游持续不可用</strong>——不是抖动，而是真的挂了。这时一味退避重试反而拖慢一切。
+        正确的应对是<strong>熔断</strong>（circuit breaker）：某个依赖连续失败到阈值就「跳闸」，一段时间内直接快速失败、不再尝试，
+        等冷却期过了再放行试探。它把「瞬时故障重试」和「持续故障躲开」区分开，避免一个挂掉的依赖拖垮整条链路。
+      </p>
+      <CodeBlock lang="python" title="circuit_breaker.py" code={circuitCode} />
 
       <Example title="同样是“失败”，处理方式南辕北辙">
         <p>
@@ -126,6 +209,16 @@ export default function Ch4_4() {
         好的错误信息，是 Agent 自我修复能力的燃料。
       </p>
 
+      <Callout variant="info" title="可观测性：出事后你能查到吗">
+        <p>
+          容错让 Agent 不崩，但崩没崩之外，你还得知道<strong>它每一步到底干了什么</strong>。Agent 是非确定性的——同一个问题
+          两次跑可能走不同路径，线上出问题时如果没有日志，你连复现都做不到。所以每次工具调用都该打一条结构化日志：
+          带上 trace id（串起一次任务的所有步骤）、工具名、参数、耗时、成功与否。这点投入在排障时会成倍回报：
+          没有 trace，「Agent 偶尔答错」这种 bug 你根本无从下手。
+        </p>
+        <CodeBlock lang="python" title="traced_tool.py" code={observeCode} />
+      </Callout>
+
       <h2>这对做 Agent / 工程实践意味着什么</h2>
       <p>
         别把容错逻辑散落在每个工具里——抽一个<strong>统一的执行封装</strong>（下面的 <code>safe_call</code>），
@@ -142,6 +235,11 @@ export default function Ch4_4() {
         <p>
           把它接到第 3 章的 ReAct 循环里：<code>model_error</code> 和 <code>degraded</code> 的结果都作为观察回灌给模型，
           让它要么修正参数、要么换个方案。跑几次故意触发超时和越界，看看 Agent 是不是还能稳稳地走完。
+        </p>
+        <p>
+          进阶练习：在 <code>safe_call</code> 外面再包一层熔断器，模拟一个「连续返回 503」的工具，观察熔断器跳闸后
+          调用是如何被快速短路掉、不再徒劳重试的；再给每次调用加上结构化日志，事后用同一个 trace id 把一次任务的
+          完整轨迹串起来看。这两样——熔断和可观测——是 demo 级 Agent 和生产级 Agent 之间真正的分水岭。
         </p>
       </Practice>
 

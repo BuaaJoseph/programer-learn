@@ -77,6 +77,53 @@ def run_react(question, tools, registry, max_iterations=8):
     # 停止条件 2：到达上限仍未收敛 → 兜底，避免无限循环烧钱
     return '已达到最大迭代次数，未能得到最终答复'`
 
+const compactCode = `# 长任务历史压缩：保留头尾，把中间的旧轮次摘要成一条
+def compact_history(messages, keep_recent=4, summarizer=None):
+    # 永远保留 system / 最初的用户问题（头部）
+    head = [m for m in messages[:2]]
+    # 保留最近几轮（尾部）—— 当前推理最依赖它们
+    tail = messages[-keep_recent:]
+    middle = messages[2:-keep_recent]
+    if not middle:
+        return messages                      # 还不够长，不必压缩
+
+    # 把中间的旧观察压成一段摘要，换回大量 token
+    summary_text = summarizer(middle)        # 通常再调一次小模型来做摘要
+    summary_msg = {
+        'role': 'system',
+        'content': f'【前几轮要点摘要】{summary_text}',
+    }
+    return head + [summary_msg] + tail
+
+# 触发时机：当 token 估算接近上下文窗口的某个比例（如 70%）时再压，别每轮都压`
+
+const budgetCode = `# 给循环装上「预算」：不只是限轮数，还限 token 和耗时
+import time
+
+def run_with_budget(question, tools, registry,
+                    max_iterations=8, max_tokens=20000, max_seconds=30):
+    messages = [{'role': 'user', 'content': question}]
+    used_tokens = 0
+    t0 = time.time()
+
+    for step in range(max_iterations):
+        # 三道闸门，任意一道触发就停 —— 防止失控任务拖垮成本与延迟
+        if used_tokens > max_tokens:
+            return '已超出 token 预算，提前收尾'
+        if time.time() - t0 > max_seconds:
+            return '已超出时间预算，提前收尾'
+
+        resp = client.chat.completions.create(
+            model='gpt-4o-mini', messages=messages, tools=tools,
+        )
+        used_tokens += resp.usage.total_tokens   # 累计真实消耗
+        msg = resp.choices[0].message
+        messages.append(msg)
+        if not msg.tool_calls:
+            return msg.content
+        # ... 执行工具、回灌（同前）...
+    return '已达最大迭代次数'`
+
 export default function Ch4_3() {
   return (
     <>
@@ -103,6 +150,13 @@ export default function Ch4_3() {
         第 N 轮调用模型时，你喂进去的不只是最初的问题，而是「问题 + 前面每一轮的思考、工具调用、工具结果」全都带上。
         模型没有记忆，它能「连贯地推进任务」纯粹是因为你每轮都把完整历史重新喂给它。
       </p>
+      <p>
+        这一点值得反复强调，因为它颠覆很多人的直觉：模型在两轮之间<strong>什么都不记得</strong>。它不是一个有状态的进程，
+        不会「记住」上一步查到了什么。每一次 API 调用都是<strong>无状态</strong>的——你给它什么历史，它就基于什么历史回答，
+        调用结束它就「失忆」了。所谓 Agent 的「记忆」「连贯」「目标感」，全都是由 transcript 这个外部数据结构承载的，
+        而维护这个数据结构的，是你的循环代码。换句话说：<strong>状态在你手里，不在模型里。</strong>这个认知是写对 Agent 的前提——
+        一旦你把它当成「有记忆的对话伙伴」，就会在历史管理上踩一连串坑。
+      </p>
 
       <Callout variant="warn" title="transcript 越滚越长，token 成本是非线性的">
         <p>
@@ -115,6 +169,16 @@ export default function Ch4_3() {
           <li>长任务要考虑截断/摘要历史、只保留关键观察，否则后期每一轮都在为前面的啰嗦买单。</li>
         </ul>
       </Callout>
+      <p>
+        更糟的是，token 膨胀不只是花钱问题，还撞上<strong>上下文窗口的硬上限</strong>。一旦累积历史超过模型的窗口，
+        要么报错、要么被静默截断（更危险，因为你可能没察觉关键信息被切掉了）。所以长任务必须主动管理历史。最常见的手段是
+        <strong>历史压缩</strong>：保留 system 提示和最初的问题（头部）、保留最近几轮（尾部，当前推理最依赖它们），
+        把中间一大堆旧观察用一次额外的模型调用<strong>摘要</strong>成一小段，换回大量 token。下面是一个朴素的实现。
+      </p>
+      <CodeBlock lang="python" title="compact_history.py" code={compactCode} />
+      <p>
+        压缩的时机也有讲究：别每轮都压（摘要本身也要花钱和时间），而是等估算 token 接近窗口的某个阈值（比如 70%）才触发。
+        头尾保留、中间摘要，是因为任务的「目标」在头部、「当前进展」在尾部，中间的探索过程往往可以浓缩。</p>
 
       <h3>循环控制：四件必须做对的事</h3>
       <p>
@@ -138,6 +202,22 @@ export default function Ch4_3() {
           也别把答复误当成还要执行工具。原生 function-calling 把这两者用结构区分开，省去了猜。
         </li>
       </ul>
+      <p>
+        实践中，仅靠「限轮数」往往不够。一个任务可能在 8 轮内就把 token 烧爆，或者单轮工具执行卡住几十秒。
+        更稳妥的做法是给循环装上<strong>多维预算</strong>：同时限制迭代轮数、累计 token、总耗时，任意一道闸门触发就提前收尾。
+        这在面对用户付费、有 SLA 要求的线上服务时尤为重要——你不能让一个失控的 Agent 既拖慢响应又烧穿成本。
+      </p>
+      <CodeBlock lang="python" title="run_with_budget.py" code={budgetCode} />
+      <table>
+        <thead>
+          <tr><th>闸门</th><th>防住什么</th><th>典型取值</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>max_iterations</td><td>逻辑死循环、反复查同一类信息</td><td>5~10 轮</td></tr>
+          <tr><td>max_tokens</td><td>历史膨胀烧穿成本、撞上下文窗口</td><td>按预算与窗口定</td></tr>
+          <tr><td>max_seconds</td><td>慢工具拖垮响应、违反 SLA</td><td>按延迟要求定</td></tr>
+        </tbody>
+      </table>
 
       <Example title="两种实现风格：原始 ReAct vs 原生 function-calling">
         <p>
