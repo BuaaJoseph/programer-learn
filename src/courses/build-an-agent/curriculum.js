@@ -115,6 +115,22 @@ export const VOLUMES = [
       { slug: 'ba8-c4', title: '毕业项目：用 forge 改造 forge', topic: '毕业项目', hook: '终极验证：用你亲手造的 forge，去给 forge 自己加一个新功能。它能自举，你就毕业了。', minutes: 150, hasContent: true },
     ],
   },
+  {
+    id: 'ba9',
+    index: 9,
+    title: '进阶：对照 DeerFlow 补齐生产级能力',
+    subtitle: 'Production Gaps, Filled',
+    theme: '以字节开源框架 DeerFlow 的真实实现为蓝本，给 forge 补上前八卷欠缺的那些「敢放生产」的能力：先把主循环重构成可插拔的中间件架构，再依次补上沙箱隔离、澄清即中断、失控护栏、工具输出预算、学习型记忆与技能系统——让 forge 从「能跑的编码 Agent」长成一套结构清晰的 agent harness。',
+    chapters: [
+      { slug: 'ba9-c1', title: '中间件架构：把主循环重构成可插拔钩子链', topic: '中间件架构', hook: '主循环正在变成一坨泥球。学 DeerFlow 把所有「业务智能」拆成 beforeAgent/beforeModel/afterModel/wrapTool 四个钩子的中间件，主循环只负责转圈。', minutes: 150, hasContent: true },
+      { slug: 'ba9-c2', title: '沙箱与路径安全：给工具执行套上围栏', topic: '沙箱', hook: 'forge 的写/执行工具直接跑在你主机上。照搬 DeerFlow「本地执行不是安全边界」的判断：路径围栏拒绝逃逸、host bash 默认禁用、输出遮蔽真实路径。', minutes: 150, hasContent: true },
+      { slug: 'ba9-c3', title: '澄清即中断：ask_user 与「先澄清后行动」', topic: '澄清/HITL', hook: '遇到模糊需求别瞎猜。把澄清做成「工具+中断中间件」两段式：工具是空壳信号，中间件真正拦下并暂停，外加 system prompt 的澄清纪律。', minutes: 120, hasContent: true },
+      { slug: 'ba9-c4', title: '失控护栏：循环检测、悬空修复与错误自愈', topic: '安全护栏', hook: '会自己转圈的 Agent 也会自己卡死。一次补齐四道护栏：工具调用哈希的循环检测、悬空 tool_use 修复、工具错误转 tool_result、LLM 重试退避。', minutes: 150, hasContent: true },
+      { slug: 'ba9-c5', title: '工具输出预算：超大输出落盘 + 紧凑预览', topic: '输出预算', hook: '自动压缩治不了「单次工具吐回十万行」。在 wrapTool 出口拦截：超限就把完整输出落盘、只留预览+文件引用，把看全文的决定权交还模型。', minutes: 120, hasContent: true },
+      { slug: 'ba9-c6', title: '学习型记忆：LLM 归纳的持久用户记忆', topic: '学习型记忆', hook: 'AGENTS.md 是静态记忆、不会学习。补一套学习型记忆：任务后后台 LLM 把对话归纳成结构化记忆，每轮注入为「系统提醒」（而非 system prompt，为了 prefix-cache）。', minutes: 150, hasContent: true },
+      { slug: 'ba9-c7', title: '技能系统：SKILL.md 渐进式加载与 /skill 激活', topic: '技能', hook: '把团队的领域知识做成技能。渐进加载：system prompt 只放技能目录，模型用到才 read_file 正文；/skill-name 显式激活确定性内联整份正文。', minutes: 150, hasContent: true },
+    ],
+  },
 ]
 
 export const FLAT_CHAPTERS = VOLUMES.flatMap((vol) =>
