@@ -7,7 +7,7 @@ export const meta = {
   subCategoryId: 'dev',
   level: '源码',
   cover: '🦌',
-  coverScene: 'frameworks',
+  coverScene: 'deerflow',
   accent: '#c2410c',
   pricing: 'free',
   description:

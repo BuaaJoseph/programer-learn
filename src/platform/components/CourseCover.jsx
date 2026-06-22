@@ -75,6 +75,8 @@ export default function CourseCover({ course }) {
         <ForgeScene />
       ) : coverScene === 'frameworks' ? (
         <FrameworksScene />
+      ) : coverScene === 'deerflow' ? (
+        <DeerFlowScene />
       ) : coverScene === 'react' ? (
         <ReactScene />
       ) : coverScene === 'vue' ? (
@@ -609,6 +611,65 @@ function FrameworksScene() {
       <circle cx={hub.x} cy={hub.y} r="34" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.4" />
       <text x={hub.x} y={hub.y - 2} textAnchor="middle" fontFamily="var(--display)" fontSize="13" fontWeight="700" fill="#ffffff">Qwen</text>
       <text x={hub.x} y={hub.y + 12} textAnchor="middle" fontFamily="var(--mono)" fontSize="7.5" fill="#ffffff" fillOpacity="0.85">百炼后端</text>
+    </g>
+  )
+}
+
+function DeerFlowScene() {
+  // DeerFlow 架构隐喻：网关在上 → 中心 lead agent 外裹一圈中间件 → 底部 工具/子代理/沙箱。
+  const hub = { x: 200, y: 100 }
+  // 围绕中心的一圈「中间件」刻度
+  const ring = Array.from({ length: 12 }, (_, i) => {
+    const a = (Math.PI * 2 * i) / 12 - Math.PI / 2
+    return { x: hub.x + Math.cos(a) * 46, y: hub.y + Math.sin(a) * 46, a }
+  })
+  const leaves = [
+    { x: 96, y: 168, t: 'Tools' },
+    { x: 200, y: 176, t: 'Subagent' },
+    { x: 304, y: 168, t: 'Sandbox' },
+  ]
+  return (
+    <g fontFamily="var(--mono)">
+      {/* 顶部：网关 */}
+      <rect x="150" y="22" width="100" height="24" rx="7" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+      <text x="200" y="38" textAnchor="middle" fontSize="9.5" fill="#ffffff">Gateway · SSE</text>
+      <line x1="200" y1="46" x2="200" y2="58" stroke="#ffffff" strokeOpacity="0.45" strokeWidth="1.3" />
+
+      {/* 中间件环刻度 */}
+      <g>
+        {ring.map((p, i) => (
+          <rect
+            key={i}
+            x={p.x - 4.5}
+            y={p.y - 4.5}
+            width="9"
+            height="9"
+            rx="2"
+            fill="#ffffff"
+            fillOpacity="0.5"
+            transform={`rotate(${(p.a * 180) / Math.PI + 90} ${p.x} ${p.y})`}
+          />
+        ))}
+        <circle cx={hub.x} cy={hub.y} r="46" fill="none" stroke="#ffffff" strokeOpacity="0.28" strokeWidth="1" strokeDasharray="3 4" />
+      </g>
+
+      {/* 中心：lead agent */}
+      <circle cx={hub.x} cy={hub.y} r="32" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.65" strokeWidth="1.4" />
+      <text x={hub.x} y={hub.y - 1} textAnchor="middle" fontFamily="var(--display)" fontSize="12.5" fontWeight="700" fill="#ffffff">lead</text>
+      <text x={hub.x} y={hub.y + 12} textAnchor="middle" fontSize="8" fill="#ffffff" fillOpacity="0.9">agent</text>
+
+      {/* 底部：执行层 */}
+      <g stroke="#ffffff" strokeOpacity="0.32" strokeWidth="1.2">
+        {leaves.map((n, i) => (
+          <line key={i} x1={hub.x} y1={hub.y + 32} x2={n.x} y2={n.y - 12} />
+        ))}
+      </g>
+      {leaves.map((n, i) => (
+        <g key={i}>
+          <rect x={n.x - 33} y={n.y - 12} width="66" height="24" rx="7" fill="#ffffff" fillOpacity="0.14" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+          <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize="9" fill="#ffffff">{n.t}</text>
+        </g>
+      ))}
     </g>
   )
 }
