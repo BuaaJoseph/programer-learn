@@ -96,11 +96,13 @@ export const VOLUMES = [
   {
     id: 'df8',
     index: 8,
-    title: '附录：提示词全集（System Prompts）',
-    subtitle: 'The Prompt Sheet',
-    theme: '把 deer-flow 各环节用到的系统提示词集中起来、全部译成中文，并讲清「静态模板 + 每轮动态注入」是如何根据用户输入与配置组装的。这是一张可随时查阅的提示词速查表。',
+    title: '附录：提示词全集与实战拆解',
+    subtitle: 'Prompts & A Worked Trace',
+    theme: '把 deer-flow 各环节用到的系统提示词全部扒下来、逐字译成中文（含主链路、后台 LLM、工具描述与中间件注入文本），讲清「静态模板 + 每轮动态注入」的组装规则；最后用一个真实 case，把一次对话内部的状态流转、LLM 调用、子代理执行完整拆给你看。',
     chapters: [
-      { slug: 'df8-c1', title: '提示词全集：各环节系统提示词（中文）与动态组装', topic: '提示词', hook: '主智能体大模板、每轮动态注入（记忆/日期/上传/技能激活）、子代理编排段与子代理自身提示词、澄清、记忆更新、标题、摘要、TODO——逐段中文翻译 + 组装规则。', minutes: 150, hasContent: true },
+      { slug: 'df8-c1', title: '提示词全集（一）：交互主链路提示词', topic: '提示词·主链路', hook: '主智能体大模板（全文）、完整的子代理编排段、技能段与 /skill 激活、子代理自身提示词、每轮动态注入——逐段中文翻译 + 组装规则。', minutes: 150, hasContent: true },
+      { slug: 'df8-c2', title: '提示词全集（二）：后台 LLM、工具描述与中间件注入', topic: '提示词·后台/工具', hook: '记忆更新与事实抽取、标题/摘要/建议、安全扫描、tool_search；以及喂给模型的工具描述（task/ask_clarification/沙箱七件套等）和各中间件向对话里注入的文本——逐条扒全译中。', minutes: 150, hasContent: true },
+      { slug: 'df8-c3', title: '实战拆解：一次对话内部到底发生了什么', topic: '实战·全流程', hook: '以「上传 CSV 让它分析并出报告」为例，逐步拆解状态流转（ThreadState）→ 多次 LLM 调用 → 子代理并行执行 → SSE 事件时间线 → 收尾与记忆更新。', minutes: 150, hasContent: true },
     ],
   },
 ]
