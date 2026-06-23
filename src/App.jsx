@@ -1,6 +1,8 @@
 import { BrowserRouter, HashRouter, Routes, Route } from 'react-router-dom'
 import { AppProvider } from './context/AppContext.jsx'
 import { AuthProvider } from './shared/AuthContext.jsx'
+import LoginModal from './components/auth/LoginModal.jsx'
+import SetPasswordModal from './components/auth/SetPasswordModal.jsx'
 import Home from './platform/pages/Home.jsx'
 import Browse from './platform/pages/Browse.jsx'
 import CourseLanding from './platform/pages/CourseLanding.jsx'
@@ -33,6 +35,8 @@ export default function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Router>
+        <LoginModal />
+        <SetPasswordModal />
       </AppProvider>
     </AuthProvider>
   )
