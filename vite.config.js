@@ -7,6 +7,15 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig({
   base: process.env.CAP_BUILD ? './' : '/',
   plugins: [react()],
+  // 开发期把 /api 代理到本地鉴权后端，前端无需关心跨域。
+  server: {
+    proxy: {
+      '/api': {
+        target: process.env.API_TARGET || 'http://localhost:8787',
+        changeOrigin: true,
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

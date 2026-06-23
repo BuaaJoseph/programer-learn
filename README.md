@@ -47,7 +47,12 @@ WAL 日志流程、MVCC 版本链 + ReadView）——共 **4 卷 12 章**。
 
 没有引入任何 UI 库、CSS 框架、状态管理库或 Markdown 库。样式为手写 CSS + 设计令牌
 （见 `src/styles/`），章节正文为手写的 React 组件，通过 `React.lazy` 按需加载。
-学习进度按 `课程/章节` 复合键记录在浏览器 `localStorage`。登录/支付后端尚未接入，仅预留接口。
+学习进度按 `课程/章节` 复合键记录在浏览器 `localStorage`。
+
+登录已接入轻量后端（`server/`，Express + Node 内置 SQLite）：支持**邮箱 + 验证码**与
+**邮箱 + 密码**两种方式，发码前有图形验证码、同邮箱 60s 限流、验证码 10min 有效，
+密码用 scrypt 加盐哈希存储（不存原文）。详见 [`server/README.md`](server/README.md)。
+支付后端仍为预留接口。
 
 ## 本地运行
 
