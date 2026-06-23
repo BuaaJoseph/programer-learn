@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "node server/index.js",
-    "server:dev": "node --watch server/index.js",
-    "db:init": "node server/scripts/init-db.js",
+    "server": "node --env-file-if-exists=.env server/index.js",
+    "server:dev": "node --env-file-if-exists=.env --watch server/index.js",
+    "db:init": "node --env-file-if-exists=.env server/scripts/init-db.js",
     "build": "npm run db:init && vite build",
     "preview": "vite preview",
     "build:app": "CAP_BUILD=1 vite build",
