@@ -93,6 +93,8 @@ export default function CourseCover({ course }) {
         <JavaCupScene />
       ) : coverScene === 'python' ? (
         <PythonScene />
+      ) : coverScene === 'algos' ? (
+        <AlgosScene />
       ) : (
         <AttentionScene />
       )}
@@ -862,6 +864,36 @@ function PythonScene() {
         <circle cx="30" cy="40" r="3.4" fill="#0f1320" />
       </g>
       <text x={cx} y="182" textAnchor="middle" fontFamily="var(--mono)" fontSize="13" fill="#ffffff" fillOpacity="0.9">{'>>> print("Hi")'}</text>
+    </g>
+  )
+}
+
+function AlgosScene() {
+  // 左：一组待排序的柱子（高低不一）；右：一棵小树 + 遍历高亮，点题「数据结构 + 算法」。
+  const bars = [26, 54, 38, 70, 46, 90, 62]
+  const tnodes = [[326, 56], [292, 104], [360, 104], [326, 150]]
+  const tedges = [[0, 1], [0, 2], [1, 3]]
+  return (
+    <g fontFamily="var(--mono)">
+      {/* 柱状图（排序隐喻） */}
+      <g>
+        {bars.map((h, i) => (
+          <rect key={i} x={40 + i * 26} y={150 - h} width="18" height={h} rx="3" fill="#ffffff" fillOpacity={0.35 + (i / bars.length) * 0.5} />
+        ))}
+        <line x1="34" y1="150" x2="226" y2="150" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.4" />
+        <text x="40" y="170" fontSize="10" fill="#ffffff" fillOpacity="0.75">sort</text>
+      </g>
+      {/* 小树（遍历隐喻） */}
+      <g stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.5">
+        {tedges.map(([a, b], i) => <line key={i} x1={tnodes[a][0]} y1={tnodes[a][1]} x2={tnodes[b][0]} y2={tnodes[b][1]} />)}
+      </g>
+      {tnodes.map(([x, y], i) => (
+        <g key={i}>
+          <circle cx={x} cy={y} r="15" fill="#ffffff" fillOpacity={i === 0 ? 0.9 : 0.2} stroke="#ffffff" strokeOpacity="0.7" strokeWidth="1.4" />
+          <text x={x} y={y + 4} textAnchor="middle" fontSize="11" fontWeight="700" fill={i === 0 ? '#0f1320' : '#ffffff'}>{i + 1}</text>
+        </g>
+      ))}
+      <text x="284" y="172" fontSize="10" fill="#ffffff" fillOpacity="0.75">traverse</text>
     </g>
   )
 }

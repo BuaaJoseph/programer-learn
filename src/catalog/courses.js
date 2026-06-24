@@ -30,6 +30,7 @@ import javaBasics from '../courses/java-basics/index.js'
 import messageQueue from '../courses/message-queue/index.js'
 import netty from '../courses/netty/index.js'
 import pythonTutorial from '../courses/python-tutorial/index.js'
+import algorithms from '../courses/algorithms/index.js'
 
 export const COURSES = [
   llmHandbook,
@@ -53,6 +54,7 @@ export const COURSES = [
   zookeeper,
   nginx,
   elasticsearch,
+  algorithms,
   network,
   os,
   designPatterns,
