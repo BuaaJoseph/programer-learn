@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import CodeEditor from './components/CodeEditor.jsx'
 import { chatStream, chatOnce, getInterviewConfig, synthesizeSpeech, transcribeSpeech } from './lib/api.js'
-import { loadConfig, buildSystemPrompt, STAGES } from './lib/session.js'
+import { loadConfig, buildSystemPrompt, STAGES, parseStageTag, STAGE_INDEX } from './lib/session.js'
 import {
   buildReportPrompt, parseReport, renderReportHtml, downloadHtml, openHtml, gradeMeta,
 } from './lib/report.js'
@@ -157,7 +157,16 @@ export default function InterviewSession() {
     ttsBufRef.current = ''
   }
 
-  // 跑一轮：给定完整历史（含 system），流式获取面试官回复并落库
+  // 根据面试官回复里的阶段标记同步顶部进度条（只前进，避免来回跳）
+  const applyStage = (id) => {
+    const i = STAGE_INDEX[id]
+    if (i == null) return
+    setStage((cur) => (i > cur ? i : cur))
+    if (id === 'coding') enterCoding()
+  }
+
+  // 跑一轮：给定完整历史（含 system），流式获取面试官回复并落库。
+  // 回复首行是 [[STAGE:xxx]] 标记：用于同步进度条，且不展示、不朗读。
   const runTurn = async (history) => {
     setBusy(true)
     setError('')
@@ -165,14 +174,29 @@ export default function InterviewSession() {
     ttsBufRef.current = ''
     const ac = new AbortController()
     abortRef.current = ac
+    let raw = ''
+    let spoken = 0
+    let stageSet = false
     try {
       const full = await chatStream(
         { messages: history },
-        (delta) => { setStreaming((s) => s + delta); feedTTS(delta) },
+        (delta) => {
+          raw += delta
+          const { stage, clean } = parseStageTag(raw)
+          if (stage && !stageSet) { stageSet = true; applyStage(stage) }
+          // 首行疑似仍在拼 [[STAGE:..]] 标记、尚未闭合时，先不渲染/朗读
+          const formingTag = !stage && /^\s*\[/.test(raw) && !raw.includes('\n') && raw.length < 40
+          if (formingTag) return
+          setStreaming(clean)
+          const newPart = clean.slice(spoken)
+          if (newPart) { spoken = clean.length; feedTTS(newPart) }
+        },
         ac.signal,
       )
+      const { stage, clean } = parseStageTag(full)
+      if (stage && !stageSet) applyStage(stage)
       flushTTS()
-      setMessages([...history, { role: 'assistant', content: full }])
+      setMessages([...history, { role: 'assistant', content: clean }])
       setStreaming('')
     } catch (e) {
       if (e?.name !== 'AbortError') setError(String(e?.message || e))

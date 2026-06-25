@@ -140,12 +140,27 @@ npm run server            # 前台试跑；生产建议用 pm2 / systemd 常驻
 1. **DNS**：把 `learn.aihaven.site` 的 A 记录指向 `8.211.163.94`。
 2. **防火墙/安全组**：放行入站 80 端口（如果直接暴露 8081 也要放行 8081）。
 
-## 想上 HTTPS？
+## HTTPS（强烈建议——「语音作答」必须）
 
-装好 certbot 后：
+浏览器的麦克风/录音（`getUserMedia`）只在 **https 或 localhost** 下可用。
+线上是 `http://learn.aihaven.site` 时，Chrome 会拦麦克风，语音输入用不了。开 HTTPS 后即可。
+
+**最简单（推荐）**：certbot 自动申请证书并改写 nginx 配置（含 443 与跳转）：
 
 ```bash
+sudo yum install -y certbot python3-certbot-nginx   # 或 apt-get install certbot python3-certbot-nginx
 sudo certbot --nginx -d learn.aihaven.site
 ```
 
-certbot 会自动给上面的 80 端口 server 块加 443 与证书。
+**或手动**（用仓库里 `nginx-learn.aihaven.site.conf` 已写好的 443 模板）：
+
+```bash
+# 1) 先申请证书（webroot 验证，需 80 可达）
+sudo certbot certonly --webroot -w /var/www/learn -d learn.aihaven.site
+# 2) 编辑 /etc/nginx/conf.d/learn.aihaven.site.conf：
+#    取消 (3) 整段 443 server 的注释；并取消 (2) 里 `return 301 https://...` 那行的注释
+# 3) 校验并重载
+sudo nginx -t && sudo nginx -s reload
+```
+
+> 证书会自动续期（certbot 自带定时任务）。续期后 `sudo nginx -s reload` 即可（certbot 通常会自动 reload）。

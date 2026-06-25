@@ -78,6 +78,24 @@ function fixPronunciation(text) {
   return s
 }
 
+// 去掉 Markdown 标记，避免被 TTS 念成「反引号 / 星号 / 井号」等。
+export function stripMarkdownForSpeech(text) {
+  return String(text)
+    .replace(/```[\s\S]*?```/g, '，')        // 代码块
+    .replace(/`([^`]+)`/g, '$1')              // 行内代码：保留内容、去反引号
+    .replace(/\*\*([^*]+)\*\*/g, '$1')        // 加粗
+    .replace(/\*([^*]+)\*/g, '$1')            // 斜体
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(^|\s)_([^_]+)_(?=\s|$)/g, '$1$2')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')  // 链接：保留文字
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')       // 标题井号
+    .replace(/^\s{0,3}>\s?/gm, '')            // 引用
+    .replace(/^\s*[-*+]\s+/gm, '')            // 无序列表符号
+    .replace(/[`*_#>~|]/g, '')                // 残留的标记符号
+    .replace(/[ \t]{2,}/g, ' ')
+}
+
 // 给浏览器音色打分：在线/神经音色 + 知名优质音色优先，尽量摆脱机械音。
 function scoreVoice(v, lang) {
   const n = (v.name || '').toLowerCase()
@@ -141,8 +159,9 @@ export function createBrowserSpeaker({ lang = 'zh-CN', rate = 1, pitch = 1 } = {
     kind: 'browser',
     speak(text) {
       if (!synth || !enabled || !text) return
-      const parts = splitSentences(text)
-      queue.push(...(parts.length ? parts : [text]))
+      const cleaned = stripMarkdownForSpeech(text)
+      const parts = splitSentences(cleaned)
+      queue.push(...(parts.length ? parts : [cleaned]))
       pump()
     },
     stop() { queue = []; speaking = false; if (synth) synth.cancel() },
@@ -199,7 +218,7 @@ export function createCloudSpeaker({ synthesize, onUnavailable }) {
     kind: 'cloud',
     speak(text) {
       if (!enabled || !text) return
-      for (const part of splitSentences(text)) {
+      for (const part of splitSentences(stripMarkdownForSpeech(text))) {
         const ac = new AbortController()
         jobs.push({ promise: synthesize(part, ac.signal), ac })
       }
