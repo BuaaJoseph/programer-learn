@@ -37,6 +37,25 @@ sudo bash deploy/deploy.sh
 
 更新后强刷浏览器（Ctrl/Cmd + Shift + R）或用无痕窗口查看。
 
+### 构建卡在「rendering chunks」/ 内存不足怎么办
+
+站点课程很多，现场 `npm run build` 需要约 700MB~1GB 内存。**低配服务器（1GB 内存等）现场构建容易卡死或 OOM**
+（表现为停在 `rendering chunks (NN)...` 不动）。三种应对，任选其一：
+
+```bash
+# 方案 A（推荐）：跳过现场构建，直接用仓库内预构建包部署
+sudo PREBUILT=1 bash deploy/deploy.sh
+
+# 方案 B：临时加一块 swap 再构建（构建完可删）
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+sudo bash deploy/deploy.sh
+
+# 方案 C：在本地/CI 构建后，只把 dist 同步到服务器（见文末「手动三步」）
+```
+
+> `deploy.sh` 已默认给构建加上 `--max-old-space-size=2048`；若仍 OOM，说明物理内存确实不够，请用方案 A/B/C。
+> 用方案 A 时，记得开发侧已先 `bash deploy/pack.sh` 刷新过预构建包（本仓库提交时已刷新）。
+
 ### 两条部署路径，区别很重要
 
 `deploy.sh` 会根据服务器**有没有 Node** 走不同路径：

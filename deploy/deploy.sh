@@ -16,16 +16,22 @@ NGINX_CONF="/etc/nginx/conf.d/learn.aihaven.site.conf"
 echo "==> 项目目录: $ROOT"
 
 # 1) 构建（有 node 用 node，没有就解包仓库内预构建的 tarball）
-if command -v npm >/dev/null 2>&1; then
+#    低内存服务器现场构建容易在「rendering chunks」处假死/OOM——
+#    可设 PREBUILT=1 直接用仓库内预构建包，跳过构建：  sudo PREBUILT=1 bash deploy/deploy.sh
+if [ "${PREBUILT:-0}" != "1" ] && command -v npm >/dev/null 2>&1; then
   echo "==> 检测到 npm，开始构建"
   cd "$ROOT"
   npm ci || npm install
-  npm run build
+  # 显式放宽 Node 堆上限，避免默认上限在大体量站点构建时过早 OOM。
+  NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}" npm run build
 elif [ -f "$ROOT/deploy/learn-site.tar.gz" ]; then
-  echo "==> 未检测到 npm，解包预构建的 deploy/learn-site.tar.gz"
+  echo "==> 使用预构建包 deploy/learn-site.tar.gz（PREBUILT=1 或未检测到 npm）"
   rm -rf "$ROOT/dist"
   mkdir -p "$ROOT/dist"
   tar -xzf "$ROOT/deploy/learn-site.tar.gz" -C "$ROOT/dist"
+else
+  echo "!! 既无 npm 也无预构建包，无法部署。" >&2
+  exit 1
 fi
 
 if [ ! -f "$ROOT/dist/index.html" ]; then
