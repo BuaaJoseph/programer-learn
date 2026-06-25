@@ -25,7 +25,12 @@ WAL 日志流程、MVCC 版本链 + ReadView）——共 **4 卷 12 章**。
 
 顶部菜单「🎤 面试模拟」进入。上传简历（PDF/TXT/Markdown 自动提取，或粘贴正文/填链接）、
 选择岗位（服务端 / 前端 / iOS / Android / 算法 / Agent / 大模型算法），按岗位推荐勾选考察技能点
-（也可自定义添加），填入你的 GPT-5.5 接口地址与密钥，即可开始一场约 **1 小时**的全真模拟面试：
+（也可自定义添加），即可开始一场约 **1 小时**的全真模拟面试：
+
+> 面试官模型的**接口地址与密钥在服务端 `.env` 配置**（类似 Claude Code，变量名 `ANTHROPIC_BASE_URL` /
+> `ANTHROPIC_AUTH_TOKEN` 对齐，可直接复用 Claude Code 配置；默认走 Anthropic Messages 协议，
+> 也支持 `INTERVIEW_API_STYLE=openai`），不再在页面填写。详见 `server/.env.example`。
+> 设置页可一键「测试连通性」，或 `curl -X POST http://localhost:8787/api/interview/ping`。
 
 1. **个人介绍**（约5min）破冰，考察语言组织
 2. **项目考察**（约20min）按简历深挖项目、针对性追问
@@ -38,7 +43,7 @@ WAL 日志流程、MVCC 版本链 + ReadView）——共 **4 卷 12 章**。
 面试结束点「结束并生成评分报告」，由模型结合本次问答给出 **A/B/C/D/E** 五级评分、
 结合实例的亮点与不足分析、后续提升建议与本站相关课程链接，并产出一份**可下载 / 可在浏览器直接打开的 HTML 报告**。
 
-> 实现：面试官对话经后端 `/api/interview/chat` 代理转发到用户提供的 OpenAI 兼容接口（支持流式）；
+> 实现：面试官对话经后端 `/api/interview/chat`，按 env 配置转发到 Anthropic/OpenAI 兼容接口并统一为流式 SSE；
 > 代码执行经 `/api/interview/run-code` 代理到 Piston（可自建，见 `server/.env.example`）。
 > 简历附件 PDF 解析用 CDN 懒加载的 pdf.js；语音用浏览器原生 Web Speech API，零额外依赖。
 

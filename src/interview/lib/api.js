@@ -1,17 +1,30 @@
 // 面试相关的前端 API 客户端：
-//   - chatStream：流式调用大模型面试官（经后端代理转发到用户提供的 url + ak）
+//   - getConfig / ping：查询面试官模型是否已在服务端配置、测试连通性
+//   - chatStream / chatOnce：调用面试官（接口地址与密钥在服务端 env 配置，前端不再传）
 //   - runCode：执行用户代码（经后端代理转发到代码执行服务）
-// 经后端代理的好处：规避浏览器跨域、隐藏 ak、统一错误处理。
 const BASE = (import.meta.env?.VITE_API_BASE || '') + '/api'
 
-// 流式对话。messages 为 OpenAI 风格 [{role, content}]。
-// onDelta(textChunk) 每收到一段增量文本回调一次；返回完整文本。
-// signal 可用于中断（AbortController）。
-export async function chatStream({ url, apiKey, model, messages }, onDelta, signal) {
+// 查询面试官模型配置状态（不含密钥）。
+export async function getInterviewConfig() {
+  const res = await fetch(BASE + '/interview/config')
+  if (!res.ok) throw new Error(`配置查询失败 (${res.status})`)
+  return res.json()
+}
+
+// 测试与面试官模型的连通性。
+export async function pingModel() {
+  const res = await fetch(BASE + '/interview/ping', { method: 'POST' })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message || `连通性测试失败 (${res.status})`)
+  return data
+}
+
+// 流式对话。messages 为 [{role, content}]。onDelta(textChunk) 每段增量回调一次；返回完整文本。
+export async function chatStream({ messages }, onDelta, signal) {
   const res = await fetch(BASE + '/interview/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url, apiKey, model, messages, stream: true }),
+    body: JSON.stringify({ messages, stream: true }),
     signal,
   })
   if (!res.ok || !res.body) {
@@ -32,7 +45,6 @@ export async function chatStream({ url, apiKey, model, messages }, onDelta, sign
     const { value, done } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    // 按 SSE 事件（以空行分隔）解析
     let idx
     while ((idx = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, idx).trim()
@@ -56,12 +68,12 @@ export async function chatStream({ url, apiKey, model, messages }, onDelta, sign
   return full
 }
 
-// 非流式对话（备用）。返回完整文本。
-export async function chatOnce({ url, apiKey, model, messages }, signal) {
+// 非流式对话（用于评分报告）。返回完整文本。
+export async function chatOnce({ messages }, signal) {
   const res = await fetch(BASE + '/interview/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url, apiKey, model, messages, stream: false }),
+    body: JSON.stringify({ messages, stream: false }),
     signal,
   })
   const data = await res.json().catch(() => null)

@@ -117,6 +117,24 @@ curl -I http://127.0.0.1:8081/         # 单独端口本机自测，应 200
 curl -I -H "Host: learn.aihaven.site" http://127.0.0.1/   # 域名路由自测
 ```
 
+## 后端服务（登录 + 面试模拟需要）
+
+静态站点本身不需要后端，但**登录鉴权**与**面试模拟**依赖 Node 后端（`/api/*`）。
+nginx 配置已把 `/api/` 反代到 `127.0.0.1:8787`，你需要在服务器上常驻运行后端，并配置面试官模型：
+
+```bash
+cd /home/learn/programer-learn
+# 在项目根目录放 .env（参考 server/.env.example），至少配置面试官模型：
+#   ANTHROPIC_BASE_URL=http://www.dcc-aihub.shop
+#   ANTHROPIC_AUTH_TOKEN=sk-...
+#   INTERVIEW_MODEL=gpt-5.5
+npm run server            # 前台试跑；生产建议用 pm2 / systemd 常驻
+# 自检：curl -X POST http://127.0.0.1:8787/api/interview/ping
+```
+
+> 面试官模型走 Anthropic Messages 协议（与 Claude Code 配置一致）。改用 OpenAI 兼容接口时设
+> `INTERVIEW_API_STYLE=openai`，并把 `ANTHROPIC_BASE_URL` 指向其 `/v1/chat/completions` 所在域名。
+
 ## 还需要你确认的两件事
 
 1. **DNS**：把 `learn.aihaven.site` 的 A 记录指向 `8.211.163.94`。

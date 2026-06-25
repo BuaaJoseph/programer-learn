@@ -1,50 +1,142 @@
 // 面试模拟后端路由：
-//   POST /api/interview/chat      —— 代理转发到用户提供的大模型接口（OpenAI 兼容），支持流式
+//   GET  /api/interview/config    —— 返回面试官模型是否已在 env 配置（不泄露密钥）
+//   POST /api/interview/ping      —— 用一次极小请求测试与模型接口的连通性
+//   POST /api/interview/chat      —— 调用面试官模型（配置来自 env），支持流式
 //   POST /api/interview/run-code  —— 代理转发到代码执行服务（默认 Piston），支持 Java / Python
-// 经后端代理可规避浏览器跨域、隐藏 ak，并统一错误处理。
+//
+// 面试官模型的「接口地址 + 密钥」改为在服务端 env 配置（类似 Claude Code 的配置方式），
+// 不再由前端页面填写。默认走 Anthropic Messages 协议（与 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 对齐）。
 import { Router } from 'express'
 
 const router = Router()
 
-// 代码执行服务（Piston）。可用 PISTON_URL 覆盖为自建实例。
+// —— 代码执行服务（Piston）——
 const PISTON_URL = process.env.PISTON_URL || 'https://emkc.org/api/v2/piston/execute'
-// 各语言默认版本（公共 Piston 实例上常见可用版本）。
 const LANG_VERSION = {
   python: process.env.PISTON_PYTHON_VERSION || '3.10.0',
   java: process.env.PISTON_JAVA_VERSION || '15.0.2',
 }
 const LANG_FILE = { python: 'main.py', java: 'Main.java' }
 
-// —— 面试官对话代理 ——
+// —— 读取面试官模型配置（env）——
+// 兼容 Claude Code 的变量名（ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY），
+// 也支持 INTERVIEW_* 专用变量覆盖。
+function readModelConfig() {
+  const base = (process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
+  const token = (process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
+  const style = (process.env.INTERVIEW_API_STYLE || 'anthropic').trim().toLowerCase()
+  const model = (process.env.INTERVIEW_MODEL || 'gpt-5.5').trim()
+  const version = (process.env.INTERVIEW_API_VERSION || '2023-06-01').trim()
+  const maxTokens = Number(process.env.INTERVIEW_MAX_TOKENS || 2048)
+  return { base, token, style, model, version, maxTokens, configured: !!(base && token) }
+}
+
+// OpenAI 风格 messages → Anthropic Messages 请求体。
+// 规则：所有 system 合并为顶层 system；其余消息保证以 user 开头且 user/assistant 交替。
+function toAnthropicBody(cfg, messages, stream) {
+  const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+  const rest = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: String(m.content) }))
+  // Anthropic 要求首条为 user。开场（仅 system）或首条是 assistant 时，补一条触发用的 user 消息。
+  if (rest.length === 0 || rest[0].role === 'assistant') {
+    rest.unshift({ role: 'user', content: '请开始。' })
+  }
+  const body = { model: cfg.model, max_tokens: cfg.maxTokens, messages: rest, stream: !!stream }
+  if (sys) body.system = sys
+  return body
+}
+
+function anthropicHeaders(cfg) {
+  return {
+    'content-type': 'application/json',
+    'x-api-key': cfg.token,
+    authorization: `Bearer ${cfg.token}`,
+    'anthropic-version': cfg.version,
+  }
+}
+
+// 计算上游 endpoint
+function endpointFor(cfg) {
+  if (cfg.style === 'openai') {
+    return /\/chat\/completions$/.test(cfg.base) ? cfg.base : `${cfg.base}/v1/chat/completions`
+  }
+  return /\/messages$/.test(cfg.base) ? cfg.base : `${cfg.base}/v1/messages`
+}
+
+// 发起一次上游请求（fetch）。返回 Response。
+async function callUpstream(cfg, messages, stream) {
+  const endpoint = endpointFor(cfg)
+  if (cfg.style === 'openai') {
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ model: cfg.model, messages, stream: !!stream, temperature: 0.7 }),
+    })
+  }
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: anthropicHeaders(cfg),
+    body: JSON.stringify(toAnthropicBody(cfg, messages, stream)),
+  })
+}
+
+// 从上游「非流式」响应里取出文本（兼容两种协议）。
+function extractText(style, data) {
+  if (style === 'openai') return data?.choices?.[0]?.message?.content || ''
+  // Anthropic：content 为块数组，取 text 块拼接
+  if (Array.isArray(data?.content)) return data.content.filter((b) => b.type === 'text').map((b) => b.text).join('')
+  return data?.content || ''
+}
+
+// 把一段「OpenAI 风格」的 SSE 增量写给前端（前端只认这一种格式）。
+function writeDelta(res, text) {
+  res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`)
+}
+
+// 配置查询
+router.get('/config', (_req, res) => {
+  const cfg = readModelConfig()
+  res.json({ configured: cfg.configured, style: cfg.style, model: cfg.model, hasBase: !!cfg.base, hasToken: !!cfg.token })
+})
+
+// 连通性测试
+router.post('/ping', async (_req, res) => {
+  const cfg = readModelConfig()
+  if (!cfg.configured) {
+    return res.status(503).json({ ok: false, message: '面试官模型未配置：请在服务端 .env 设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN' })
+  }
+  try {
+    const r = await callUpstream(cfg, [{ role: 'user', content: '连通性测试：请只回复“ok”。' }], false)
+    if (!r.ok) {
+      let detail = ''
+      try { detail = await r.text() } catch { /* ignore */ }
+      return res.status(502).json({ ok: false, message: `接口返回错误 (${r.status})：${detail.slice(0, 300) || '请检查地址、密钥与模型名'}` })
+    }
+    const data = await r.json()
+    const sample = extractText(cfg.style, data)
+    res.json({ ok: true, message: '连通正常', model: cfg.model, sample: (sample || '').slice(0, 80) })
+  } catch (err) {
+    console.error('[interview/ping] 失败:', err)
+    res.status(502).json({ ok: false, message: '无法连接到模型接口：' + String(err?.message || err) })
+  }
+})
+
+// —— 面试官对话 ——
 router.post('/chat', async (req, res) => {
-  const { url, apiKey, model, messages, stream } = req.body || {}
-  if (!url || !apiKey) {
-    return res.status(400).json({ error: 'missing_config', message: '缺少模型接口地址或密钥' })
+  const cfg = readModelConfig()
+  const { messages, stream } = req.body || {}
+  if (!cfg.configured) {
+    return res.status(503).json({ error: 'not_configured', message: '面试官模型未配置：请在服务端 .env 设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN（详见 server/.env.example）' })
   }
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'invalid_messages', message: '对话消息为空' })
   }
 
-  const payload = {
-    model: model || 'gpt-5.5',
-    messages,
-    stream: !!stream,
-    temperature: 0.7,
-  }
-
   let upstream
   try {
-    upstream = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    })
+    upstream = await callUpstream(cfg, messages, !!stream)
   } catch (err) {
     console.error('[interview/chat] 上游请求失败:', err)
-    return res.status(502).json({ error: 'upstream_unreachable', message: '无法连接到大模型接口，请检查 URL 与网络' })
+    return res.status(502).json({ error: 'upstream_unreachable', message: '无法连接到模型接口，请检查 env 中的地址与网络' })
   }
 
   if (!upstream.ok) {
@@ -53,35 +145,57 @@ router.post('/chat', async (req, res) => {
     console.error('[interview/chat] 上游返回错误:', upstream.status, detail.slice(0, 500))
     return res.status(upstream.status).json({
       error: 'upstream_error',
-      message: `大模型接口返回错误 (${upstream.status})：${detail.slice(0, 200) || '请检查接口地址、密钥与模型名'}`,
+      message: `模型接口返回错误 (${upstream.status})：${detail.slice(0, 200) || '请检查接口地址、密钥与模型名'}`,
     })
   }
 
-  // 流式：把上游 SSE 原样透传给前端
+  // 流式：统一转成「OpenAI 风格」SSE 输出，前端无需区分上游协议。
   if (stream && upstream.body) {
     res.setHeader('content-type', 'text/event-stream; charset=utf-8')
     res.setHeader('cache-control', 'no-cache, no-transform')
     res.setHeader('connection', 'keep-alive')
     try {
-      for await (const chunk of upstream.body) {
-        res.write(chunk)
+      if (cfg.style === 'openai') {
+        // 上游已是 OpenAI SSE，直接透传
+        for await (const chunk of upstream.body) res.write(chunk)
+      } else {
+        // 解析 Anthropic SSE，提取 text_delta 重新发出
+        const decoder = new TextDecoder('utf-8')
+        let buf = ''
+        for await (const chunk of upstream.body) {
+          buf += decoder.decode(chunk, { stream: true })
+          let nl
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim()
+            buf = buf.slice(nl + 1)
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (!payload || payload === '[DONE]') continue
+            try {
+              const evt = JSON.parse(payload)
+              if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+                writeDelta(res, evt.delta.text)
+              }
+            } catch { /* 非 JSON 行忽略 */ }
+          }
+        }
       }
+      res.write('data: [DONE]\n\n')
     } catch (err) {
-      console.error('[interview/chat] 流式透传中断:', err)
+      console.error('[interview/chat] 流式中断:', err)
     } finally {
       res.end()
     }
     return
   }
 
-  // 非流式：解析出文本返回
+  // 非流式
   try {
     const data = await upstream.json()
-    const content = data?.choices?.[0]?.message?.content || ''
-    res.json({ content, raw: data })
+    res.json({ content: extractText(cfg.style, data) })
   } catch (err) {
     console.error('[interview/chat] 解析上游响应失败:', err)
-    res.status(502).json({ error: 'bad_upstream', message: '大模型返回内容解析失败' })
+    res.status(502).json({ error: 'bad_upstream', message: '模型返回内容解析失败' })
   }
 })
 
@@ -129,12 +243,7 @@ router.post('/run-code', async (req, res) => {
     const runOut = data?.run?.stdout || ''
     const runErr = data?.run?.stderr || ''
     const output = [compileErr, runOut, runErr].filter(Boolean).join('\n')
-    res.json({
-      stdout: runOut,
-      stderr: compileErr || runErr,
-      code: data?.run?.code,
-      output,
-    })
+    res.json({ stdout: runOut, stderr: compileErr || runErr, code: data?.run?.code, output })
   } catch (err) {
     console.error('[interview/run-code] 解析执行结果失败:', err)
     res.status(502).json({ error: 'bad_runner', message: '执行结果解析失败' })

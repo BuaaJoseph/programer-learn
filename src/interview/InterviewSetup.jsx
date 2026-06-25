@@ -4,6 +4,7 @@ import PlatformLayout from '../platform/PlatformLayout.jsx'
 import { POSITIONS, findPosition } from './data/positions.js'
 import { parseResumeFile } from './lib/resume.js'
 import { saveConfig, loadConfig } from './lib/session.js'
+import { getInterviewConfig, pingModel } from './lib/api.js'
 
 export default function InterviewSetup() {
   const navigate = useNavigate()
@@ -19,14 +20,32 @@ export default function InterviewSetup() {
   const [skills, setSkills] = useState(saved.skills || [])
   const [customSkill, setCustomSkill] = useState('')
 
-  const [llmUrl, setLlmUrl] = useState(saved.llmUrl || '')
-  const [llmKey, setLlmKey] = useState(saved.llmKey || '')
-  const [llmModel, setLlmModel] = useState(saved.llmModel || 'gpt-5.5')
-
   const [voice, setVoice] = useState(saved.voice !== false)
   const [error, setError] = useState('')
 
+  // 面试官模型配置状态（来自服务端 env）
+  const [modelCfg, setModelCfg] = useState(null) // { configured, model }
+  const [ping, setPing] = useState({ state: 'idle', msg: '' }) // idle | testing | ok | fail
+
   const pos = findPosition(position)
+
+  // 进页面查询服务端是否已配置面试官模型
+  useEffect(() => {
+    getInterviewConfig()
+      .then(setModelCfg)
+      .catch(() => setModelCfg({ configured: false }))
+  }, [])
+
+  const testConn = async () => {
+    setPing({ state: 'testing', msg: '' })
+    try {
+      const r = await pingModel()
+      setPing({ state: 'ok', msg: r.sample ? `连通正常，模型回复：${r.sample}` : '连通正常' })
+      setModelCfg((c) => ({ ...(c || {}), configured: true }))
+    } catch (e) {
+      setPing({ state: 'fail', msg: String(e?.message || e) })
+    }
+  }
 
   // 切换岗位时，把推荐技能默认全选（仅当用户尚未自定义过该岗位的勾选）。
   useEffect(() => {
@@ -72,15 +91,11 @@ export default function InterviewSetup() {
       setError('请至少勾选一个考察技能点')
       return
     }
-    if (!llmUrl.trim() || !llmKey.trim()) {
-      setError('请填写大模型接口地址（url）和密钥（ak）')
+    if (modelCfg && modelCfg.configured === false) {
+      setError('面试官模型尚未在服务端配置，请在 .env 中设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN 后重试')
       return
     }
-    saveConfig({
-      resumeText, resumeLink, position, skills,
-      llmUrl: llmUrl.trim(), llmKey: llmKey.trim(), llmModel: llmModel.trim() || 'gpt-5.5',
-      voice,
-    })
+    saveConfig({ resumeText, resumeLink, position, skills, voice })
     navigate('/interview/session')
   }
 
@@ -175,46 +190,33 @@ export default function InterviewSetup() {
           </div>
         </section>
 
-        {/* 4. 模型接口 */}
+        {/* 4. 面试官模型（服务端配置） */}
         <section className="iv-card">
-          <h2 className="iv-card-title"><span className="iv-step">4</span> 面试官模型接口</h2>
-          <p className="iv-sub">面试官由你提供的 GPT-5.5 接口驱动（OpenAI 兼容格式）。密钥仅用于本次会话，不会长期保存。</p>
-          <div className="iv-grid2">
-            <div>
-              <label className="ce-label">接口地址 URL</label>
-              <input
-                className="iv-input"
-                value={llmUrl}
-                onChange={(e) => setLlmUrl(e.target.value)}
-                placeholder="https://…/v1/chat/completions"
-              />
-            </div>
-            <div>
-              <label className="ce-label">密钥 AK</label>
-              <input
-                className="iv-input"
-                type="password"
-                value={llmKey}
-                onChange={(e) => setLlmKey(e.target.value)}
-                placeholder="sk-…"
-              />
-            </div>
-            <div>
-              <label className="ce-label">模型名</label>
-              <input
-                className="iv-input"
-                value={llmModel}
-                onChange={(e) => setLlmModel(e.target.value)}
-                placeholder="gpt-5.5"
-              />
-            </div>
-            <div className="iv-voice-toggle">
-              <label className="ce-label">语音</label>
-              <label className="iv-switch">
-                <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} />
-                <span>开启语音对话（面试官朗读 + 语音作答）</span>
-              </label>
-            </div>
+          <h2 className="iv-card-title"><span className="iv-step">4</span> 面试官模型</h2>
+          <p className="iv-sub">
+            面试官的接口地址与密钥已改为在<strong>服务端 <code>.env</code> 配置</strong>（类似 Claude Code 的配置方式），
+            无需在页面填写。配置项见 <code>server/.env.example</code>。
+          </p>
+          <div className="iv-model-status">
+            {modelCfg == null ? (
+              <span className="iv-status checking">正在检查配置…</span>
+            ) : modelCfg.configured ? (
+              <span className="iv-status ok">✓ 已配置{modelCfg.model ? `（模型：${modelCfg.model}）` : ''}</span>
+            ) : (
+              <span className="iv-status bad">✗ 未配置：请在 .env 设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN</span>
+            )}
+            <button className="btn btn-ghost ce-small" onClick={testConn} disabled={ping.state === 'testing'}>
+              {ping.state === 'testing' ? '测试中…' : '测试连通性'}
+            </button>
+          </div>
+          {ping.state === 'ok' && <div className="iv-status-msg ok">{ping.msg}</div>}
+          {ping.state === 'fail' && <div className="iv-status-msg bad">{ping.msg}</div>}
+
+          <div className="iv-voice-toggle" style={{ marginTop: 16 }}>
+            <label className="iv-switch">
+              <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} />
+              <span>开启语音对话（面试官朗读 + 语音作答）</span>
+            </label>
           </div>
         </section>
 

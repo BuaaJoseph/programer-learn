@@ -109,7 +109,7 @@ export default function InterviewSession() {
     abortRef.current = ac
     try {
       const full = await chatStream(
-        { url: cfg.llmUrl, apiKey: cfg.llmKey, model: cfg.llmModel, messages: history },
+        { messages: history },
         (delta) => { setStreaming((s) => s + delta); feedTTS(delta) },
         ac.signal,
       )
@@ -203,9 +203,7 @@ export default function InterviewSession() {
     setReportErr('')
     try {
       const history = [...messages, { role: 'user', content: buildReportPrompt(cfg) }]
-      const text = await chatOnce(
-        { url: cfg.llmUrl, apiKey: cfg.llmKey, model: cfg.llmModel, messages: history },
-      )
+      const text = await chatOnce({ messages: history })
       const parsed = parseReport(text)
       const html = renderReportHtml(parsed, cfg)
       setReport(parsed)

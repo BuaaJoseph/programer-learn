@@ -74,6 +74,16 @@
 .iv-custom { display: flex; gap: 10px; }
 .iv-custom .iv-input { flex: 1; }
 
+.iv-model-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.iv-status { font-size: 0.9rem; font-weight: 600; }
+.iv-status.ok { color: var(--green); }
+.iv-status.bad { color: var(--rose); }
+.iv-status.checking { color: var(--ink-faint); }
+.iv-status-msg { margin-top: 10px; font-size: 0.86rem; padding: 8px 12px; border-radius: var(--radius-sm); }
+.iv-status-msg.ok { background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green); }
+.iv-status-msg.bad { background: var(--rose-soft); border: 1px solid var(--rose-line); color: var(--rose); }
+.iv-card code { font-family: var(--mono); font-size: 0.84em; background: var(--bg-sunken); padding: 1px 5px; border-radius: 4px; }
+
 .iv-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .iv-voice-toggle .iv-switch { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--ink-soft); }
 .iv-switch input { width: 16px; height: 16px; }

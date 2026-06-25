@@ -1,5 +1,6 @@
-// 面试会话配置的存取（用 sessionStorage：刷新不丢、关闭标签页即清，ak 不长期留存）
+// 面试会话配置的存取（用 sessionStorage：刷新不丢、关闭标签页即清）
 // 以及面试官 system prompt 的构建。
+// 注意：面试官模型的「接口地址 + 密钥」在服务端 env 配置，不在此存储。
 import { questionsForSkills, findPosition } from '../data/positions.js'
 
 const KEY = 'interview.config'
