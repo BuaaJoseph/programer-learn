@@ -113,6 +113,17 @@ function chatCompletionsEndpoint(base) {
   return /\/chat\/completions$/.test(base) ? base : `${base}/v1/chat/completions`
 }
 
+// 带超时的 fetch：避免上游（尤其国内连不通 api.openai.com 时）请求挂死。
+async function fetchWithTimeout(url, opts, ms = 25000) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal })
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 // 合成一段语音，返回 { ok, status?, buffer?, message? }。
 // speech 模式：标准 /v1/audio/speech；chat 模式：音频对话模型经 /v1/chat/completions 输出音频。
 async function synthTts(tts, text) {
@@ -128,12 +139,15 @@ async function synthTts(tts, text) {
     }
     let r
     try {
-      r = await fetch(chatCompletionsEndpoint(tts.base), {
+      r = await fetchWithTimeout(chatCompletionsEndpoint(tts.base), {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
         body: JSON.stringify(body),
       })
-    } catch (e) { return { ok: false, status: 502, message: 'TTS 服务不可达：' + String(e?.message || e) } }
+    } catch (e) {
+      const to = e?.name === 'AbortError'
+      return { ok: false, status: 504, message: to ? 'TTS 请求超时（网络可能不可达，国内服务器常连不上 api.openai.com）' : 'TTS 服务不可达：' + String(e?.message || e) }
+    }
     if (!r.ok) {
       let d = ''; try { d = await r.text() } catch { /* ignore */ }
       return { ok: false, status: r.status, message: `TTS 接口错误 (${r.status})：${d.slice(0, 160)}` }
@@ -149,12 +163,15 @@ async function synthTts(tts, text) {
   if (/gpt-4o/i.test(tts.model) && tts.instructions) body.instructions = tts.instructions
   let r
   try {
-    r = await fetch(ttsEndpoint(tts), {
+    r = await fetchWithTimeout(ttsEndpoint(tts), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
       body: JSON.stringify(body),
     })
-  } catch (e) { return { ok: false, status: 502, message: 'TTS 服务不可达：' + String(e?.message || e) } }
+  } catch (e) {
+    const to = e?.name === 'AbortError'
+    return { ok: false, status: 504, message: to ? 'TTS 请求超时（网络可能不可达，国内服务器常连不上 api.openai.com）' : 'TTS 服务不可达：' + String(e?.message || e) }
+  }
   if (!r.ok) {
     let d = ''; try { d = await r.text() } catch { /* ignore */ }
     return { ok: false, status: r.status, message: `TTS 接口错误 (${r.status})：${d.slice(0, 160)}` }
