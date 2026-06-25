@@ -9,6 +9,11 @@
 import express, { Router } from 'express'
 import { lookup } from 'node:dns/promises'
 import crypto from 'node:crypto'
+import { requireAuth } from '../middleware/auth.js'
+import { createInterview, markReady, markFailed, listByUser, getOwned } from '../lib/interviews.js'
+import { cosConfigured, putObject, getObject, presignedGetUrl } from '../lib/cos.js'
+import { renderReportHtml, buildReportEmail } from '../lib/interviewReport.js'
+import { sendMail } from '../lib/email.js'
 
 const router = Router()
 
@@ -347,7 +352,7 @@ router.get('/config', (_req, res) => {
 })
 
 // 云端语音识别：接收前端录的音频（原始字节），转写为文本返回。
-router.post('/stt', express.raw({ type: () => true, limit: '25mb' }), async (req, res) => {
+router.post('/stt', requireAuth, express.raw({ type: () => true, limit: '25mb' }), async (req, res) => {
   const cfg = readSttConfig()
   if (!cfg.configured) return res.status(503).json({ error: 'stt_not_configured', message: '未配置云端语音识别' })
   const buf = req.body
@@ -387,7 +392,7 @@ router.post('/stt', express.raw({ type: () => true, limit: '25mb' }), async (req
 })
 
 // 云端神经 TTS：把文本合成为语音（mp3）返回给前端播放。
-router.post('/tts', async (req, res) => {
+router.post('/tts', requireAuth, async (req, res) => {
   const tts = readTtsConfig()
   const text = String(req.body?.text || '').trim()
   const speed = Number(req.body?.speed) || 0 // 倍速，0 表示用默认
@@ -406,7 +411,7 @@ router.post('/tts', async (req, res) => {
 
 // 抓取简历链接内容（服务端代理，规避浏览器跨域；带 SSRF 防护与大小限制）。
 // 返回原始字节 + 原始 content-type，由前端按 PDF/HTML/文本提取文字。
-router.get('/fetch-resume', async (req, res) => {
+router.get('/fetch-resume', requireAuth, async (req, res) => {
   const url = String(req.query.url || '').trim()
   let u
   try { u = new URL(url) } catch { return res.status(400).json({ error: 'bad_url', message: '链接格式不正确' }) }
@@ -486,7 +491,7 @@ router.post('/ping', async (_req, res) => {
 })
 
 // —— 面试官对话 ——
-router.post('/chat', async (req, res) => {
+router.post('/chat', requireAuth, async (req, res) => {
   const cfg = readModelConfig()
   const { messages, stream, maxTokens } = req.body || {}
   if (!cfg.configured) {
@@ -567,7 +572,7 @@ router.post('/chat', async (req, res) => {
 })
 
 // —— 代码执行代理 ——
-router.post('/run-code', async (req, res) => {
+router.post('/run-code', requireAuth, async (req, res) => {
   const { language, source, stdin } = req.body || {}
   const lang = String(language || '').toLowerCase()
   if (!LANG_VERSION[lang]) {
@@ -615,6 +620,108 @@ router.post('/run-code', async (req, res) => {
     console.error('[interview/run-code] 解析执行结果失败:', err)
     res.status(502).json({ error: 'bad_runner', message: '执行结果解析失败' })
   }
+})
+
+// —— 评分报告（异步生成 + 存 COS + 邮件通知）与面试记录 ——
+
+// 流式拉取并累积完整文本（报告较长，避免非流式被网关超时）。
+async function chatAccumulate(cfg, messages, maxTokens) {
+  const upstream = await callUpstream(cfg, messages, true, maxTokens)
+  if (!upstream.ok || !upstream.body) {
+    let d = ''; try { d = await upstream.text() } catch { /* ignore */ }
+    throw new Error(`模型接口错误 (${upstream.status})：${d.slice(0, 200)}`)
+  }
+  const dec = new TextDecoder('utf-8')
+  let buf = '', full = ''
+  for await (const chunk of upstream.body) {
+    buf += dec.decode(chunk, { stream: true })
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line.startsWith('data:')) continue
+      const p = line.slice(5).trim()
+      if (!p || p === '[DONE]') continue
+      try {
+        const j = JSON.parse(p)
+        if (cfg.style === 'openai') { const d = j.choices?.[0]?.delta?.content || ''; if (d) full += d }
+        else if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta' && j.delta.text) full += j.delta.text
+      } catch { /* ignore */ }
+    }
+  }
+  return full
+}
+
+// 从模型文本中解析 JSON（容忍代码块/噪声）。
+function parseReportJson(text) {
+  if (!text) throw new Error('评估结果为空')
+  let s = text.trim()
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fence) s = fence[1].trim()
+  const a = s.indexOf('{'), b = s.lastIndexOf('}')
+  if (a >= 0 && b > a) s = s.slice(a, b + 1)
+  return JSON.parse(s)
+}
+
+// 异步生成报告：调用模型 → 渲染 HTML（含完整对话）→ 上传 COS → 落库 → 邮件通知。
+router.post('/report', requireAuth, async (req, res) => {
+  const cfg = readModelConfig()
+  const { messages, conversation, positionTitle, skills, courses } = req.body || {}
+  if (!cfg.configured) return res.status(503).json({ error: 'not_configured', message: '面试官模型未配置' })
+  if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ error: 'invalid', message: '对话内容为空' })
+  if (!cosConfigured()) return res.status(503).json({ error: 'cos', message: '对象存储未配置，无法保存报告' })
+
+  const userId = req.user.id
+  const email = req.user.email
+  const id = createInterview(userId, { position: positionTitle, skills })
+  res.json({ id, status: 'pending' })
+
+  // 后台异步处理（不阻塞响应）
+  ;(async () => {
+    try {
+      const text = await chatAccumulate(cfg, messages, 4096)
+      const report = parseReportJson(text)
+      const now = new Date()
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+      const html = renderReportHtml(report, { positionTitle, skills, dateStr }, conversation || [], courses || [])
+      const key = `interviews/${userId}/${id}.html`
+      await putObject(key, html, 'text/html; charset=utf-8')
+      markReady(id, { grade: report.grade, summary: report.overallSummary, reportKey: key })
+      try {
+        const dl = presignedGetUrl(key, { filename: `面试报告_${report.grade || ''}.html` })
+        if (email) await sendMail({ to: email, ...buildReportEmail({ positionTitle, grade: report.grade, downloadUrl: dl }) })
+      } catch (e) { console.error('[interview/report] 邮件发送失败:', e) }
+    } catch (e) {
+      console.error('[interview/report] 生成失败:', e)
+      markFailed(id, e?.message || String(e))
+    }
+  })()
+})
+
+// 我的面试记录列表
+router.get('/records', requireAuth, (req, res) => {
+  res.json({ records: listByUser(req.user.id) })
+})
+
+// 在线查看报告 HTML（仅本人）
+router.get('/records/:id/view', requireAuth, async (req, res) => {
+  const row = getOwned(Number(req.params.id), req.user.id)
+  if (!row) return res.status(404).json({ message: '记录不存在' })
+  if (row.status !== 'ready' || !row.report_key) return res.status(409).json({ message: '报告尚未就绪' })
+  try {
+    const buf = await getObject(row.report_key)
+    res.setHeader('content-type', 'text/html; charset=utf-8')
+    res.send(buf)
+  } catch (e) {
+    res.status(502).json({ message: '读取报告失败：' + String(e?.message || e) })
+  }
+})
+
+// 下载报告（重定向到 COS 预签名 URL）
+router.get('/records/:id/download', requireAuth, (req, res) => {
+  const row = getOwned(Number(req.params.id), req.user.id)
+  if (!row || row.status !== 'ready' || !row.report_key) return res.status(404).json({ message: '报告不存在或未就绪' })
+  res.redirect(presignedGetUrl(row.report_key, { filename: `面试报告_${row.grade || ''}.html` }))
 })
 
 export default router

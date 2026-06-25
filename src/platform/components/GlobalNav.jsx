@@ -66,9 +66,9 @@ export default function GlobalNav() {
 
         {isAuthed ? (
           <div className="gnav-user">
-            <span className="gnav-user-name" title={user?.email}>
+            <Link to="/me/interviews" className="gnav-user-name" title="个人中心">
               {user?.nickname || user?.email}
-            </span>
+            </Link>
             <button className="btn btn-ghost gnav-login" onClick={logout}>
               退出
             </button>

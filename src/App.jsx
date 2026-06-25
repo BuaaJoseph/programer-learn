@@ -15,6 +15,7 @@ import ChapterPage from './reader/ChapterPage.jsx'
 const Playground = lazy(() => import('./platform/pages/Playground.jsx'))
 const InterviewSetup = lazy(() => import('./interview/InterviewSetup.jsx'))
 const InterviewSession = lazy(() => import('./interview/InterviewSession.jsx'))
+const MyInterviews = lazy(() => import('./platform/pages/MyInterviews.jsx'))
 
 // 在原生壳（Capacitor）里用 HashRouter——从 localhost/file 根加载、刷新不白屏；
 // 普通网页仍用 BrowserRouter，保持干净 URL（/course/x）。
@@ -40,6 +41,7 @@ export default function App() {
               <Route path="/playground" element={<Playground />} />
               <Route path="/interview" element={<InterviewSetup />} />
               <Route path="/interview/session" element={<InterviewSession />} />
+              <Route path="/me/interviews" element={<MyInterviews />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

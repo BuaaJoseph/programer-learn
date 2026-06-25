@@ -8,6 +8,9 @@ class MockEmailProvider {
   async sendCode(to, code) {
     console.log(`[email:mock] → ${to} 验证码: ${code}（开发模式不真正发信）`)
   }
+  async sendMail({ to, subject }) {
+    console.log(`[email:mock] → ${to} | ${subject}（开发模式不真正发信）`)
+  }
 }
 
 class SmtpEmailProvider {
@@ -38,6 +41,16 @@ class SmtpEmailProvider {
       html: `<p>你的验证码是 <b style="font-size:18px;letter-spacing:2px">${code}</b></p><p>10 分钟内有效。若非本人操作请忽略本邮件。</p>`,
     })
   }
+  async sendMail({ to, subject, text, html }) {
+    const transporter = await this.getTransporter()
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER
+    await transporter.sendMail({ from, to, subject, text, html })
+  }
+}
+
+// 通用发信（验证码以外的通知，如面试报告完成）。
+export async function sendMail(opts) {
+  return getEmailProvider().sendMail(opts)
 }
 
 let provider

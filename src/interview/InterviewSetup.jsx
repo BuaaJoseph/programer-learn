@@ -5,9 +5,11 @@ import { POSITIONS, findPosition } from './data/positions.js'
 import { parseResumeFile, fetchResumeFromUrl } from './lib/resume.js'
 import { saveConfig, loadConfig } from './lib/session.js'
 import { getInterviewConfig, pingModel } from './lib/api.js'
+import { useAuth } from '../shared/AuthContext.jsx'
 
 export default function InterviewSetup() {
   const navigate = useNavigate()
+  const auth = useAuth()
   const saved = loadConfig() || {}
 
   const [resumeText, setResumeText] = useState(saved.resumeText || '')
@@ -137,6 +139,27 @@ export default function InterviewSetup() {
   // 推荐技能 + 用户自定义添加的（不在推荐列表里的）合并展示
   const recommended = pos ? pos.skills : []
   const extras = skills.filter((s) => !recommended.includes(s))
+
+  // 面试模拟需要登录
+  if (auth.ready && !auth.isAuthed) {
+    return (
+      <PlatformLayout>
+        <div className="container iv-setup">
+          <div className="iv-hero">
+            <h1 className="browse-h1">面试模拟</h1>
+          </div>
+          <div className="paywall">
+            <div className="paywall-lock">🔒</div>
+            <h2>登录后使用面试模拟</h2>
+            <p>面试模拟会保存你的每次面试记录与评估报告，需登录后使用。登录 / 注册即可开始。</p>
+            <div className="paywall-actions">
+              <button className="btn btn-primary" onClick={auth.login}>登录 / 注册</button>
+            </div>
+          </div>
+        </div>
+      </PlatformLayout>
+    )
+  }
 
   return (
     <PlatformLayout>

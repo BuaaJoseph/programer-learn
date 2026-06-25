@@ -56,6 +56,23 @@ CREATE TABLE IF NOT EXISTS sessions (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- 面试记录表：每次模拟面试一条。报告与完整对话以 HTML 存到对象存储（COS），库里只存文件地址。
+CREATE TABLE IF NOT EXISTS interviews (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL,
+  position    TEXT,                          -- 岗位标题
+  skills      TEXT,                          -- 考察技能（JSON 数组字符串）
+  status      TEXT    NOT NULL DEFAULT 'pending', -- pending | ready | failed
+  grade       TEXT,                          -- A/B/C/D/E
+  summary     TEXT,                          -- 报告整体评价摘要
+  report_key  TEXT,                          -- COS 对象 key（报告+完整对话的 HTML）
+  error       TEXT,                          -- 失败原因
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_interviews_user ON interviews(user_id, created_at);
 `
 
 let db

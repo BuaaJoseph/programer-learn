@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import CodeEditor from './components/CodeEditor.jsx'
-import { chatStream, getInterviewConfig, synthesizeSpeech, transcribeSpeech } from './lib/api.js'
+import { chatStream, getInterviewConfig, synthesizeSpeech, transcribeSpeech, generateReportAsync } from './lib/api.js'
 import { loadConfig, buildSystemPrompt, STAGES, parseStageTag, STAGE_INDEX } from './lib/session.js'
-import {
-  buildReportPrompt, parseReport, renderReportHtml, downloadHtml, openHtml, gradeMeta,
-} from './lib/report.js'
+import { buildReportPrompt, courseCatalog } from './lib/report.js'
 import {
   createBrowserSpeaker, createCloudSpeaker, createRecognizer,
   sttSupported, ttsSupported, listZhVoices,
@@ -47,9 +45,7 @@ export default function InterviewSession() {
   const [problem, setProblem] = useState(null)
 
   // 评分报告
-  const [reportState, setReportState] = useState('idle') // idle | loading | ready | error
-  const [report, setReport] = useState(null)
-  const [reportHtml, setReportHtml] = useState('')
+  const [reportState, setReportState] = useState('idle') // idle | loading | submitted | error
   const [reportErr, setReportErr] = useState('')
 
   const speakerRef = useRef(null)
@@ -380,10 +376,11 @@ export default function InterviewSession() {
     if (speakerRef.current) speakerRef.current.stop()
   }
 
-  // 结束面试，生成评分报告（A/B/C/D/E + 结合实例的理由 + 提升建议 + 课程推荐）
+  // 结束面试：异步提交生成报告（后台生成 → 存对象存储 → 邮件通知 → 个人中心可查）
   const generateReport = async () => {
     if (speakerRef.current) speakerRef.current.stop()
-    if (messages.filter((m) => m.role !== 'system').length < 2) {
+    const convo = messages.filter((m) => m.role !== 'system')
+    if (convo.length < 2) {
       setReportErr('面试内容太少，请先进行面试再生成报告')
       setReportState('error')
       return
@@ -392,15 +389,16 @@ export default function InterviewSession() {
     setReportErr('')
     try {
       const history = [...messages, { role: 'user', content: buildReportPrompt(cfg) }]
-      // 用流式生成：报告内容较长，非流式会被网关超时（504）；放宽输出上限避免 JSON 被截断。
-      const text = await chatStream({ messages: history, maxTokens: 4096 }, () => {})
-      const parsed = parseReport(text)
-      const html = renderReportHtml(parsed, cfg)
-      setReport(parsed)
-      setReportHtml(html)
-      setReportState('ready')
+      await generateReportAsync({
+        messages: history,
+        conversation: convo,
+        positionTitle: pos ? pos.title : cfg.position,
+        skills: cfg.skills || [],
+        courses: courseCatalog(),
+      })
+      setReportState('submitted')
     } catch (e) {
-      setReportErr('生成报告失败：' + String(e?.message || e))
+      setReportErr('提交报告失败：' + String(e?.message || e))
       setReportState('error')
     }
   }
@@ -576,18 +574,18 @@ export default function InterviewSession() {
         </div>
 
         {/* 评分报告弹窗 */}
-        {(reportState === 'ready' || reportState === 'error' || reportState === 'loading') && (
+        {(reportState === 'submitted' || reportState === 'error' || reportState === 'loading') && (
           <div className="iv-modal-mask" onClick={() => reportState !== 'loading' && setReportState('idle')}>
             <div className="iv-modal" onClick={(e) => e.stopPropagation()}>
               {reportState === 'loading' && (
                 <div className="iv-modal-loading">
                   <div className="iv-spin" />
-                  <p>面试评估官正在结合本次问答为你打分、撰写报告…</p>
+                  <p>正在提交本次面试，生成报告中…</p>
                 </div>
               )}
               {reportState === 'error' && (
                 <div className="iv-modal-body">
-                  <h3>生成失败</h3>
+                  <h3>提交失败</h3>
                   <div className="iv-error">{reportErr}</div>
                   <div className="iv-modal-actions">
                     <button className="btn btn-ghost" onClick={() => setReportState('idle')}>关闭</button>
@@ -595,22 +593,16 @@ export default function InterviewSession() {
                   </div>
                 </div>
               )}
-              {reportState === 'ready' && report && (
+              {reportState === 'submitted' && (
                 <div className="iv-modal-body">
-                  <div className="iv-report-grade">
-                    <div className="iv-grade-badge" style={{ background: gradeMeta(report.grade).color }}>{report.grade}</div>
-                    <div>
-                      <div className="iv-grade-label" style={{ color: gradeMeta(report.grade).color }}>{gradeMeta(report.grade).label}</div>
-                      <div className="iv-grade-desc">{gradeMeta(report.grade).desc}</div>
-                    </div>
-                  </div>
-                  <p className="iv-report-reason">{report.gradeReason}</p>
-                  <p className="iv-report-summary">{report.overallSummary}</p>
-                  <p className="iv-sub">完整报告（含分维度评分、结合实例的亮点与不足、提升建议与课程推荐）可下载或在新窗口查看：</p>
+                  <h3>📄 报告生成中</h3>
+                  <p className="iv-report-summary">
+                    本次面试已结束，评估报告正在后台生成（约 1–2 分钟）。完成后会<strong>发送邮件通知</strong>到你的注册邮箱，
+                    内含下载链接；你也可以随时在<strong>个人中心</strong>查看本次记录与完整报告。
+                  </p>
                   <div className="iv-modal-actions">
-                    <button className="btn btn-ghost" onClick={() => setReportState('idle')}>关闭</button>
-                    <button className="btn btn-ghost" onClick={() => openHtml(reportHtml)}>在新窗口打开</button>
-                    <button className="btn btn-primary" onClick={() => downloadHtml(reportHtml, `面试评估报告_${report.grade}.html`)}>下载 HTML 报告</button>
+                    <button className="btn btn-ghost" onClick={() => setReportState('idle')}>继续留在本页</button>
+                    <button className="btn btn-primary" onClick={() => navigate('/me/interviews')}>去个人中心 →</button>
                   </div>
                 </div>
               )}

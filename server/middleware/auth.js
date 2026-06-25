@@ -4,7 +4,10 @@ import { getUserByToken } from '../lib/users.js'
 export function bearerToken(req) {
   const h = req.headers.authorization || ''
   const m = h.match(/^Bearer\s+(.+)$/i)
-  return m ? m[1].trim() : null
+  if (m) return m[1].trim()
+  // 兜底：iframe / <a> 等无法设置 header 的场景允许 ?token= 传参（用于查看/下载报告）
+  if (req.query && typeof req.query.token === 'string') return req.query.token.trim()
+  return null
 }
 
 // 必须登录；未登录返回 401。

@@ -2,7 +2,15 @@
 //   - getConfig / ping：查询面试官模型是否已在服务端配置、测试连通性
 //   - chatStream / chatOnce：调用面试官（接口地址与密钥在服务端 env 配置，前端不再传）
 //   - runCode：执行用户代码（经后端代理转发到代码执行服务）
+import { getToken } from '../../shared/api.js'
+
 const BASE = (import.meta.env?.VITE_API_BASE || '') + '/api'
+
+// 带上登录 token（面试相关接口需登录）。
+function authHeaders(extra = {}) {
+  const t = getToken()
+  return { ...extra, ...(t ? { authorization: `Bearer ${t}` } : {}) }
+}
 
 // 查询面试官模型配置状态（不含密钥）。
 export async function getInterviewConfig() {
@@ -24,7 +32,7 @@ export async function pingModel() {
 export async function chatStream({ messages, maxTokens }, onDelta, signal) {
   const res = await fetch(BASE + '/interview/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ messages, stream: true, ...(maxTokens ? { maxTokens } : {}) }),
     signal,
   })
@@ -86,7 +94,7 @@ export async function chatOnce({ messages }, signal) {
 export async function synthesizeSpeech(text, signal, speed) {
   const res = await fetch(BASE + '/interview/tts', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ text, ...(speed ? { speed } : {}) }),
     signal,
   })
@@ -98,7 +106,7 @@ export async function synthesizeSpeech(text, signal, speed) {
 export async function transcribeSpeech(blob, signal) {
   const res = await fetch(BASE + '/interview/stt', {
     method: 'POST',
-    headers: { 'content-type': blob.type || 'audio/webm' },
+    headers: authHeaders({ 'content-type': blob.type || 'audio/webm' }),
     body: blob,
     signal,
   })
@@ -111,11 +119,41 @@ export async function transcribeSpeech(blob, signal) {
 export async function runCode({ language, source, stdin = '' }, signal) {
   const res = await fetch(BASE + '/interview/run-code', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ language, source, stdin }),
     signal,
   })
   const data = await res.json().catch(() => null)
   if (!res.ok) throw new Error(data?.message || `代码执行服务异常 (${res.status})`)
   return data
+}
+
+// 异步生成评分报告（后台生成 → 存 COS → 邮件通知）。立即返回 { id, status }。
+export async function generateReportAsync(payload) {
+  const res = await fetch(BASE + '/interview/report', {
+    method: 'POST',
+    headers: authHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message || `提交报告失败 (${res.status})`)
+  return data
+}
+
+// 我的面试记录列表。
+export async function fetchMyInterviews() {
+  const res = await fetch(BASE + '/interview/records', { headers: authHeaders() })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message || `获取记录失败 (${res.status})`)
+  return data?.records || []
+}
+
+// 拿到带 token 的查看/下载链接（用于 iframe / a 标签）。
+export function interviewViewUrl(id) {
+  const t = getToken()
+  return `${BASE}/interview/records/${id}/view${t ? `?token=${encodeURIComponent(t)}` : ''}`
+}
+export function interviewDownloadUrl(id) {
+  const t = getToken()
+  return `${BASE}/interview/records/${id}/download${t ? `?token=${encodeURIComponent(t)}` : ''}`
 }
