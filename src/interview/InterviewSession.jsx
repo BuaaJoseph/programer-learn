@@ -60,6 +60,9 @@ export default function InterviewSession() {
   const voiceURIRef = useRef(voiceURI)
   const mediaRecRef = useRef(null)
   const mediaStreamRef = useRef(null)
+  const sttBaseRef = useRef('')      // 开始识别时输入框已有的文字
+  const sttFinalRef = useRef('')     // 本次识别已确定（final）的文字
+  const silenceTimerRef = useRef(null) // 停顿自动发送计时器
 
   // 云端 TTS 不可用时回退到浏览器内置语音（并提示，避免「以为没生效/还是女声」）
   const fallbackToBrowser = () => {
@@ -120,6 +123,12 @@ export default function InterviewSession() {
     voiceOnRef.current = voiceOn
     if (speakerRef.current) speakerRef.current.setEnabled(voiceOn)
   }, [voiceOn])
+
+  // 卸载时清理识别器与静音计时器
+  useEffect(() => () => {
+    clearTimeout(silenceTimerRef.current)
+    try { recRef.current && recRef.current.stop() } catch { /* ignore */ }
+  }, [])
 
   const onPickVoice = (uri) => {
     setVoiceURI(uri)
@@ -300,13 +309,31 @@ export default function InterviewSession() {
       return
     }
     if (speakerRef.current) speakerRef.current.stop()
+    // 实时识别：边说边把文字填进输入框；停顿 ~2.5s 自动发送，无需手动点
+    sttBaseRef.current = input ? input.trim() + ' ' : ''
+    sttFinalRef.current = ''
+    const armSilence = () => {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = setTimeout(() => {
+        const text = (sttBaseRef.current + sttFinalRef.current).trim()
+        try { recRef.current && recRef.current.stop() } catch { /* ignore */ }
+        if (text && !busy) send(text)
+      }, 2500)
+    }
     const rec = createRecognizer({
       lang: 'zh-CN',
       onResult: (t, isFinal) => {
-        if (isFinal) setInput((prev) => (prev ? prev + ' ' : '') + t)
+        if (isFinal) {
+          sttFinalRef.current = (sttFinalRef.current ? sttFinalRef.current + ' ' : '') + t
+          setInput(sttBaseRef.current + sttFinalRef.current)
+        } else {
+          // 中间结果：实时预览（不落库），让用户看到边说边出字
+          setInput(sttBaseRef.current + (sttFinalRef.current ? sttFinalRef.current + ' ' : '') + t)
+        }
+        armSilence()
       },
-      onError: () => setListening(false),
-      onEnd: () => setListening(false),
+      onError: () => { clearTimeout(silenceTimerRef.current); setListening(false) },
+      onEnd: () => { clearTimeout(silenceTimerRef.current); setListening(false) },
     })
     if (!rec) return
     recRef.current = rec
@@ -466,7 +493,7 @@ export default function InterviewSession() {
                     onKeyDown={onAnswerKeyDown}
                     placeholder={
                       transcribing ? '正在转写录音…'
-                        : listening ? (sttMode === 'cloud' ? '正在录音，再次点击麦克风停止并转写…' : '正在聆听，请说话…（识别结果会填到这里）')
+                        : listening ? (sttMode === 'cloud' ? '正在录音，再次点击麦克风停止并转写…' : '正在聆听，边说边出字，停顿约 2.5 秒自动发送…')
                           : '输入你的回答（Enter 发送，Alt+Enter 换行），或点麦克风语音作答'
                     }
                     rows={3}
