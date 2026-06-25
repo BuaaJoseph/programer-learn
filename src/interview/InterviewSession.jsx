@@ -54,6 +54,19 @@ export default function InterviewSession() {
   const ttsBufRef = useRef('') // TTS 按句朗读的缓冲
   const scrollRef = useRef(null)
   const abortRef = useRef(null)
+  const voiceOnRef = useRef(voiceOn)
+  const voiceURIRef = useRef(voiceURI)
+
+  // 云端 TTS 不可用时回退到浏览器内置语音
+  const fallbackToBrowser = () => {
+    if (!ttsSupported()) return
+    try { speakerRef.current && speakerRef.current.stop() } catch { /* ignore */ }
+    const b = createBrowserSpeaker({ lang: 'zh-CN' })
+    b.setEnabled(voiceOnRef.current)
+    if (voiceURIRef.current) b.setVoiceURI(voiceURIRef.current)
+    speakerRef.current = b
+    setTtsMode('browser')
+  }
 
   // 无配置则回设置页
   useEffect(() => {
@@ -69,7 +82,7 @@ export default function InterviewSession() {
       .then((c) => {
         if (disposed) return
         if (c?.ttsConfigured) {
-          speakerRef.current = createCloudSpeaker({ synthesize: synthesizeSpeech })
+          speakerRef.current = createCloudSpeaker({ synthesize: synthesizeSpeech, onUnavailable: fallbackToBrowser })
           setTtsMode('cloud')
         } else if (ttsSupported()) {
           speakerRef.current = createBrowserSpeaker({ lang: 'zh-CN' })
@@ -98,11 +111,13 @@ export default function InterviewSession() {
   }, [])
 
   useEffect(() => {
+    voiceOnRef.current = voiceOn
     if (speakerRef.current) speakerRef.current.setEnabled(voiceOn)
   }, [voiceOn])
 
   const onPickVoice = (uri) => {
     setVoiceURI(uri)
+    voiceURIRef.current = uri
     localStorage.setItem('interview.voiceURI', uri || '')
     if (speakerRef.current) speakerRef.current.setVoiceURI(uri)
   }

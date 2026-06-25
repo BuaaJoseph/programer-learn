@@ -32,10 +32,16 @@ function readModelConfig() {
 }
 
 // —— 读取云端神经 TTS 配置（OpenAI 兼容 /v1/audio/speech）——
-// 未配置则前端自动回退到浏览器内置 TTS。
+// 默认复用聊天模型的 base + token（多数中转一套 key 同时支持 OpenAI 全部接口）；
+// 也可用 INTERVIEW_TTS_* 单独指定；设 INTERVIEW_TTS_DISABLED=1 可强制关闭、回退浏览器语音。
 function readTtsConfig() {
-  const base = (process.env.INTERVIEW_TTS_BASE_URL || process.env.INTERVIEW_TTS_URL || '').trim().replace(/\/+$/, '')
-  const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY || '').trim()
+  if (/^(1|true|yes|on)$/i.test(process.env.INTERVIEW_TTS_DISABLED || '')) {
+    return { base: '', token: '', model: '', voice: '', format: 'mp3', configured: false }
+  }
+  const base = (process.env.INTERVIEW_TTS_BASE_URL || process.env.INTERVIEW_TTS_URL ||
+    process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
+  const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
+    process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
   const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
   const voice = (process.env.INTERVIEW_TTS_VOICE || 'nova').trim()
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()

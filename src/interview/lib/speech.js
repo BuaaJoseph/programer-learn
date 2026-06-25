@@ -154,13 +154,16 @@ export function createBrowserSpeaker({ lang = 'zh-CN', rate = 1, pitch = 1 } = {
 
 // 云端神经 TTS：synthesize(text, signal) => Promise<ArrayBuffer(mp3)>。
 // 逐句并发请求音频、按顺序播放，接近 ChatGPT 的连贯自然语音。
-export function createCloudSpeaker({ synthesize }) {
+// onUnavailable：首句合成就失败（如中转不支持语音接口）时回调一次，便于上层回退浏览器语音。
+export function createCloudSpeaker({ synthesize, onUnavailable }) {
   let enabled = true
   let jobs = []      // { promise, ac }
   let idx = 0
   let running = false
   let curAudio = null
   let curUrl = null
+  let playedAny = false
+  let notified = false
 
   async function loop() {
     running = true
@@ -170,6 +173,7 @@ export function createCloudSpeaker({ synthesize }) {
       try { buf = await job.promise } catch { buf = null }
       if (!enabled) break
       if (buf && buf.byteLength) {
+        playedAny = true
         const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
         curUrl = url
         const a = new Audio(url)
@@ -181,6 +185,10 @@ export function createCloudSpeaker({ synthesize }) {
         })
         if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = null }
         curAudio = null
+      } else if (!playedAny && !notified) {
+        // 一句都没成功 → 大概率是接口不支持/鉴权失败，通知上层回退
+        notified = true
+        onUnavailable && onUnavailable()
       }
       idx++
     }
