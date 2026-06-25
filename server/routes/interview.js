@@ -60,15 +60,20 @@ function readTtsConfig() {
     process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
   const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
     process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
-  // 默认 tts-1 + 男声 onyx（几乎所有 OpenAI 兼容中转都支持，开箱即用的男声）；
-  // 想更拟人可在 env 改成 gpt-4o-mini-tts（支持 instructions 控制语气，但需中转支持该模型）。
+  // 默认 tts-1 + 男声 onyx（OpenAI 兼容中转多支持的标准 TTS 接口 /v1/audio/speech）。
   const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
-  const voice = (process.env.INTERVIEW_TTS_VOICE || 'onyx').trim()
+  // 两种合成方式：
+  //   speech：标准 /v1/audio/speech（tts-1 / tts-1-hd / gpt-4o-mini-tts）
+  //   chat  ：用音频对话模型经 /v1/chat/completions 输出音频（gpt-4o-audio-preview 等，
+  //           适合中转没开 /v1/audio/speech、但有 gpt-4o-audio-preview 的情况）
+  const explicitMode = (process.env.INTERVIEW_TTS_MODE || '').trim().toLowerCase()
+  const mode = explicitMode || (/audio-preview|gpt-4o-audio|gpt-4o-mini-audio|realtime/i.test(model) ? 'chat' : 'speech')
+  // 音色：chat 模式用音频对话模型支持的男声（ash/echo/ballad…），speech 模式用 onyx。
+  const voice = (process.env.INTERVIEW_TTS_VOICE || (mode === 'chat' ? 'ash' : 'onyx')).trim()
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
-  // gpt-4o-mini-tts 支持 instructions 控制语气，让男声更像真人面试官。
   const instructions = (process.env.INTERVIEW_TTS_INSTRUCTIONS ||
     '你是一位资深技术面试官，用沉稳、亲和、自然的中年男声说话；语气口语化、有真人感，语速适中、有恰当停顿，不要机械腔和念稿感。').trim()
-  return { base, token, model, voice, format, instructions, configured: !!(base && token) }
+  return { base, token, model, voice, format, instructions, mode, configured: !!(base && token) }
 }
 
 // —— 读取云端语音识别（Whisper，OpenAI 兼容 /v1/audio/transcriptions）——
@@ -92,6 +97,60 @@ function sttEndpoint(cfg) {
 
 function ttsEndpoint(cfg) {
   return /\/audio\/speech$/.test(cfg.base) ? cfg.base : `${cfg.base}/v1/audio/speech`
+}
+
+function chatCompletionsEndpoint(base) {
+  return /\/chat\/completions$/.test(base) ? base : `${base}/v1/chat/completions`
+}
+
+// 合成一段语音，返回 { ok, status?, buffer?, message? }。
+// speech 模式：标准 /v1/audio/speech；chat 模式：音频对话模型经 /v1/chat/completions 输出音频。
+async function synthTts(tts, text) {
+  if (tts.mode === 'chat') {
+    const body = {
+      model: tts.model,
+      modalities: ['text', 'audio'],
+      audio: { voice: tts.voice, format: tts.format },
+      messages: [
+        { role: 'system', content: '你是一个文本转语音引擎。把用户消息中的文字一字不差地用中文朗读出来；不要新增、省略、改写、翻译或解释任何内容，也不要寒暄或回应。' },
+        { role: 'user', content: text },
+      ],
+    }
+    let r
+    try {
+      r = await fetch(chatCompletionsEndpoint(tts.base), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
+        body: JSON.stringify(body),
+      })
+    } catch (e) { return { ok: false, status: 502, message: 'TTS 服务不可达：' + String(e?.message || e) } }
+    if (!r.ok) {
+      let d = ''; try { d = await r.text() } catch { /* ignore */ }
+      return { ok: false, status: r.status, message: `TTS 接口错误 (${r.status})：${d.slice(0, 160)}` }
+    }
+    let data
+    try { data = await r.json() } catch { return { ok: false, status: 502, message: 'TTS 返回解析失败' } }
+    const b64 = data?.choices?.[0]?.message?.audio?.data
+    if (!b64) return { ok: false, status: 502, message: 'TTS 返回里没有音频数据（该模型可能不支持音频输出）' }
+    return { ok: true, buffer: Buffer.from(b64, 'base64') }
+  }
+  // speech 模式
+  const body = { model: tts.model, voice: tts.voice, input: text, response_format: tts.format }
+  if (/gpt-4o/i.test(tts.model) && tts.instructions) body.instructions = tts.instructions
+  let r
+  try {
+    r = await fetch(ttsEndpoint(tts), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
+      body: JSON.stringify(body),
+    })
+  } catch (e) { return { ok: false, status: 502, message: 'TTS 服务不可达：' + String(e?.message || e) } }
+  if (!r.ok) {
+    let d = ''; try { d = await r.text() } catch { /* ignore */ }
+    return { ok: false, status: r.status, message: `TTS 接口错误 (${r.status})：${d.slice(0, 160)}` }
+  }
+  const ab = await r.arrayBuffer()
+  return { ok: true, buffer: Buffer.from(ab) }
 }
 
 // OpenAI 风格 messages → Anthropic Messages 请求体。
@@ -215,36 +274,14 @@ router.post('/tts', async (req, res) => {
   if (!tts.configured) return res.status(503).json({ error: 'tts_not_configured', message: '未配置云端 TTS' })
   if (!text) return res.status(400).json({ error: 'empty_text', message: '文本为空' })
 
-  const ttsBody = { model: tts.model, voice: tts.voice, input: text, response_format: tts.format }
-  // 仅 gpt-4o 系列 TTS 支持 instructions（用来控制语气更拟人）。
-  if (/gpt-4o/i.test(tts.model) && tts.instructions) ttsBody.instructions = tts.instructions
-
-  let upstream
-  try {
-    upstream = await fetch(ttsEndpoint(tts), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
-      body: JSON.stringify(ttsBody),
-    })
-  } catch (err) {
-    console.error('[interview/tts] 上游不可达:', err)
-    return res.status(502).json({ error: 'tts_unreachable', message: 'TTS 服务不可达' })
-  }
-  if (!upstream.ok || !upstream.body) {
-    let detail = ''
-    try { detail = await upstream.text() } catch { /* ignore */ }
-    console.error('[interview/tts] 上游错误:', upstream.status, detail.slice(0, 300))
-    return res.status(502).json({ error: 'tts_error', message: `TTS 接口错误 (${upstream.status})` })
+  const out = await synthTts(tts, text)
+  if (!out.ok) {
+    console.error('[interview/tts] 失败:', out.message)
+    return res.status(502).json({ error: 'tts_error', message: out.message })
   }
   res.setHeader('content-type', 'audio/mpeg')
   res.setHeader('cache-control', 'no-store')
-  try {
-    for await (const chunk of upstream.body) res.write(chunk)
-  } catch (err) {
-    console.error('[interview/tts] 音频透传中断:', err)
-  } finally {
-    res.end()
-  }
+  res.send(out.buffer)
 })
 
 // 抓取简历链接内容（服务端代理，规避浏览器跨域；带 SSRF 防护与大小限制）。
@@ -308,28 +345,14 @@ router.post('/ping', async (_req, res) => {
     }
     const data = await r.json()
     const sample = extractText(cfg.style, data)
-    // 顺带探测云端 TTS 是否可用，便于排查「还是女声（其实是回退到了浏览器语音）」
+    // 顺带探测云端 TTS 是否可用（含 speech / chat 两种方式），便于排查「还是女声（其实回退到了浏览器语音）」
     const tts = readTtsConfig()
     let ttsResult = { configured: false }
     if (tts.configured) {
-      try {
-        const tb = { model: tts.model, voice: tts.voice, input: '测试', response_format: tts.format }
-        if (/gpt-4o/i.test(tts.model) && tts.instructions) tb.instructions = tts.instructions
-        const tr = await fetch(ttsEndpoint(tts), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
-          body: JSON.stringify(tb),
-        })
-        if (tr.ok) {
-          ttsResult = { configured: true, ok: true, message: `云端语音正常（${tts.model} / ${tts.voice}）` }
-        } else {
-          let d = ''
-          try { d = await tr.text() } catch { /* ignore */ }
-          ttsResult = { configured: true, ok: false, message: `云端语音失败 (${tr.status})：${d.slice(0, 160) || '检查 INTERVIEW_TTS_MODEL/VOICE'}` }
-        }
-      } catch (e) {
-        ttsResult = { configured: true, ok: false, message: '云端语音不可达：' + String(e?.message || e) }
-      }
+      const out = await synthTts(tts, '测试')
+      ttsResult = out.ok
+        ? { configured: true, ok: true, message: `云端语音正常（${tts.model} / ${tts.voice}${tts.mode === 'chat' ? ' · chat 模式' : ''}）` }
+        : { configured: true, ok: false, message: out.message + `（当前 mode=${tts.mode}，model=${tts.model}）` }
     }
     res.json({ ok: true, message: '连通正常', model: cfg.model, sample: (sample || '').slice(0, 80), tts: ttsResult })
   } catch (err) {
