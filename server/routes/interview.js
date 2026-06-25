@@ -6,7 +6,7 @@
 //
 // 面试官模型的「接口地址 + 密钥」改为在服务端 env 配置（类似 Claude Code 的配置方式），
 // 不再由前端页面填写。默认走 Anthropic Messages 协议（与 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 对齐）。
-import { Router } from 'express'
+import express, { Router } from 'express'
 
 const router = Router()
 
@@ -42,10 +42,33 @@ function readTtsConfig() {
     process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
   const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
     process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
-  const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
-  const voice = (process.env.INTERVIEW_TTS_VOICE || 'nova').trim()
+  // 默认用更拟人的 gpt-4o-mini-tts + 男声 onyx；中转若不支持可在 env 改回 tts-1/tts-1-hd。
+  const model = (process.env.INTERVIEW_TTS_MODEL || 'gpt-4o-mini-tts').trim()
+  const voice = (process.env.INTERVIEW_TTS_VOICE || 'onyx').trim()
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
-  return { base, token, model, voice, format, configured: !!(base && token) }
+  // gpt-4o-mini-tts 支持 instructions 控制语气，让男声更像真人面试官。
+  const instructions = (process.env.INTERVIEW_TTS_INSTRUCTIONS ||
+    '你是一位资深技术面试官，用沉稳、亲和、自然的中年男声说话；语气口语化、有真人感，语速适中、有恰当停顿，不要机械腔和念稿感。').trim()
+  return { base, token, model, voice, format, instructions, configured: !!(base && token) }
+}
+
+// —— 读取云端语音识别（Whisper，OpenAI 兼容 /v1/audio/transcriptions）——
+// 默认复用聊天 base + token；设 INTERVIEW_STT_DISABLED=1 强制用浏览器识别。
+function readSttConfig() {
+  if (/^(1|true|yes|on)$/i.test(process.env.INTERVIEW_STT_DISABLED || '')) {
+    return { base: '', token: '', model: '', language: '', configured: false }
+  }
+  const base = (process.env.INTERVIEW_STT_BASE_URL || process.env.INTERVIEW_BASE_URL ||
+    process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
+  const token = (process.env.INTERVIEW_STT_TOKEN || process.env.INTERVIEW_AUTH_TOKEN ||
+    process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
+  const model = (process.env.INTERVIEW_STT_MODEL || 'whisper-1').trim()
+  const language = (process.env.INTERVIEW_STT_LANGUAGE || 'zh').trim()
+  return { base, token, model, language, configured: !!(base && token) }
+}
+
+function sttEndpoint(cfg) {
+  return /\/audio\/transcriptions$/.test(cfg.base) ? cfg.base : `${cfg.base}/v1/audio/transcriptions`
 }
 
 function ttsEndpoint(cfg) {
@@ -117,11 +140,53 @@ function writeDelta(res, text) {
 router.get('/config', (_req, res) => {
   const cfg = readModelConfig()
   const tts = readTtsConfig()
+  const stt = readSttConfig()
   res.json({
     configured: cfg.configured, style: cfg.style, model: cfg.model,
     hasBase: !!cfg.base, hasToken: !!cfg.token,
     ttsConfigured: tts.configured, ttsVoice: tts.configured ? tts.voice : null,
+    sttConfigured: stt.configured,
   })
+})
+
+// 云端语音识别：接收前端录的音频（原始字节），转写为文本返回。
+router.post('/stt', express.raw({ type: () => true, limit: '25mb' }), async (req, res) => {
+  const cfg = readSttConfig()
+  if (!cfg.configured) return res.status(503).json({ error: 'stt_not_configured', message: '未配置云端语音识别' })
+  const buf = req.body
+  if (!buf || !buf.length) return res.status(400).json({ error: 'empty_audio', message: '音频为空' })
+
+  const ct = String(req.headers['content-type'] || 'audio/webm').split(';')[0].trim()
+  const ext = ct.includes('mp4') || ct.includes('m4a') ? 'mp4'
+    : ct.includes('mpeg') || ct.includes('mp3') ? 'mp3'
+    : ct.includes('wav') ? 'wav'
+    : ct.includes('ogg') ? 'ogg' : 'webm'
+
+  const form = new FormData()
+  form.append('file', new Blob([buf], { type: ct }), `audio.${ext}`)
+  form.append('model', cfg.model)
+  if (cfg.language) form.append('language', cfg.language)
+
+  let r
+  try {
+    r = await fetch(sttEndpoint(cfg), { method: 'POST', headers: { authorization: `Bearer ${cfg.token}` }, body: form })
+  } catch (err) {
+    console.error('[interview/stt] 上游不可达:', err)
+    return res.status(502).json({ error: 'stt_unreachable', message: '语音识别服务不可达' })
+  }
+  if (!r.ok) {
+    let detail = ''
+    try { detail = await r.text() } catch { /* ignore */ }
+    console.error('[interview/stt] 上游错误:', r.status, detail.slice(0, 300))
+    return res.status(502).json({ error: 'stt_error', message: `语音识别接口错误 (${r.status})` })
+  }
+  try {
+    const data = await r.json()
+    res.json({ text: data?.text || '' })
+  } catch (err) {
+    console.error('[interview/stt] 解析失败:', err)
+    res.status(502).json({ error: 'bad_stt', message: '识别结果解析失败' })
+  }
 })
 
 // 云端神经 TTS：把文本合成为语音（mp3）返回给前端播放。
@@ -131,12 +196,16 @@ router.post('/tts', async (req, res) => {
   if (!tts.configured) return res.status(503).json({ error: 'tts_not_configured', message: '未配置云端 TTS' })
   if (!text) return res.status(400).json({ error: 'empty_text', message: '文本为空' })
 
+  const ttsBody = { model: tts.model, voice: tts.voice, input: text, response_format: tts.format }
+  // 仅 gpt-4o 系列 TTS 支持 instructions（用来控制语气更拟人）。
+  if (/gpt-4o/i.test(tts.model) && tts.instructions) ttsBody.instructions = tts.instructions
+
   let upstream
   try {
     upstream = await fetch(ttsEndpoint(tts), {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
-      body: JSON.stringify({ model: tts.model, voice: tts.voice, input: text, response_format: tts.format }),
+      body: JSON.stringify(ttsBody),
     })
   } catch (err) {
     console.error('[interview/tts] 上游不可达:', err)

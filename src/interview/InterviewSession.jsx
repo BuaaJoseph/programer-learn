@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import CodeEditor from './components/CodeEditor.jsx'
-import { chatStream, chatOnce, getInterviewConfig, synthesizeSpeech } from './lib/api.js'
+import { chatStream, chatOnce, getInterviewConfig, synthesizeSpeech, transcribeSpeech } from './lib/api.js'
 import { loadConfig, buildSystemPrompt, STAGES } from './lib/session.js'
 import {
   buildReportPrompt, parseReport, renderReportHtml, downloadHtml, openHtml, gradeMeta,
@@ -35,6 +35,8 @@ export default function InterviewSession() {
   const [started, setStarted] = useState(false)
 
   const [listening, setListening] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [sttMode, setSttMode] = useState('browser') // 'cloud'(Whisper) | 'browser'
   const [voiceOn, setVoiceOn] = useState(cfg?.voice !== false)
   const [ttsMode, setTtsMode] = useState('browser') // 'cloud' | 'browser'
   const [zhVoices, setZhVoices] = useState([])
@@ -56,6 +58,8 @@ export default function InterviewSession() {
   const abortRef = useRef(null)
   const voiceOnRef = useRef(voiceOn)
   const voiceURIRef = useRef(voiceURI)
+  const mediaRecRef = useRef(null)
+  const mediaStreamRef = useRef(null)
 
   // 云端 TTS 不可用时回退到浏览器内置语音
   const fallbackToBrowser = () => {
@@ -81,6 +85,7 @@ export default function InterviewSession() {
     getInterviewConfig()
       .then((c) => {
         if (disposed) return
+        if (c?.sttConfigured) setSttMode('cloud')
         if (c?.ttsConfigured) {
           speakerRef.current = createCloudSpeaker({ synthesize: synthesizeSpeech, onUnavailable: fallbackToBrowser })
           setTtsMode('cloud')
@@ -196,8 +201,71 @@ export default function InterviewSession() {
     await runTurn(history)
   }
 
-  // 语音识别开关
+  // 回车发送、Alt/Shift+回车换行；中文输入法组字中的回车不触发发送。
+  const onAnswerKeyDown = (e) => {
+    if (e.key !== 'Enter') return
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return
+    if (e.altKey || e.shiftKey) {
+      e.preventDefault()
+      const el = e.target
+      const s = el.selectionStart, en = el.selectionEnd
+      const next = input.slice(0, s) + '\n' + input.slice(en)
+      setInput(next)
+      requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = s + 1 })
+      return
+    }
+    e.preventDefault()
+    if (!busy && input.trim()) send()
+  }
+
+  // 云端 Whisper 录音：按一下开始录、再按一下停止并转写（更准、支持各浏览器）
+  const startCloudMic = async () => {
+    if (speakerRef.current) speakerRef.current.stop()
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setError('无法访问麦克风，请检查浏览器权限')
+      return
+    }
+    mediaStreamRef.current = stream
+    const mime = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
+      ? 'audio/webm'
+      : (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '')
+    const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+    const chunks = []
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data) }
+    mr.onstop = async () => {
+      if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach((t) => t.stop())
+      setListening(false)
+      const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+      if (!blob.size) return
+      setTranscribing(true)
+      try {
+        const text = await transcribeSpeech(blob)
+        if (text) setInput((prev) => (prev ? prev + ' ' : '') + text)
+      } catch (e) {
+        setError('语音转写失败：' + String(e?.message || e))
+      } finally {
+        setTranscribing(false)
+      }
+    }
+    mediaRecRef.current = mr
+    mr.start()
+    setListening(true)
+  }
+  const stopCloudMic = () => {
+    try { if (mediaRecRef.current && mediaRecRef.current.state !== 'inactive') mediaRecRef.current.stop() } catch { /* ignore */ }
+  }
+
+  // 语音识别开关：优先云端 Whisper，未配置则用浏览器原生识别
   const toggleMic = () => {
+    if (transcribing) return
+    if (sttMode === 'cloud') {
+      if (listening) stopCloudMic()
+      else startCloudMic()
+      return
+    }
     if (!sttSupported()) {
       setError('当前浏览器不支持语音识别，请用 Chrome / Edge，或直接打字作答')
       return
@@ -369,20 +437,25 @@ export default function InterviewSession() {
                     className="iv-answer"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
-                    placeholder={listening ? '正在聆听，请说话…（识别结果会填到这里）' : '输入你的回答，或点麦克风语音作答（Ctrl/⌘+Enter 发送）'}
+                    onKeyDown={onAnswerKeyDown}
+                    placeholder={
+                      transcribing ? '正在转写录音…'
+                        : listening ? (sttMode === 'cloud' ? '正在录音，再次点击麦克风停止并转写…' : '正在聆听，请说话…（识别结果会填到这里）')
+                          : '输入你的回答（Enter 发送，Alt+Enter 换行），或点麦克风语音作答'
+                    }
                     rows={3}
-                    disabled={busy}
+                    disabled={busy || transcribing}
                   />
                   <div className="iv-input-actions">
                     <button
                       className={`iv-mic ${listening ? 'on' : ''}`}
                       onClick={toggleMic}
-                      disabled={busy}
-                      title="语音作答"
+                      disabled={busy || transcribing}
+                      title={sttMode === 'cloud' ? '语音作答（Whisper 识别）' : '语音作答'}
                     >
-                      {listening ? '● 停止录音' : '🎤 语音'}
+                      {transcribing ? '转写中…' : listening ? (sttMode === 'cloud' ? '● 停止并转写' : '● 停止录音') : '🎤 语音'}
                     </button>
+                    <span className="iv-kbd-hint">Enter 发送 · Alt+Enter 换行</span>
                     <div className="iv-spacer" />
                     {busy && <button className="btn btn-ghost ce-small" onClick={stop}>停止</button>}
                     <button className="btn btn-primary" onClick={() => send()} disabled={busy || !input.trim()}>发送</button>

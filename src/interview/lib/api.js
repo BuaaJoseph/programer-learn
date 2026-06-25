@@ -93,6 +93,19 @@ export async function synthesizeSpeech(text, signal) {
   return res.arrayBuffer()
 }
 
+// 云端语音识别（Whisper）：把录音 Blob 转写成文本。
+export async function transcribeSpeech(blob, signal) {
+  const res = await fetch(BASE + '/interview/stt', {
+    method: 'POST',
+    headers: { 'content-type': blob.type || 'audio/webm' },
+    body: blob,
+    signal,
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message || `语音识别失败 (${res.status})`)
+  return data?.text || ''
+}
+
 // 执行代码。language: 'java' | 'python'。返回 { stdout, stderr, code, output }。
 export async function runCode({ language, source, stdin = '' }, signal) {
   const res = await fetch(BASE + '/interview/run-code', {
