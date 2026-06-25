@@ -8,6 +8,7 @@
 // 不再由前端页面填写。默认走 Anthropic Messages 协议（与 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 对齐）。
 import express, { Router } from 'express'
 import { lookup } from 'node:dns/promises'
+import crypto from 'node:crypto'
 
 const router = Router()
 
@@ -54,8 +55,29 @@ function readModelConfig() {
 // 也可用 INTERVIEW_TTS_* 单独指定；设 INTERVIEW_TTS_DISABLED=1 可强制关闭、回退浏览器语音。
 function readTtsConfig() {
   if (/^(1|true|yes|on)$/i.test(process.env.INTERVIEW_TTS_DISABLED || '')) {
-    return { base: '', token: '', model: '', voice: '', format: 'mp3', configured: false }
+    return { provider: 'none', configured: false }
   }
+  const provider = (process.env.INTERVIEW_TTS_PROVIDER || 'openai').trim().toLowerCase()
+
+  // —— 腾讯云语音合成（TextToVoice，TC3-HMAC-SHA256 签名）——
+  if (provider === 'tencent') {
+    const secretId = (process.env.TENCENT_SECRET_ID || process.env.INTERVIEW_TTS_SECRET_ID || '').trim()
+    const secretKey = (process.env.TENCENT_SECRET_KEY || process.env.INTERVIEW_TTS_SECRET_KEY || '').trim()
+    const region = (process.env.TENCENT_TTS_REGION || 'ap-guangzhou').trim()
+    // VoiceType：默认 101004（通用男声·智云，稳定可用）。更拟人的「大模型音色」男声见 .env 说明。
+    const voiceType = Number(process.env.INTERVIEW_TTS_VOICE || 101004)
+    const speed = Number(process.env.INTERVIEW_TTS_SPEED || 0)
+    const volume = Number(process.env.INTERVIEW_TTS_VOLUME || 0)
+    const sampleRate = Number(process.env.INTERVIEW_TTS_SAMPLE_RATE || 16000)
+    return {
+      provider: 'tencent', secretId, secretKey, region,
+      voiceType, speed, volume, sampleRate,
+      voice: String(voiceType), model: 'tencent-tts', mode: 'tencent',
+      configured: !!(secretId && secretKey),
+    }
+  }
+
+  // —— OpenAI 兼容（默认）——
   const base = (process.env.INTERVIEW_TTS_BASE_URL || process.env.INTERVIEW_TTS_URL ||
     process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
   // 单独提供的 TTS 密钥（用独立 OpenAI key 时必填）
@@ -83,7 +105,7 @@ function readTtsConfig() {
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
   const instructions = (process.env.INTERVIEW_TTS_INSTRUCTIONS ||
     '你是一位资深技术面试官，用沉稳、亲和、自然的中年男声说话；语气口语化、有真人感，语速适中、有恰当停顿，不要机械腔和念稿感。').trim()
-  return { base, token, model, voice, format, instructions, mode, tokenLikelyWrong, configured: !!(base && token) }
+  return { provider: 'openai', base, token, model, voice, format, instructions, mode, tokenLikelyWrong, configured: !!(base && token) }
 }
 
 // —— 读取云端语音识别（Whisper，OpenAI 兼容 /v1/audio/transcriptions）——
@@ -124,9 +146,76 @@ async function fetchWithTimeout(url, opts, ms = 25000) {
   }
 }
 
+// 腾讯云语音合成（TextToVoice）：自实现 TC3-HMAC-SHA256 签名，返回 mp3 buffer。
+// 文档：https://cloud.tencent.com/document/product/1073/37995
+async function synthTencent(cfg, text) {
+  const host = 'tts.tencentcloudapi.com'
+  const service = 'tts'
+  const action = 'TextToVoice'
+  const version = '2019-08-23'
+
+  const payload = JSON.stringify({
+    Text: text,
+    SessionId: crypto.randomUUID(),
+    ModelType: 1,
+    VoiceType: cfg.voiceType,
+    Volume: cfg.volume || 0,
+    Speed: cfg.speed || 0,
+    SampleRate: cfg.sampleRate || 16000,
+    Codec: 'mp3',
+  })
+
+  const ts = Math.floor(Date.now() / 1000)
+  const date = new Date(ts * 1000).toISOString().slice(0, 10) // UTC yyyy-mm-dd
+  const sha256hex = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex')
+  const hmac = (key, s) => crypto.createHmac('sha256', key).update(s, 'utf8').digest()
+
+  // 1) 规范请求串
+  const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n`
+  const signedHeaders = 'content-type;host;x-tc-action'
+  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, sha256hex(payload)].join('\n')
+  // 2) 待签名字符串
+  const credentialScope = `${date}/${service}/tc3_request`
+  const stringToSign = ['TC3-HMAC-SHA256', ts, credentialScope, sha256hex(canonicalRequest)].join('\n')
+  // 3) 计算签名
+  const secretDate = hmac('TC3' + cfg.secretKey, date)
+  const secretService = hmac(secretDate, service)
+  const secretSigning = hmac(secretService, 'tc3_request')
+  const signature = crypto.createHmac('sha256', secretSigning).update(stringToSign, 'utf8').digest('hex')
+  // 4) Authorization
+  const authorization = `TC3-HMAC-SHA256 Credential=${cfg.secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
+
+  let r
+  try {
+    r = await fetchWithTimeout(`https://${host}`, {
+      method: 'POST',
+      headers: {
+        Authorization: authorization,
+        'Content-Type': 'application/json; charset=utf-8',
+        Host: host,
+        'X-TC-Action': action,
+        'X-TC-Timestamp': String(ts),
+        'X-TC-Version': version,
+        'X-TC-Region': cfg.region || 'ap-guangzhou',
+      },
+      body: payload,
+    })
+  } catch (e) {
+    const to = e?.name === 'AbortError'
+    return { ok: false, status: 504, message: to ? '腾讯云 TTS 请求超时（检查服务器到腾讯云网络）' : '腾讯云 TTS 不可达：' + String(e?.message || e) }
+  }
+  let data
+  try { data = await r.json() } catch { return { ok: false, status: 502, message: '腾讯云 TTS 返回解析失败' } }
+  const resp = data?.Response
+  if (resp?.Error) return { ok: false, status: 502, message: `腾讯云 TTS 错误：${resp.Error.Code} - ${resp.Error.Message}` }
+  if (!resp?.Audio) return { ok: false, status: 502, message: '腾讯云 TTS 未返回音频数据' }
+  return { ok: true, buffer: Buffer.from(resp.Audio, 'base64') }
+}
+
 // 合成一段语音，返回 { ok, status?, buffer?, message? }。
-// speech 模式：标准 /v1/audio/speech；chat 模式：音频对话模型经 /v1/chat/completions 输出音频。
+// provider=tencent：腾讯云 TextToVoice；否则 OpenAI 兼容（speech / chat 两种方式）。
 async function synthTts(tts, text) {
+  if (tts.provider === 'tencent') return synthTencent(tts, text)
   if (tts.mode === 'chat') {
     const body = {
       model: tts.model,
