@@ -58,8 +58,18 @@ function readTtsConfig() {
   }
   const base = (process.env.INTERVIEW_TTS_BASE_URL || process.env.INTERVIEW_TTS_URL ||
     process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
-  const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
-    process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
+  // 单独提供的 TTS 密钥（用独立 OpenAI key 时必填）
+  const explicitToken = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
+    process.env.INTERVIEW_TTS_KEY || '').trim()
+  // 未单独提供时，回退复用聊天 token（仅当 TTS 与聊天是同一个服务时才有效）
+  const token = (explicitToken || process.env.INTERVIEW_AUTH_TOKEN ||
+    process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
+  // 若 TTS 接口地址与聊天不是同一主机、又没单独配 token，多半会鉴权失败——标记出来给出精确提示
+  const chatBase = (process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
+  let tokenLikelyWrong = false
+  if (!explicitToken && base && chatBase) {
+    try { tokenLikelyWrong = new URL(base).host !== new URL(chatBase).host } catch { /* ignore */ }
+  }
   // 默认 tts-1 + 男声 onyx（OpenAI 兼容中转多支持的标准 TTS 接口 /v1/audio/speech）。
   const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
   // 两种合成方式：
@@ -73,7 +83,7 @@ function readTtsConfig() {
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
   const instructions = (process.env.INTERVIEW_TTS_INSTRUCTIONS ||
     '你是一位资深技术面试官，用沉稳、亲和、自然的中年男声说话；语气口语化、有真人感，语速适中、有恰当停顿，不要机械腔和念稿感。').trim()
-  return { base, token, model, voice, format, instructions, mode, configured: !!(base && token) }
+  return { base, token, model, voice, format, instructions, mode, tokenLikelyWrong, configured: !!(base && token) }
 }
 
 // —— 读取云端语音识别（Whisper，OpenAI 兼容 /v1/audio/transcriptions）——
@@ -350,9 +360,13 @@ router.post('/ping', async (_req, res) => {
     let ttsResult = { configured: false }
     if (tts.configured) {
       const out = await synthTts(tts, '测试')
+      let extra = `（当前 mode=${tts.mode}，model=${tts.model}）`
+      if (!out.ok && tts.tokenLikelyWrong) {
+        extra += ' ⚠ TTS 接口地址与聊天不同，但没单独设 INTERVIEW_TTS_TOKEN，正在误用聊天 token——请设置独立的 INTERVIEW_TTS_TOKEN'
+      }
       ttsResult = out.ok
         ? { configured: true, ok: true, message: `云端语音正常（${tts.model} / ${tts.voice}${tts.mode === 'chat' ? ' · chat 模式' : ''}）` }
-        : { configured: true, ok: false, message: out.message + `（当前 mode=${tts.mode}，model=${tts.model}）` }
+        : { configured: true, ok: false, message: out.message + extra }
     }
     res.json({ ok: true, message: '连通正常', model: cfg.model, sample: (sample || '').slice(0, 80), tts: ttsResult })
   } catch (err) {
