@@ -88,7 +88,10 @@ export default function InterviewSession() {
     getInterviewConfig()
       .then((c) => {
         if (disposed) return
-        if (c?.sttConfigured) setSttMode('cloud')
+        // 默认优先浏览器实时识别（边说边出字）；仅当浏览器不支持、或服务端显式偏好云端时才用 Whisper
+        if (c?.sttConfigured && c?.sttPreferCloud) setSttMode('cloud')
+        else if (sttSupported()) setSttMode('browser')
+        else if (c?.sttConfigured) setSttMode('cloud')
         if (c?.ttsConfigured) {
           // 云端：每次合成带上当前倍速（实时读 rateRef）
           speakerRef.current = createCloudSpeaker({

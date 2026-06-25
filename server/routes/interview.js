@@ -125,7 +125,10 @@ function readSttConfig() {
     process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
   const model = (process.env.INTERVIEW_STT_MODEL || 'whisper-1').trim()
   const language = (process.env.INTERVIEW_STT_LANGUAGE || 'zh').trim()
-  return { base, token, model, language, configured: !!(base && token) }
+  // 默认优先用浏览器实时识别（更实时、且很多中转没有 Whisper 接口）；
+  // 想在支持的浏览器上也强制走云端 Whisper，设 INTERVIEW_STT_PREFER_CLOUD=1。
+  const preferCloud = /^(1|true|yes|on)$/i.test(process.env.INTERVIEW_STT_PREFER_CLOUD || '')
+  return { base, token, model, language, preferCloud, configured: !!(base && token) }
 }
 
 function sttEndpoint(cfg) {
@@ -348,6 +351,7 @@ router.get('/config', (_req, res) => {
     hasBase: !!cfg.base, hasToken: !!cfg.token,
     ttsConfigured: tts.configured, ttsVoice: tts.configured ? tts.voice : null,
     sttConfigured: stt.configured,
+    sttPreferCloud: stt.preferCloud,
   })
 })
 
