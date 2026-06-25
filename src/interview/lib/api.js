@@ -20,11 +20,12 @@ export async function pingModel() {
 }
 
 // 流式对话。messages 为 [{role, content}]。onDelta(textChunk) 每段增量回调一次；返回完整文本。
-export async function chatStream({ messages }, onDelta, signal) {
+// maxTokens 可选：评分报告等需要更长输出时放宽。
+export async function chatStream({ messages, maxTokens }, onDelta, signal) {
   const res = await fetch(BASE + '/interview/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ messages, stream: true }),
+    body: JSON.stringify({ messages, stream: true, ...(maxTokens ? { maxTokens } : {}) }),
     signal,
   })
   if (!res.ok || !res.body) {

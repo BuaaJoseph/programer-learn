@@ -77,14 +77,14 @@ function ttsEndpoint(cfg) {
 
 // OpenAI 风格 messages → Anthropic Messages 请求体。
 // 规则：所有 system 合并为顶层 system；其余消息保证以 user 开头且 user/assistant 交替。
-function toAnthropicBody(cfg, messages, stream) {
+function toAnthropicBody(cfg, messages, stream, maxTokens) {
   const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
   const rest = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: String(m.content) }))
   // Anthropic 要求首条为 user。开场（仅 system）或首条是 assistant 时，补一条触发用的 user 消息。
   if (rest.length === 0 || rest[0].role === 'assistant') {
     rest.unshift({ role: 'user', content: '请开始。' })
   }
-  const body = { model: cfg.model, max_tokens: cfg.maxTokens, messages: rest, stream: !!stream }
+  const body = { model: cfg.model, max_tokens: maxTokens || cfg.maxTokens, messages: rest, stream: !!stream }
   if (sys) body.system = sys
   return body
 }
@@ -107,19 +107,19 @@ function endpointFor(cfg) {
 }
 
 // 发起一次上游请求（fetch）。返回 Response。
-async function callUpstream(cfg, messages, stream) {
+async function callUpstream(cfg, messages, stream, maxTokens) {
   const endpoint = endpointFor(cfg)
   if (cfg.style === 'openai') {
     return fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ model: cfg.model, messages, stream: !!stream, temperature: 0.7 }),
+      body: JSON.stringify({ model: cfg.model, messages, stream: !!stream, temperature: 0.7, max_tokens: maxTokens || cfg.maxTokens }),
     })
   }
   return fetch(endpoint, {
     method: 'POST',
     headers: anthropicHeaders(cfg),
-    body: JSON.stringify(toAnthropicBody(cfg, messages, stream)),
+    body: JSON.stringify(toAnthropicBody(cfg, messages, stream, maxTokens)),
   })
 }
 
@@ -253,17 +253,19 @@ router.post('/ping', async (_req, res) => {
 // —— 面试官对话 ——
 router.post('/chat', async (req, res) => {
   const cfg = readModelConfig()
-  const { messages, stream } = req.body || {}
+  const { messages, stream, maxTokens } = req.body || {}
   if (!cfg.configured) {
     return res.status(503).json({ error: 'not_configured', message: '面试官模型未配置：请在服务端 .env 设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN（详见 server/.env.example）' })
   }
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'invalid_messages', message: '对话消息为空' })
   }
+  // 评分报告等需要更长输出，允许按请求放宽（夹在合理范围内）。
+  const effMax = maxTokens ? Math.min(Math.max(Number(maxTokens) || 0, 256), 8192) : 0
 
   let upstream
   try {
-    upstream = await callUpstream(cfg, messages, !!stream)
+    upstream = await callUpstream(cfg, messages, !!stream, effMax)
   } catch (err) {
     console.error('[interview/chat] 上游请求失败:', err)
     return res.status(502).json({ error: 'upstream_unreachable', message: '无法连接到模型接口，请检查 env 中的地址与网络' })

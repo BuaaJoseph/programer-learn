@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import CodeEditor from './components/CodeEditor.jsx'
-import { chatStream, chatOnce, getInterviewConfig, synthesizeSpeech, transcribeSpeech } from './lib/api.js'
+import { chatStream, getInterviewConfig, synthesizeSpeech, transcribeSpeech } from './lib/api.js'
 import { loadConfig, buildSystemPrompt, STAGES, parseStageTag, STAGE_INDEX } from './lib/session.js'
 import {
   buildReportPrompt, parseReport, renderReportHtml, downloadHtml, openHtml, gradeMeta,
@@ -348,7 +348,8 @@ export default function InterviewSession() {
     setReportErr('')
     try {
       const history = [...messages, { role: 'user', content: buildReportPrompt(cfg) }]
-      const text = await chatOnce({ messages: history })
+      // 用流式生成：报告内容较长，非流式会被网关超时（504）；放宽输出上限避免 JSON 被截断。
+      const text = await chatStream({ messages: history, maxTokens: 4096 }, () => {})
       const parsed = parseReport(text)
       const html = renderReportHtml(parsed, cfg)
       setReport(parsed)
