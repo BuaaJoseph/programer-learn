@@ -81,6 +81,18 @@ export async function chatOnce({ messages }, signal) {
   return data?.content || ''
 }
 
+// 云端神经 TTS：把一段文本合成为语音，返回 mp3 的 ArrayBuffer。
+export async function synthesizeSpeech(text, signal) {
+  const res = await fetch(BASE + '/interview/tts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`TTS 失败 (${res.status})`)
+  return res.arrayBuffer()
+}
+
 // 执行代码。language: 'java' | 'python'。返回 { stdout, stderr, code, output }。
 export async function runCode({ language, source, stdin = '' }, signal) {
   const res = await fetch(BASE + '/interview/run-code', {

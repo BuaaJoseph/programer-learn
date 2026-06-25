@@ -218,6 +218,10 @@ export default function InterviewSetup() {
               <span>开启语音对话（面试官朗读 + 语音作答）</span>
             </label>
           </div>
+          <p className="iv-sub" style={{ marginTop: 8 }}>
+            想要接近 ChatGPT 的自然人声？在 <code>.env</code> 配置 <code>INTERVIEW_TTS_*</code>（OpenAI 兼容的语音接口）即可启用云端神经语音；
+            未配置时用浏览器内置语音（可在面试页右上角切换音色）。
+          </p>
         </section>
 
         {error && <div className="iv-error">{error}</div>}

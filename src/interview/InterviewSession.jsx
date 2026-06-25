@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import CodeEditor from './components/CodeEditor.jsx'
-import { chatStream, chatOnce } from './lib/api.js'
+import { chatStream, chatOnce, getInterviewConfig, synthesizeSpeech } from './lib/api.js'
 import { loadConfig, buildSystemPrompt, STAGES } from './lib/session.js'
 import {
   buildReportPrompt, parseReport, renderReportHtml, downloadHtml, openHtml, gradeMeta,
 } from './lib/report.js'
 import {
-  createSpeaker, createRecognizer, sttSupported, ttsSupported,
+  createBrowserSpeaker, createCloudSpeaker, createRecognizer,
+  sttSupported, ttsSupported, listZhVoices,
 } from './lib/speech.js'
 import { randomProblem } from './data/codingProblems.js'
 import { findPosition } from './data/positions.js'
@@ -35,6 +36,9 @@ export default function InterviewSession() {
 
   const [listening, setListening] = useState(false)
   const [voiceOn, setVoiceOn] = useState(cfg?.voice !== false)
+  const [ttsMode, setTtsMode] = useState('browser') // 'cloud' | 'browser'
+  const [zhVoices, setZhVoices] = useState([])
+  const [voiceURI, setVoiceURI] = useState(() => localStorage.getItem('interview.voiceURI') || '')
 
   const [showCoding, setShowCoding] = useState(false)
   const [problem, setProblem] = useState(null)
@@ -57,17 +61,51 @@ export default function InterviewSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 初始化语音
+  // 初始化语音：优先用服务端配置的云端神经 TTS（接近 ChatGPT 的自然人声），
+  // 未配置则回退到浏览器内置 TTS。
   useEffect(() => {
-    if (ttsSupported()) speakerRef.current = createSpeaker({ lang: 'zh-CN' })
-    if (speakerRef.current) speakerRef.current.setEnabled(voiceOn)
-    return () => { speakerRef.current && speakerRef.current.stop() }
+    let disposed = false
+    getInterviewConfig()
+      .then((c) => {
+        if (disposed) return
+        if (c?.ttsConfigured) {
+          speakerRef.current = createCloudSpeaker({ synthesize: synthesizeSpeech })
+          setTtsMode('cloud')
+        } else if (ttsSupported()) {
+          speakerRef.current = createBrowserSpeaker({ lang: 'zh-CN' })
+          setTtsMode('browser')
+        }
+        if (speakerRef.current) {
+          speakerRef.current.setEnabled(voiceOn)
+          if (voiceURI) speakerRef.current.setVoiceURI(voiceURI)
+        }
+      })
+      .catch(() => {
+        if (disposed) return
+        if (ttsSupported()) { speakerRef.current = createBrowserSpeaker({ lang: 'zh-CN' }); speakerRef.current.setEnabled(voiceOn) }
+      })
+    return () => { disposed = true; speakerRef.current && speakerRef.current.stop() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 浏览器音色列表（异步加载，监听 voiceschanged）
+  useEffect(() => {
+    if (!ttsSupported()) return
+    const load = () => setZhVoices(listZhVoices())
+    load()
+    window.speechSynthesis.addEventListener?.('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', load)
   }, [])
 
   useEffect(() => {
     if (speakerRef.current) speakerRef.current.setEnabled(voiceOn)
   }, [voiceOn])
+
+  const onPickVoice = (uri) => {
+    setVoiceURI(uri)
+    localStorage.setItem('interview.voiceURI', uri || '')
+    if (speakerRef.current) speakerRef.current.setVoiceURI(uri)
+  }
 
   // 计时器
   useEffect(() => {
@@ -229,7 +267,7 @@ export default function InterviewSession() {
             <span className="iv-timer">⏱ {fmtTime(elapsed)}</span>
           </div>
           <div className="iv-bar-right">
-            {ttsSupported() && (
+            {(ttsMode === 'cloud' || ttsSupported()) && (
               <button
                 className={`iv-pill ${voiceOn ? 'on' : ''}`}
                 onClick={() => setVoiceOn((v) => !v)}
@@ -237,6 +275,25 @@ export default function InterviewSession() {
               >
                 {voiceOn ? '🔊 语音开' : '🔇 语音关'}
               </button>
+            )}
+            {ttsMode === 'cloud' ? (
+              <span className="iv-pill on" title="使用云端神经语音">✨ 自然语音</span>
+            ) : (
+              voiceOn && zhVoices.length > 0 && (
+                <select
+                  className="iv-voice-select"
+                  value={voiceURI}
+                  onChange={(e) => onPickVoice(e.target.value)}
+                  title="选择语音音色（建议选带 Google/在线/Natural 的更自然）"
+                >
+                  <option value="">默认音色（自动挑最优）</option>
+                  {zhVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name}{v.local ? '（本地）' : '（在线）'}
+                    </option>
+                  ))}
+                </select>
+              )
             )}
             <button className="btn btn-ghost ce-small" onClick={() => navigate('/interview')}>退出</button>
           </div>

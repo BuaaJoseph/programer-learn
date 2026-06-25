@@ -31,6 +31,21 @@ function readModelConfig() {
   return { base, token, style, model, version, maxTokens, configured: !!(base && token) }
 }
 
+// —— 读取云端神经 TTS 配置（OpenAI 兼容 /v1/audio/speech）——
+// 未配置则前端自动回退到浏览器内置 TTS。
+function readTtsConfig() {
+  const base = (process.env.INTERVIEW_TTS_BASE_URL || process.env.INTERVIEW_TTS_URL || '').trim().replace(/\/+$/, '')
+  const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY || '').trim()
+  const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
+  const voice = (process.env.INTERVIEW_TTS_VOICE || 'nova').trim()
+  const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
+  return { base, token, model, voice, format, configured: !!(base && token) }
+}
+
+function ttsEndpoint(cfg) {
+  return /\/audio\/speech$/.test(cfg.base) ? cfg.base : `${cfg.base}/v1/audio/speech`
+}
+
 // OpenAI 风格 messages → Anthropic Messages 请求体。
 // 规则：所有 system 合并为顶层 system；其余消息保证以 user 开头且 user/assistant 交替。
 function toAnthropicBody(cfg, messages, stream) {
@@ -95,7 +110,47 @@ function writeDelta(res, text) {
 // 配置查询
 router.get('/config', (_req, res) => {
   const cfg = readModelConfig()
-  res.json({ configured: cfg.configured, style: cfg.style, model: cfg.model, hasBase: !!cfg.base, hasToken: !!cfg.token })
+  const tts = readTtsConfig()
+  res.json({
+    configured: cfg.configured, style: cfg.style, model: cfg.model,
+    hasBase: !!cfg.base, hasToken: !!cfg.token,
+    ttsConfigured: tts.configured, ttsVoice: tts.configured ? tts.voice : null,
+  })
+})
+
+// 云端神经 TTS：把文本合成为语音（mp3）返回给前端播放。
+router.post('/tts', async (req, res) => {
+  const tts = readTtsConfig()
+  const text = String(req.body?.text || '').trim()
+  if (!tts.configured) return res.status(503).json({ error: 'tts_not_configured', message: '未配置云端 TTS' })
+  if (!text) return res.status(400).json({ error: 'empty_text', message: '文本为空' })
+
+  let upstream
+  try {
+    upstream = await fetch(ttsEndpoint(tts), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
+      body: JSON.stringify({ model: tts.model, voice: tts.voice, input: text, response_format: tts.format }),
+    })
+  } catch (err) {
+    console.error('[interview/tts] 上游不可达:', err)
+    return res.status(502).json({ error: 'tts_unreachable', message: 'TTS 服务不可达' })
+  }
+  if (!upstream.ok || !upstream.body) {
+    let detail = ''
+    try { detail = await upstream.text() } catch { /* ignore */ }
+    console.error('[interview/tts] 上游错误:', upstream.status, detail.slice(0, 300))
+    return res.status(502).json({ error: 'tts_error', message: `TTS 接口错误 (${upstream.status})` })
+  }
+  res.setHeader('content-type', 'audio/mpeg')
+  res.setHeader('cache-control', 'no-store')
+  try {
+    for await (const chunk of upstream.body) res.write(chunk)
+  } catch (err) {
+    console.error('[interview/tts] 音频透传中断:', err)
+  } finally {
+    res.end()
+  }
 })
 
 // 连通性测试
