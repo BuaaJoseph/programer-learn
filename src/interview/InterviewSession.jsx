@@ -61,8 +61,9 @@ export default function InterviewSession() {
   const mediaRecRef = useRef(null)
   const mediaStreamRef = useRef(null)
 
-  // 云端 TTS 不可用时回退到浏览器内置语音
+  // 云端 TTS 不可用时回退到浏览器内置语音（并提示，避免「以为没生效/还是女声」）
   const fallbackToBrowser = () => {
+    setError('云端语音调用失败，已临时回退到浏览器语音（可能不是男声）。请到「面试模拟」设置页点「测试连通性」查看原因，多为 INTERVIEW_TTS_MODEL 不被中转支持，改成 tts-1 即可。')
     if (!ttsSupported()) return
     try { speakerRef.current && speakerRef.current.stop() } catch { /* ignore */ }
     const b = createBrowserSpeaker({ lang: 'zh-CN' })

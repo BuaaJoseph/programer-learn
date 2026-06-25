@@ -60,8 +60,9 @@ function readTtsConfig() {
     process.env.INTERVIEW_BASE_URL || process.env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '')
   const token = (process.env.INTERVIEW_TTS_TOKEN || process.env.INTERVIEW_TTS_API_KEY ||
     process.env.INTERVIEW_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '').trim()
-  // 默认用更拟人的 gpt-4o-mini-tts + 男声 onyx；中转若不支持可在 env 改回 tts-1/tts-1-hd。
-  const model = (process.env.INTERVIEW_TTS_MODEL || 'gpt-4o-mini-tts').trim()
+  // 默认 tts-1 + 男声 onyx（几乎所有 OpenAI 兼容中转都支持，开箱即用的男声）；
+  // 想更拟人可在 env 改成 gpt-4o-mini-tts（支持 instructions 控制语气，但需中转支持该模型）。
+  const model = (process.env.INTERVIEW_TTS_MODEL || 'tts-1').trim()
   const voice = (process.env.INTERVIEW_TTS_VOICE || 'onyx').trim()
   const format = (process.env.INTERVIEW_TTS_FORMAT || 'mp3').trim()
   // gpt-4o-mini-tts 支持 instructions 控制语气，让男声更像真人面试官。
@@ -307,7 +308,30 @@ router.post('/ping', async (_req, res) => {
     }
     const data = await r.json()
     const sample = extractText(cfg.style, data)
-    res.json({ ok: true, message: '连通正常', model: cfg.model, sample: (sample || '').slice(0, 80) })
+    // 顺带探测云端 TTS 是否可用，便于排查「还是女声（其实是回退到了浏览器语音）」
+    const tts = readTtsConfig()
+    let ttsResult = { configured: false }
+    if (tts.configured) {
+      try {
+        const tb = { model: tts.model, voice: tts.voice, input: '测试', response_format: tts.format }
+        if (/gpt-4o/i.test(tts.model) && tts.instructions) tb.instructions = tts.instructions
+        const tr = await fetch(ttsEndpoint(tts), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${tts.token}` },
+          body: JSON.stringify(tb),
+        })
+        if (tr.ok) {
+          ttsResult = { configured: true, ok: true, message: `云端语音正常（${tts.model} / ${tts.voice}）` }
+        } else {
+          let d = ''
+          try { d = await tr.text() } catch { /* ignore */ }
+          ttsResult = { configured: true, ok: false, message: `云端语音失败 (${tr.status})：${d.slice(0, 160) || '检查 INTERVIEW_TTS_MODEL/VOICE'}` }
+        }
+      } catch (e) {
+        ttsResult = { configured: true, ok: false, message: '云端语音不可达：' + String(e?.message || e) }
+      }
+    }
+    res.json({ ok: true, message: '连通正常', model: cfg.model, sample: (sample || '').slice(0, 80), tts: ttsResult })
   } catch (err) {
     console.error('[interview/ping] 失败:', err)
     res.status(502).json({ ok: false, message: '无法连接到模型接口：' + String(err?.message || err) })

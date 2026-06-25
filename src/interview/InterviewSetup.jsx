@@ -42,7 +42,13 @@ export default function InterviewSetup() {
     setPing({ state: 'testing', msg: '' })
     try {
       const r = await pingModel()
-      setPing({ state: 'ok', msg: r.sample ? `连通正常，模型回复：${r.sample}` : '连通正常' })
+      let msg = r.sample ? `面试官模型连通正常，回复：${r.sample}` : '面试官模型连通正常'
+      let state = 'ok'
+      if (r.tts && r.tts.configured) {
+        msg += '\n' + (r.tts.ok ? '✓ ' : '✗ ') + r.tts.message
+        if (!r.tts.ok) state = 'warn'
+      }
+      setPing({ state, msg })
       setModelCfg((c) => ({ ...(c || {}), configured: true }))
     } catch (e) {
       setPing({ state: 'fail', msg: String(e?.message || e) })
@@ -244,7 +250,8 @@ export default function InterviewSetup() {
               {ping.state === 'testing' ? '测试中…' : '测试连通性'}
             </button>
           </div>
-          {ping.state === 'ok' && <div className="iv-status-msg ok">{ping.msg}</div>}
+          {ping.state === 'ok' && <div className="iv-status-msg ok" style={{ whiteSpace: 'pre-line' }}>{ping.msg}</div>}
+          {ping.state === 'warn' && <div className="iv-status-msg warn" style={{ whiteSpace: 'pre-line' }}>{ping.msg}</div>}
           {ping.state === 'fail' && <div className="iv-status-msg bad">{ping.msg}</div>}
 
           <div className="iv-voice-toggle" style={{ marginTop: 16 }}>
