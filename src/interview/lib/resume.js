@@ -27,6 +27,8 @@ async function extractPdf(file) {
   return text.trim()
 }
 
+import { getToken } from '../../shared/api.js'
+
 const API_BASE = (import.meta.env?.VITE_API_BASE || '') + '/api'
 
 // 把 HTML 转成可读纯文本（去脚本/样式/标签，压缩空白）。
@@ -43,10 +45,14 @@ function htmlToText(html) {
 
 // 经后端代理抓取简历链接并提取文字（支持 PDF / HTML / 纯文本）。
 export async function fetchResumeFromUrl(url) {
-  const res = await fetch(`${API_BASE}/interview/fetch-resume?url=${encodeURIComponent(url)}`)
+  const token = getToken()
+  const res = await fetch(`${API_BASE}/interview/fetch-resume?url=${encodeURIComponent(url)}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  })
   if (!res.ok) {
     let msg = `抓取失败 (${res.status})`
     try { const d = await res.json(); if (d?.message) msg = d.message } catch { /* ignore */ }
+    if (res.status === 401) msg = '登录已失效，请重新登录后再试'
     throw new Error(msg)
   }
   const blob = await res.blob()
@@ -59,7 +65,10 @@ export async function fetchResumeFromUrl(url) {
   const raw = await blob.text()
   if (ct.includes('html') || ct.includes('xml') || /^\s*<(!doctype|html)/i.test(raw)) {
     const text = htmlToText(raw)
-    if (!text) throw new Error('未能从该网页提取到简历文字，请改为粘贴简历内容')
+    // 文字过少：多为「前端渲染的单页应用(SPA)」，服务端抓到的只是空壳
+    if (text.replace(/\s/g, '').length < 20) {
+      throw new Error('该网页内容是浏览器动态渲染的，服务端抓不到正文。请把简历导出为 PDF 上传，或直接粘贴简历内容')
+    }
     return text
   }
   return raw.trim()
