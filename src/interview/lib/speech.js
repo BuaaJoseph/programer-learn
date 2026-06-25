@@ -170,6 +170,7 @@ export function createBrowserSpeaker({ lang = 'zh-CN', rate = 1, pitch = 1 } = {
     stop() { queue = []; speaking = false; if (synth) synth.cancel() },
     setEnabled(v) { enabled = v; if (!v) this.stop() },
     setVoiceURI(uri) { preferredURI = uri || null },
+    setRate(r) { if (r) rate = r },
     get enabled() { return enabled },
   }
 }
@@ -235,6 +236,7 @@ export function createCloudSpeaker({ synthesize, onUnavailable }) {
     },
     setEnabled(v) { enabled = v; if (!v) this.stop() },
     setVoiceURI() { /* 云端音色由服务端 env 决定 */ },
+    setRate() { /* 云端倍速由每次 synthesize 时带上 */ },
     get enabled() { return enabled },
   }
 }

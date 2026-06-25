@@ -81,9 +81,18 @@ export function useAuth() {
   return ctx
 }
 
-// 课程访问控制：免费课直接放行；付费课需已购或为试读章。
+// 课程访问控制：
+// - 已登录用户：可阅读全部章节；
+// - 未登录用户：仅可试读每门课的第 1 章，其余章节需登录后查看。
 export function canAccessChapter(course, chapter, auth) {
-  if (course?.meta?.pricing !== 'paid') return true
-  if (chapter?.preview) return true
-  return auth?.entitlements?.has(course.meta.slug) || false
+  if (auth?.isAuthed) return true
+  const first = course?.flatChapters?.[0]
+  if (!first) return true // 异常兜底：拿不到章节列表时不误锁
+  return !!(chapter && first.slug === chapter.slug)
+}
+
+// 是否是该课程的第一章（免费试读章）。
+export function isFreeChapter(course, chapter) {
+  const first = course?.flatChapters?.[0]
+  return !!(first && chapter && first.slug === chapter.slug)
 }

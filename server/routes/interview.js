@@ -148,19 +148,21 @@ async function fetchWithTimeout(url, opts, ms = 25000) {
 
 // 腾讯云语音合成（TextToVoice）：自实现 TC3-HMAC-SHA256 签名，返回 mp3 buffer。
 // 文档：https://cloud.tencent.com/document/product/1073/37995
-async function synthTencent(cfg, text) {
+async function synthTencent(cfg, text, speed) {
   const host = 'tts.tencentcloudapi.com'
   const service = 'tts'
   const action = 'TextToVoice'
   const version = '2019-08-23'
 
+  // 倍速(0.5~2.0) → 腾讯云 Speed[-2,6]；未指定则用 env 的 cfg.speed。
+  const tcSpeed = speed ? Math.max(-2, Math.min(6, Math.round((speed - 1) / 0.25))) : (cfg.speed || 0)
   const payload = JSON.stringify({
     Text: text,
     SessionId: crypto.randomUUID(),
     ModelType: 1,
     VoiceType: cfg.voiceType,
     Volume: cfg.volume || 0,
-    Speed: cfg.speed || 0,
+    Speed: tcSpeed,
     SampleRate: cfg.sampleRate || 16000,
     Codec: 'mp3',
   })
@@ -214,8 +216,8 @@ async function synthTencent(cfg, text) {
 
 // 合成一段语音，返回 { ok, status?, buffer?, message? }。
 // provider=tencent：腾讯云 TextToVoice；否则 OpenAI 兼容（speech / chat 两种方式）。
-async function synthTts(tts, text) {
-  if (tts.provider === 'tencent') return synthTencent(tts, text)
+async function synthTts(tts, text, speed) {
+  if (tts.provider === 'tencent') return synthTencent(tts, text, speed)
   if (tts.mode === 'chat') {
     const body = {
       model: tts.model,
@@ -250,6 +252,7 @@ async function synthTts(tts, text) {
   // speech 模式
   const body = { model: tts.model, voice: tts.voice, input: text, response_format: tts.format }
   if (/gpt-4o/i.test(tts.model) && tts.instructions) body.instructions = tts.instructions
+  if (speed) body.speed = Math.max(0.25, Math.min(4, speed)) // OpenAI 倍速 0.25~4
   let r
   try {
     r = await fetchWithTimeout(ttsEndpoint(tts), {
@@ -387,10 +390,11 @@ router.post('/stt', express.raw({ type: () => true, limit: '25mb' }), async (req
 router.post('/tts', async (req, res) => {
   const tts = readTtsConfig()
   const text = String(req.body?.text || '').trim()
+  const speed = Number(req.body?.speed) || 0 // 倍速，0 表示用默认
   if (!tts.configured) return res.status(503).json({ error: 'tts_not_configured', message: '未配置云端 TTS' })
   if (!text) return res.status(400).json({ error: 'empty_text', message: '文本为空' })
 
-  const out = await synthTts(tts, text)
+  const out = await synthTts(tts, text, speed)
   if (!out.ok) {
     console.error('[interview/tts] 失败:', out.message)
     return res.status(502).json({ error: 'tts_error', message: out.message })

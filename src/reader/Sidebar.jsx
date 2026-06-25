@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useProgressContext } from '../context/AppContext.jsx'
+import { useAuth } from '../shared/AuthContext.jsx'
 
 export default function Sidebar({ course, onNavigate, open: drawerOpen }) {
   const { chapterSlug } = useParams()
   const { isDone } = useProgressContext()
+  const { isAuthed } = useAuth()
   const courseSlug = course.meta.slug
   const volumes = course.volumes
+  const firstSlug = course.flatChapters?.[0]?.slug
 
   const currentVol = chapterSlug ? chapterSlug.split('-')[0] : null
 
@@ -52,15 +55,18 @@ export default function Sidebar({ course, onNavigate, open: drawerOpen }) {
                   {vol.chapters.map((ch) => {
                     const done = isDone(courseSlug, ch.slug)
                     const active = ch.slug === chapterSlug
+                    const locked = !isAuthed && ch.slug !== firstSlug
                     return (
                       <li key={ch.slug}>
                         <Link
                           to={`/course/${courseSlug}/${ch.slug}`}
-                          className={`chapter-link ${active ? 'active' : ''}`}
+                          className={`chapter-link ${active ? 'active' : ''} ${locked ? 'locked' : ''}`}
                           onClick={onNavigate}
+                          title={locked ? '登录后解锁' : undefined}
                         >
                           <span className={`chapter-mark ${done ? 'done' : ''}`}>{done ? '✓' : '·'}</span>
                           <span>{ch.title}</span>
+                          {locked && <span className="chapter-lock">🔒</span>}
                         </Link>
                       </li>
                     )

@@ -82,12 +82,12 @@ export async function chatOnce({ messages }, signal) {
   return data?.content || ''
 }
 
-// 云端神经 TTS：把一段文本合成为语音，返回 mp3 的 ArrayBuffer。
-export async function synthesizeSpeech(text, signal) {
+// 云端神经 TTS：把一段文本合成为语音，返回 mp3 的 ArrayBuffer。speed 为倍速（如 1.25）。
+export async function synthesizeSpeech(text, signal, speed) {
   const res = await fetch(BASE + '/interview/tts', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(speed ? { speed } : {}) }),
     signal,
   })
   if (!res.ok) throw new Error(`TTS 失败 (${res.status})`)

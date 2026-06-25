@@ -41,6 +41,7 @@ export default function InterviewSession() {
   const [ttsMode, setTtsMode] = useState('browser') // 'cloud' | 'browser'
   const [zhVoices, setZhVoices] = useState([])
   const [voiceURI, setVoiceURI] = useState(() => localStorage.getItem('interview.voiceURI') || '')
+  const [rate, setRate] = useState(() => Number(localStorage.getItem('interview.rate')) || 1.15)
 
   const [showCoding, setShowCoding] = useState(false)
   const [problem, setProblem] = useState(null)
@@ -58,6 +59,7 @@ export default function InterviewSession() {
   const abortRef = useRef(null)
   const voiceOnRef = useRef(voiceOn)
   const voiceURIRef = useRef(voiceURI)
+  const rateRef = useRef(rate)
   const mediaRecRef = useRef(null)
   const mediaStreamRef = useRef(null)
   const sttBaseRef = useRef('')      // 开始识别时输入框已有的文字
@@ -69,8 +71,9 @@ export default function InterviewSession() {
     setError('云端语音调用失败，已临时回退到浏览器语音（可能不是男声）。请到「面试模拟」设置页点「测试连通性」查看原因，多为 INTERVIEW_TTS_MODEL 不被中转支持，改成 tts-1 即可。')
     if (!ttsSupported()) return
     try { speakerRef.current && speakerRef.current.stop() } catch { /* ignore */ }
-    const b = createBrowserSpeaker({ lang: 'zh-CN' })
+    const b = createBrowserSpeaker({ lang: 'zh-CN', rate: rateRef.current })
     b.setEnabled(voiceOnRef.current)
+    b.setRate(rateRef.current)
     if (voiceURIRef.current) b.setVoiceURI(voiceURIRef.current)
     speakerRef.current = b
     setTtsMode('browser')
@@ -91,14 +94,19 @@ export default function InterviewSession() {
         if (disposed) return
         if (c?.sttConfigured) setSttMode('cloud')
         if (c?.ttsConfigured) {
-          speakerRef.current = createCloudSpeaker({ synthesize: synthesizeSpeech, onUnavailable: fallbackToBrowser })
+          // 云端：每次合成带上当前倍速（实时读 rateRef）
+          speakerRef.current = createCloudSpeaker({
+            synthesize: (text, signal) => synthesizeSpeech(text, signal, rateRef.current),
+            onUnavailable: fallbackToBrowser,
+          })
           setTtsMode('cloud')
         } else if (ttsSupported()) {
-          speakerRef.current = createBrowserSpeaker({ lang: 'zh-CN' })
+          speakerRef.current = createBrowserSpeaker({ lang: 'zh-CN', rate: rateRef.current })
           setTtsMode('browser')
         }
         if (speakerRef.current) {
           speakerRef.current.setEnabled(voiceOn)
+          speakerRef.current.setRate(rateRef.current)
           if (voiceURI) speakerRef.current.setVoiceURI(voiceURI)
         }
       })
@@ -135,6 +143,14 @@ export default function InterviewSession() {
     voiceURIRef.current = uri
     localStorage.setItem('interview.voiceURI', uri || '')
     if (speakerRef.current) speakerRef.current.setVoiceURI(uri)
+  }
+
+  const onPickRate = (r) => {
+    setRate(r)
+    rateRef.current = r
+    localStorage.setItem('interview.rate', String(r))
+    if (speakerRef.current) speakerRef.current.setRate(r)
+    if (speakerRef.current) speakerRef.current.stop() // 立刻生效，下一句用新语速
   }
 
   // 计时器
@@ -411,6 +427,18 @@ export default function InterviewSession() {
               >
                 {voiceOn ? '🔊 语音开' : '🔇 语音关'}
               </button>
+            )}
+            {voiceOn && (ttsMode === 'cloud' || ttsSupported()) && (
+              <select
+                className="iv-voice-select"
+                value={String(rate)}
+                onChange={(e) => onPickRate(Number(e.target.value))}
+                title="面试官语速"
+              >
+                {[['0.9', '0.9x 慢'], ['1', '1.0x'], ['1.15', '1.15x'], ['1.3', '1.3x'], ['1.5', '1.5x 快'], ['1.75', '1.75x 很快']].map(([v, l]) => (
+                  <option key={v} value={v}>🐢 {l}</option>
+                ))}
+              </select>
             )}
             {ttsMode === 'cloud' ? (
               <span className="iv-pill on" title="使用云端神经语音">✨ 自然语音</span>
