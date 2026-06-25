@@ -96,7 +96,9 @@ export function stripMarkdownForSpeech(text) {
     .replace(/[ \t]{2,}/g, ' ')
 }
 
-// 给浏览器音色打分：在线/神经音色 + 知名优质音色优先，尽量摆脱机械音。
+// 给浏览器音色打分：在线/神经音色优先；并偏向**男声**（面试官设定为男声）。
+const MALE_VOICE = /(kangkang|yunyang|yunxi|yunjian|yunfeng|liang|male|男)/i
+const FEMALE_VOICE = /(xiaoxiao|huihui|yaoyao|mei-?jia|tingting|sin-?ji|xiaoyi|female|女)/i
 function scoreVoice(v, lang) {
   const n = (v.name || '').toLowerCase()
   let s = 0
@@ -104,7 +106,8 @@ function scoreVoice(v, lang) {
   if (v.localService === false) s += 5
   if (/google/.test(n)) s += 4
   if (/(natural|neural|premium|enhanced|online)/.test(n)) s += 4
-  if (/(tingting|mei-?jia|sin-?ji|yue|yu-?shu|huihui|kangkang|xiaoxiao|yunyang|yunxi)/.test(n)) s += 3
+  if (MALE_VOICE.test(n)) s += 5            // 偏向男声
+  else if (FEMALE_VOICE.test(n)) s -= 3
   return s
 }
 
