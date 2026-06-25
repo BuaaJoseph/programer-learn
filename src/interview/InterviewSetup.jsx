@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PlatformLayout from '../platform/PlatformLayout.jsx'
 import { POSITIONS, findPosition } from './data/positions.js'
-import { parseResumeFile } from './lib/resume.js'
+import { parseResumeFile, fetchResumeFromUrl } from './lib/resume.js'
 import { saveConfig, loadConfig } from './lib/session.js'
 import { getInterviewConfig, pingModel } from './lib/api.js'
 
@@ -15,6 +15,8 @@ export default function InterviewSetup() {
   const [fileName, setFileName] = useState('')
   const [parsing, setParsing] = useState(false)
   const [parseErr, setParseErr] = useState('')
+  const [fetchingLink, setFetchingLink] = useState(false)
+  const [linkNote, setLinkNote] = useState('')
 
   const [position, setPosition] = useState(saved.position || 'backend')
   const [skills, setSkills] = useState(saved.skills || [])
@@ -81,9 +83,36 @@ export default function InterviewSetup() {
     }
   }
 
-  const start = () => {
+  // 抓取简历链接内容，填入简历正文（让面试官真正读到简历）。
+  const fetchLink = async () => {
+    const url = resumeLink.trim()
+    setLinkNote('')
+    setParseErr('')
+    if (!url) { setParseErr('请先填写简历链接'); return null }
+    setFetchingLink(true)
+    try {
+      const text = await fetchResumeFromUrl(url)
+      setResumeText(text)
+      setLinkNote(`已读取链接内容（约 ${text.length} 字），可在上方正文里核对/编辑。`)
+      return text
+    } catch (err) {
+      setParseErr('读取链接失败：' + String(err?.message || err) + '（可改为直接粘贴简历内容）')
+      return null
+    } finally {
+      setFetchingLink(false)
+    }
+  }
+
+  const start = async () => {
     setError('')
-    if (!resumeText.trim() && !resumeLink.trim()) {
+    let resume = resumeText
+    // 只给了链接、还没抓取正文：开始前先抓一次，确保面试官真正读到简历
+    if (!resume.trim() && resumeLink.trim()) {
+      const text = await fetchLink()
+      if (!text) { setError('未能从链接读取到简历内容，请点「读取链接内容」重试，或直接粘贴简历正文'); return }
+      resume = text
+    }
+    if (!resume.trim() && !resumeLink.trim()) {
       setError('请上传/粘贴简历内容，或提供简历链接')
       return
     }
@@ -95,7 +124,7 @@ export default function InterviewSetup() {
       setError('面试官模型尚未在服务端配置，请在 .env 中设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN 后重试')
       return
     }
-    saveConfig({ resumeText, resumeLink, position, skills, voice })
+    saveConfig({ resumeText: resume, resumeLink, position, skills, voice })
     navigate('/interview/session')
   }
 
@@ -134,13 +163,19 @@ export default function InterviewSetup() {
             onChange={(e) => setResumeText(e.target.value)}
             placeholder="把你的简历内容粘贴到这里，面试官会据此提问与追问…"
           />
-          <label className="ce-label" style={{ marginTop: 12 }}>或：简历链接（可选）</label>
-          <input
-            className="iv-input"
-            value={resumeLink}
-            onChange={(e) => setResumeLink(e.target.value)}
-            placeholder="https://… 你的在线简历地址"
-          />
+          <label className="ce-label" style={{ marginTop: 12 }}>或：简历链接（点「读取」把网页/PDF 内容抓成正文，面试官才能真正读到）</label>
+          <div className="iv-custom">
+            <input
+              className="iv-input"
+              value={resumeLink}
+              onChange={(e) => { setResumeLink(e.target.value); setLinkNote('') }}
+              placeholder="https:// 或 http:// 你的在线简历地址"
+            />
+            <button className="btn btn-ghost" onClick={fetchLink} disabled={fetchingLink || !resumeLink.trim()}>
+              {fetchingLink ? '读取中…' : '读取链接内容'}
+            </button>
+          </div>
+          {linkNote && <div className="iv-link-note">{linkNote}</div>}
         </section>
 
         {/* 2. 岗位 */}

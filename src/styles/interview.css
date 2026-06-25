@@ -73,6 +73,7 @@
 .iv-chip.custom.on { border-color: var(--violet); background: #f3edfb; color: var(--violet); }
 .iv-custom { display: flex; gap: 10px; }
 .iv-custom .iv-input { flex: 1; }
+.iv-link-note { margin-top: 8px; font-size: 0.85rem; color: var(--green); background: var(--green-soft); border: 1px solid var(--green-line); padding: 7px 12px; border-radius: var(--radius-sm); }
 
 .iv-model-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .iv-status { font-size: 0.9rem; font-weight: 600; }

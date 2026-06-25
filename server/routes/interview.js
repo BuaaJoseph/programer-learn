@@ -7,6 +7,7 @@
 // 面试官模型的「接口地址 + 密钥」改为在服务端 env 配置（类似 Claude Code 的配置方式），
 // 不再由前端页面填写。默认走 Anthropic Messages 协议（与 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 对齐）。
 import express, { Router } from 'express'
+import { lookup } from 'node:dns/promises'
 
 const router = Router()
 
@@ -17,6 +18,23 @@ const LANG_VERSION = {
   java: process.env.PISTON_JAVA_VERSION || '15.0.2',
 }
 const LANG_FILE = { python: 'main.py', java: 'Main.java' }
+
+// 判断 IP 是否落在内网/保留段（防 SSRF）。
+function isBlockedIp(ip) {
+  const v4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (v4) {
+    const a = +v4[1], b = +v4[2]
+    if (a === 0 || a === 10 || a === 127) return true
+    if (a === 169 && b === 254) return true       // link-local / 云元数据
+    if (a === 192 && b === 168) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 100 && b >= 64 && b <= 127) return true
+    return false
+  }
+  const h = ip.toLowerCase()
+  if (h === '::1' || h.startsWith('fe80') || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('::ffff:127')) return true
+  return false
+}
 
 // —— 读取面试官模型配置（env）——
 // 兼容 Claude Code 的变量名（ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY），
@@ -226,6 +244,52 @@ router.post('/tts', async (req, res) => {
   } finally {
     res.end()
   }
+})
+
+// 抓取简历链接内容（服务端代理，规避浏览器跨域；带 SSRF 防护与大小限制）。
+// 返回原始字节 + 原始 content-type，由前端按 PDF/HTML/文本提取文字。
+router.get('/fetch-resume', async (req, res) => {
+  const url = String(req.query.url || '').trim()
+  let u
+  try { u = new URL(url) } catch { return res.status(400).json({ error: 'bad_url', message: '链接格式不正确' }) }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return res.status(400).json({ error: 'bad_scheme', message: '只支持 http/https 链接' })
+  }
+  const host = u.hostname.toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost') || host === 'metadata.google.internal') {
+    return res.status(400).json({ error: 'blocked', message: '不允许访问该地址' })
+  }
+  // 默认禁止内网地址防 SSRF；自建/内网简历服务可设 INTERVIEW_FETCH_ALLOW_PRIVATE=1 放行。
+  if (!/^(1|true|yes|on)$/i.test(process.env.INTERVIEW_FETCH_ALLOW_PRIVATE || '')) {
+    try {
+      const { address } = await lookup(host)
+      if (isBlockedIp(address)) return res.status(400).json({ error: 'blocked', message: '不允许访问内网地址' })
+    } catch {
+      return res.status(400).json({ error: 'dns_fail', message: '无法解析该域名' })
+    }
+  }
+
+  let r
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15000)
+    r = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'Mozilla/5.0 (compatible; InterviewBot/1.0)', accept: '*/*' },
+    }).finally(() => clearTimeout(timer))
+  } catch (err) {
+    console.error('[interview/fetch-resume] 抓取失败:', err)
+    return res.status(502).json({ error: 'fetch_failed', message: '无法抓取该链接：' + String(err?.message || err) })
+  }
+  if (!r.ok) return res.status(502).json({ error: 'fetch_status', message: `链接返回错误 (${r.status})` })
+
+  const ct = r.headers.get('content-type') || 'application/octet-stream'
+  const ab = await r.arrayBuffer()
+  if (ab.byteLength > 10 * 1024 * 1024) return res.status(413).json({ error: 'too_large', message: '简历内容过大（>10MB）' })
+  res.setHeader('content-type', ct)
+  res.setHeader('cache-control', 'no-store')
+  res.send(Buffer.from(ab))
 })
 
 // 连通性测试
