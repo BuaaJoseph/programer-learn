@@ -145,8 +145,8 @@ export default function InterviewSession() {
     setRate(r)
     rateRef.current = r
     localStorage.setItem('interview.rate', String(r))
+    // 不打断当前朗读：新语速从下一句开始自然生效（云端按句合成、浏览器按句朗读都会读最新值）
     if (speakerRef.current) speakerRef.current.setRate(r)
-    if (speakerRef.current) speakerRef.current.stop() // 立刻生效，下一句用新语速
   }
 
   // 计时器
@@ -291,7 +291,13 @@ export default function InterviewSession() {
         const text = await transcribeSpeech(blob)
         if (text) setInput((prev) => (prev ? prev + ' ' : '') + text)
       } catch (e) {
-        setError('语音转写失败：' + String(e?.message || e))
+        // 云端识别不可用（如中转无 Whisper /v1/audio/transcriptions → 404）→ 自动切到浏览器实时识别
+        if (sttSupported()) {
+          setSttMode('browser')
+          setError('云端语音识别不可用，已切换到浏览器实时识别，请再点一次麦克风（边说边出字、停顿自动发送）')
+        } else {
+          setError('语音转写失败：' + String(e?.message || e) + '（建议用 Chrome/Edge 或直接打字）')
+        }
       } finally {
         setTranscribing(false)
       }
