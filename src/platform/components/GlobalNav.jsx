@@ -51,6 +51,8 @@ export default function GlobalNav() {
           )}
         </nav>
 
+        <Link to="/interview" className="gnav-interview">🎤 面试模拟</Link>
+
         <Link to="/playground" className="gnav-play">▶ 在线运行</Link>
 
         <form className="gnav-search" onSubmit={submitSearch}>

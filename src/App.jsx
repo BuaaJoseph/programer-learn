@@ -10,6 +10,8 @@ import Search from './platform/pages/Search.jsx'
 import Playground from './platform/pages/Playground.jsx'
 import NotFound from './platform/pages/NotFound.jsx'
 import ChapterPage from './reader/ChapterPage.jsx'
+import InterviewSetup from './interview/InterviewSetup.jsx'
+import InterviewSession from './interview/InterviewSession.jsx'
 
 // 在原生壳（Capacitor）里用 HashRouter——从 localhost/file 根加载、刷新不白屏；
 // 普通网页仍用 BrowserRouter，保持干净 URL（/course/x）。
@@ -32,6 +34,8 @@ export default function App() {
             <Route path="/course/:courseSlug/:chapterSlug" element={<ChapterPage />} />
             <Route path="/search" element={<Search />} />
             <Route path="/playground" element={<Playground />} />
+            <Route path="/interview" element={<InterviewSetup />} />
+            <Route path="/interview/session" element={<InterviewSession />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Router>
