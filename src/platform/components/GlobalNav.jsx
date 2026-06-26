@@ -8,7 +8,7 @@ export default function GlobalNav() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [q, setQ] = useState('')
   const navigate = useNavigate()
-  const { login } = useAuth()
+  const { login, logout, isAuthed, user } = useAuth()
 
   const submitSearch = (e) => {
     e.preventDefault()
@@ -51,6 +51,8 @@ export default function GlobalNav() {
           )}
         </nav>
 
+        <Link to="/interview" className="gnav-interview">🎤 面试模拟</Link>
+
         <Link to="/playground" className="gnav-play">▶ 在线运行</Link>
 
         <form className="gnav-search" onSubmit={submitSearch}>
@@ -62,9 +64,20 @@ export default function GlobalNav() {
           />
         </form>
 
-        <button className="btn btn-ghost gnav-login" onClick={login}>
-          登录
-        </button>
+        {isAuthed ? (
+          <div className="gnav-user">
+            <Link to="/me/interviews" className="gnav-user-name" title="个人中心">
+              {user?.nickname || user?.email}
+            </Link>
+            <button className="btn btn-ghost gnav-login" onClick={logout}>
+              退出
+            </button>
+          </div>
+        ) : (
+          <button className="btn btn-ghost gnav-login" onClick={login}>
+            登录
+          </button>
+        )}
       </div>
     </header>
   )

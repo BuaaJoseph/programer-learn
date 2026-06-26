@@ -60,11 +60,13 @@ export default function ChapterPage() {
 
         {!allowed ? (
           <div className="paywall">
-            <h2>这是付费章节</h2>
-            <p>登录并购买本课程后即可阅读全部内容。</p>
-            <button className="btn btn-primary" onClick={auth.login}>
-              登录 / 购买
-            </button>
+            <div className="paywall-lock">🔒</div>
+            <h2>登录后查看完整课程</h2>
+            <p>未登录可免费试读每门课程的第 1 章。登录 / 注册后即可解锁本章及全部章节，进度还能同步保存。</p>
+            <div className="paywall-actions">
+              <button className="btn btn-primary" onClick={auth.login}>登录 / 注册</button>
+              <Link className="btn btn-ghost" to={`/course/${courseSlug}`}>返回课程目录</Link>
+            </div>
           </div>
         ) : Content ? (
           <Suspense fallback={<div className="loading-block">正在加载本章内容…</div>}>
@@ -75,18 +77,20 @@ export default function ChapterPage() {
         )}
 
         <footer className="chapter-foot">
-          <button
-            className={`done-toggle ${done ? 'is-done' : ''}`}
-            onClick={() => toggle(courseSlug, chapterSlug)}
-            style={{ width: '100%', textAlign: 'left' }}
-          >
-            <span className="done-switch" />
-            <span>
-              <span className="done-label">{done ? '已学完这一章' : '标记为已学完'}</span>
-              <br />
-              <span className="done-sub">进度会保存在本地浏览器</span>
-            </span>
-          </button>
+          {allowed && (
+            <button
+              className={`done-toggle ${done ? 'is-done' : ''}`}
+              onClick={() => toggle(courseSlug, chapterSlug)}
+              style={{ width: '100%', textAlign: 'left' }}
+            >
+              <span className="done-switch" />
+              <span>
+                <span className="done-label">{done ? '已学完这一章' : '标记为已学完'}</span>
+                <br />
+                <span className="done-sub">进度会保存在本地浏览器</span>
+              </span>
+            </button>
+          )}
 
           <nav className="pager">
             {prev ? (

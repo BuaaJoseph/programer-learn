@@ -7,6 +7,21 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig({
   base: process.env.CAP_BUILD ? './' : '/',
   plugins: [react()],
+  build: {
+    // 关闭压缩体积统计：在低内存服务器上现场构建时，这一步既慢又吃内存，
+    // 容易让构建卡在「computing gzip size」处假死甚至 OOM。
+    reportCompressedSize: false,
+    chunkSizeWarningLimit: 1500,
+  },
+  // 开发期把 /api 代理到本地鉴权后端，前端无需关心跨域。
+  server: {
+    proxy: {
+      '/api': {
+        target: process.env.API_TARGET || 'http://localhost:8787',
+        changeOrigin: true,
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

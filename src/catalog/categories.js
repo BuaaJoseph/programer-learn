@@ -50,6 +50,7 @@ export const CATEGORIES = [
     subtitle: 'CS Fundamentals',
     icon: '🧱',
     subs: [
+      { id: 'algorithm', title: '数据结构与算法', subtitle: 'Algorithms' },
       { id: 'network', title: '计算机网络', subtitle: 'Network' },
       { id: 'os', title: '操作系统', subtitle: 'Operating System' },
       { id: 'design', title: '设计模式', subtitle: 'Design Patterns' },

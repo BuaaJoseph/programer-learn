@@ -75,6 +75,8 @@ export default function CourseCover({ course }) {
         <ForgeScene />
       ) : coverScene === 'frameworks' ? (
         <FrameworksScene />
+      ) : coverScene === 'deerflow' ? (
+        <DeerFlowScene />
       ) : coverScene === 'react' ? (
         <ReactScene />
       ) : coverScene === 'vue' ? (
@@ -91,6 +93,8 @@ export default function CourseCover({ course }) {
         <JavaCupScene />
       ) : coverScene === 'python' ? (
         <PythonScene />
+      ) : coverScene === 'algos' ? (
+        <AlgosScene />
       ) : (
         <AttentionScene />
       )}
@@ -613,6 +617,65 @@ function FrameworksScene() {
   )
 }
 
+function DeerFlowScene() {
+  // DeerFlow 架构隐喻：网关在上 → 中心 lead agent 外裹一圈中间件 → 底部 工具/子代理/沙箱。
+  const hub = { x: 200, y: 100 }
+  // 围绕中心的一圈「中间件」刻度
+  const ring = Array.from({ length: 12 }, (_, i) => {
+    const a = (Math.PI * 2 * i) / 12 - Math.PI / 2
+    return { x: hub.x + Math.cos(a) * 46, y: hub.y + Math.sin(a) * 46, a }
+  })
+  const leaves = [
+    { x: 96, y: 168, t: 'Tools' },
+    { x: 200, y: 176, t: 'Subagent' },
+    { x: 304, y: 168, t: 'Sandbox' },
+  ]
+  return (
+    <g fontFamily="var(--mono)">
+      {/* 顶部：网关 */}
+      <rect x="150" y="22" width="100" height="24" rx="7" fill="#ffffff" fillOpacity="0.16" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+      <text x="200" y="38" textAnchor="middle" fontSize="9.5" fill="#ffffff">Gateway · SSE</text>
+      <line x1="200" y1="46" x2="200" y2="58" stroke="#ffffff" strokeOpacity="0.45" strokeWidth="1.3" />
+
+      {/* 中间件环刻度 */}
+      <g>
+        {ring.map((p, i) => (
+          <rect
+            key={i}
+            x={p.x - 4.5}
+            y={p.y - 4.5}
+            width="9"
+            height="9"
+            rx="2"
+            fill="#ffffff"
+            fillOpacity="0.5"
+            transform={`rotate(${(p.a * 180) / Math.PI + 90} ${p.x} ${p.y})`}
+          />
+        ))}
+        <circle cx={hub.x} cy={hub.y} r="46" fill="none" stroke="#ffffff" strokeOpacity="0.28" strokeWidth="1" strokeDasharray="3 4" />
+      </g>
+
+      {/* 中心：lead agent */}
+      <circle cx={hub.x} cy={hub.y} r="32" fill="#ffffff" fillOpacity="0.22" stroke="#ffffff" strokeOpacity="0.65" strokeWidth="1.4" />
+      <text x={hub.x} y={hub.y - 1} textAnchor="middle" fontFamily="var(--display)" fontSize="12.5" fontWeight="700" fill="#ffffff">lead</text>
+      <text x={hub.x} y={hub.y + 12} textAnchor="middle" fontSize="8" fill="#ffffff" fillOpacity="0.9">agent</text>
+
+      {/* 底部：执行层 */}
+      <g stroke="#ffffff" strokeOpacity="0.32" strokeWidth="1.2">
+        {leaves.map((n, i) => (
+          <line key={i} x1={hub.x} y1={hub.y + 32} x2={n.x} y2={n.y - 12} />
+        ))}
+      </g>
+      {leaves.map((n, i) => (
+        <g key={i}>
+          <rect x={n.x - 33} y={n.y - 12} width="66" height="24" rx="7" fill="#ffffff" fillOpacity="0.14" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.1" />
+          <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize="9" fill="#ffffff">{n.t}</text>
+        </g>
+      ))}
+    </g>
+  )
+}
+
 function ReactScene() {
   // React 经典原子标志：中心核 + 三条椭圆轨道。声明式 UI = f(state) 的隐喻。
   const cx = 200
@@ -801,6 +864,36 @@ function PythonScene() {
         <circle cx="30" cy="40" r="3.4" fill="#0f1320" />
       </g>
       <text x={cx} y="182" textAnchor="middle" fontFamily="var(--mono)" fontSize="13" fill="#ffffff" fillOpacity="0.9">{'>>> print("Hi")'}</text>
+    </g>
+  )
+}
+
+function AlgosScene() {
+  // 左：一组待排序的柱子（高低不一）；右：一棵小树 + 遍历高亮，点题「数据结构 + 算法」。
+  const bars = [26, 54, 38, 70, 46, 90, 62]
+  const tnodes = [[326, 56], [292, 104], [360, 104], [326, 150]]
+  const tedges = [[0, 1], [0, 2], [1, 3]]
+  return (
+    <g fontFamily="var(--mono)">
+      {/* 柱状图（排序隐喻） */}
+      <g>
+        {bars.map((h, i) => (
+          <rect key={i} x={40 + i * 26} y={150 - h} width="18" height={h} rx="3" fill="#ffffff" fillOpacity={0.35 + (i / bars.length) * 0.5} />
+        ))}
+        <line x1="34" y1="150" x2="226" y2="150" stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.4" />
+        <text x="40" y="170" fontSize="10" fill="#ffffff" fillOpacity="0.75">sort</text>
+      </g>
+      {/* 小树（遍历隐喻） */}
+      <g stroke="#ffffff" strokeOpacity="0.5" strokeWidth="1.5">
+        {tedges.map(([a, b], i) => <line key={i} x1={tnodes[a][0]} y1={tnodes[a][1]} x2={tnodes[b][0]} y2={tnodes[b][1]} />)}
+      </g>
+      {tnodes.map(([x, y], i) => (
+        <g key={i}>
+          <circle cx={x} cy={y} r="15" fill="#ffffff" fillOpacity={i === 0 ? 0.9 : 0.2} stroke="#ffffff" strokeOpacity="0.7" strokeWidth="1.4" />
+          <text x={x} y={y + 4} textAnchor="middle" fontSize="11" fontWeight="700" fill={i === 0 ? '#0f1320' : '#ffffff'}>{i + 1}</text>
+        </g>
+      ))}
+      <text x="284" y="172" fontSize="10" fill="#ffffff" fillOpacity="0.75">traverse</text>
     </g>
   )
 }

@@ -341,7 +341,7 @@
   color: var(--ink);
 }
 .course-card-cover {
-  height: 104px;
+  height: 62px;
   overflow: hidden;
 }
 .course-cover-svg {
@@ -350,10 +350,10 @@
   height: 100%;
 }
 .course-card-body {
-  padding: 16px 18px 18px;
+  padding: 11px 16px 13px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
   flex: 1;
 }
 .course-card-crumb {
@@ -364,15 +364,19 @@
   letter-spacing: 0.04em;
 }
 .course-card-body h3 {
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   margin: 0;
 }
 .course-card-desc {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   color: var(--ink-soft);
-  line-height: 1.6;
+  line-height: 1.45;
   flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .course-card-meta {
   display: flex;
@@ -725,17 +729,25 @@
 /* ============ 付费墙 ============ */
 .paywall {
   text-align: center;
-  padding: 60px 24px;
-  border: 1px dashed var(--amber-line);
-  background: var(--amber-soft);
+  padding: 48px 24px;
+  border: 1px dashed var(--accent-line);
+  background: var(--accent-soft);
   border-radius: var(--radius);
 }
+.paywall-lock { font-size: 2.2rem; margin-bottom: 6px; }
 .paywall h2 {
   margin-top: 0;
 }
 .paywall p {
   color: var(--ink-soft);
-  margin-bottom: 20px;
+  margin: 0 auto 20px;
+  max-width: 460px;
+}
+.paywall-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 /* ============ 响应式 ============ */

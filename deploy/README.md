@@ -37,6 +37,25 @@ sudo bash deploy/deploy.sh
 
 更新后强刷浏览器（Ctrl/Cmd + Shift + R）或用无痕窗口查看。
 
+### 构建卡在「rendering chunks」/ 内存不足怎么办
+
+站点课程很多，现场 `npm run build` 需要约 700MB~1GB 内存。**低配服务器（1GB 内存等）现场构建容易卡死或 OOM**
+（表现为停在 `rendering chunks (NN)...` 不动）。三种应对，任选其一：
+
+```bash
+# 方案 A（推荐）：跳过现场构建，直接用仓库内预构建包部署
+sudo PREBUILT=1 bash deploy/deploy.sh
+
+# 方案 B：临时加一块 swap 再构建（构建完可删）
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+sudo bash deploy/deploy.sh
+
+# 方案 C：在本地/CI 构建后，只把 dist 同步到服务器（见文末「手动三步」）
+```
+
+> `deploy.sh` 已默认给构建加上 `--max-old-space-size=2048`；若仍 OOM，说明物理内存确实不够，请用方案 A/B/C。
+> 用方案 A 时，记得开发侧已先 `bash deploy/pack.sh` 刷新过预构建包（本仓库提交时已刷新）。
+
 ### 两条部署路径，区别很重要
 
 `deploy.sh` 会根据服务器**有没有 Node** 走不同路径：
@@ -98,17 +117,50 @@ curl -I http://127.0.0.1:8081/         # 单独端口本机自测，应 200
 curl -I -H "Host: learn.aihaven.site" http://127.0.0.1/   # 域名路由自测
 ```
 
+## 后端服务（登录 + 面试模拟需要）
+
+静态站点本身不需要后端，但**登录鉴权**与**面试模拟**依赖 Node 后端（`/api/*`）。
+nginx 配置已把 `/api/` 反代到 `127.0.0.1:8787`，你需要在服务器上常驻运行后端，并配置面试官模型：
+
+```bash
+cd /home/learn/programer-learn
+# 在项目根目录放 .env（参考 server/.env.example），至少配置面试官模型：
+#   ANTHROPIC_BASE_URL=http://www.dcc-aihub.shop
+#   ANTHROPIC_AUTH_TOKEN=sk-...
+#   INTERVIEW_MODEL=gpt-5.5
+npm run server            # 前台试跑；生产建议用 pm2 / systemd 常驻
+# 自检：curl -X POST http://127.0.0.1:8787/api/interview/ping
+```
+
+> 面试官模型走 Anthropic Messages 协议（与 Claude Code 配置一致）。改用 OpenAI 兼容接口时设
+> `INTERVIEW_API_STYLE=openai`，并把 `ANTHROPIC_BASE_URL` 指向其 `/v1/chat/completions` 所在域名。
+
 ## 还需要你确认的两件事
 
 1. **DNS**：把 `learn.aihaven.site` 的 A 记录指向 `8.211.163.94`。
 2. **防火墙/安全组**：放行入站 80 端口（如果直接暴露 8081 也要放行 8081）。
 
-## 想上 HTTPS？
+## HTTPS（强烈建议——「语音作答」必须）
 
-装好 certbot 后：
+浏览器的麦克风/录音（`getUserMedia`）只在 **https 或 localhost** 下可用。
+线上是 `http://learn.aihaven.site` 时，Chrome 会拦麦克风，语音输入用不了。开 HTTPS 后即可。
+
+**最简单（推荐）**：certbot 自动申请证书并改写 nginx 配置（含 443 与跳转）：
 
 ```bash
+sudo yum install -y certbot python3-certbot-nginx   # 或 apt-get install certbot python3-certbot-nginx
 sudo certbot --nginx -d learn.aihaven.site
 ```
 
-certbot 会自动给上面的 80 端口 server 块加 443 与证书。
+**或手动**（用仓库里 `nginx-learn.aihaven.site.conf` 已写好的 443 模板）：
+
+```bash
+# 1) 先申请证书（webroot 验证，需 80 可达）
+sudo certbot certonly --webroot -w /var/www/learn -d learn.aihaven.site
+# 2) 编辑 /etc/nginx/conf.d/learn.aihaven.site.conf：
+#    取消 (3) 整段 443 server 的注释；并取消 (2) 里 `return 301 https://...` 那行的注释
+# 3) 校验并重载
+sudo nginx -t && sudo nginx -s reload
+```
+
+> 证书会自动续期（certbot 自带定时任务）。续期后 `sudo nginx -s reload` 即可（certbot 通常会自动 reload）。

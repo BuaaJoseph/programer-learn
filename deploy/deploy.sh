@@ -16,16 +16,22 @@ NGINX_CONF="/etc/nginx/conf.d/learn.aihaven.site.conf"
 echo "==> 项目目录: $ROOT"
 
 # 1) 构建（有 node 用 node，没有就解包仓库内预构建的 tarball）
-if command -v npm >/dev/null 2>&1; then
+#    低内存服务器现场构建容易在「rendering chunks」处假死/OOM——
+#    可设 PREBUILT=1 直接用仓库内预构建包，跳过构建：  sudo PREBUILT=1 bash deploy/deploy.sh
+if [ "${PREBUILT:-0}" != "1" ] && command -v npm >/dev/null 2>&1; then
   echo "==> 检测到 npm，开始构建"
   cd "$ROOT"
   npm ci || npm install
-  npm run build
+  # 显式放宽 Node 堆上限，避免默认上限在大体量站点构建时过早 OOM。
+  NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}" npm run build
 elif [ -f "$ROOT/deploy/learn-site.tar.gz" ]; then
-  echo "==> 未检测到 npm，解包预构建的 deploy/learn-site.tar.gz"
+  echo "==> 使用预构建包 deploy/learn-site.tar.gz（PREBUILT=1 或未检测到 npm）"
   rm -rf "$ROOT/dist"
   mkdir -p "$ROOT/dist"
   tar -xzf "$ROOT/deploy/learn-site.tar.gz" -C "$ROOT/dist"
+else
+  echo "!! 既无 npm 也无预构建包，无法部署。" >&2
+  exit 1
 fi
 
 if [ ! -f "$ROOT/dist/index.html" ]; then
@@ -44,19 +50,38 @@ else
 fi
 chown -R www-data:www-data "$WEBROOT" 2>/dev/null || true
 
-# 3) 安装 nginx 配置
+# 3) 安装 nginx 配置（先备份线上配置，校验通过才 reload，失败自动回滚）
 echo "==> 安装 nginx 配置到 $NGINX_CONF"
+BACKUP=""
+if [ -f "$NGINX_CONF" ]; then
+  BACKUP="${NGINX_CONF}.bak.$(date +%Y%m%d%H%M%S)"
+  cp "$NGINX_CONF" "$BACKUP"
+  echo "   已备份当前线上配置 → $BACKUP"
+fi
+
 cp "$ROOT/deploy/nginx-learn.aihaven.site.conf" "$NGINX_CONF"
 
-# 4) 校验并 reload
-echo "==> 校验 nginx 配置"
-nginx -t
+# 4) 校验并 reload（nginx -t 失败则回滚备份并退出，绝不 reload 坏配置）
+echo "==> 校验 nginx 配置 (nginx -t)"
+if ! nginx -t; then
+  echo "!! nginx -t 失败，正在回滚 nginx 配置……" >&2
+  if [ -n "$BACKUP" ]; then
+    cp "$BACKUP" "$NGINX_CONF"
+    echo "   已恢复备份：$BACKUP → $NGINX_CONF" >&2
+  else
+    rm -f "$NGINX_CONF"
+    echo "   线上原本无该配置，已移除刚复制的文件。" >&2
+  fi
+  echo "!! 已中止部署，未 reload nginx（线上配置保持原状）。" >&2
+  exit 1
+fi
+
 echo "==> reload nginx"
 nginx -s reload || systemctl reload nginx
 
 echo ""
 echo "✅ 部署完成"
 echo "   - 单独端口自测:  curl -I http://127.0.0.1:8081/"
-echo "   - 域名访问:      http://learn.aihaven.site/"
-echo "   （请确认 DNS：learn.aihaven.site 的 A 记录已指向本机公网 IP 8.211.163.94，"
-echo "     且安全组/防火墙放行 80 端口）"
+echo "   - 域名访问:      https://learn.aihaven.site/"
+echo "   （请确认 DNS：learn.aihaven.site 的 A 记录已指向本机公网 IP 43.128.230.176，"
+echo "     且安全组/防火墙放行 80/443 端口）"

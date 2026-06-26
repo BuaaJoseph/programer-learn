@@ -3,3 +3,7 @@ dist
 .DS_Store
 *.local
 .vite
+
+# 后端运行时数据（SQLite 库文件）与本地密钥
+server/data/
+.env
