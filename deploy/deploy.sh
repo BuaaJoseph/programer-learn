@@ -50,19 +50,38 @@ else
 fi
 chown -R www-data:www-data "$WEBROOT" 2>/dev/null || true
 
-# 3) 安装 nginx 配置
+# 3) 安装 nginx 配置（先备份线上配置，校验通过才 reload，失败自动回滚）
 echo "==> 安装 nginx 配置到 $NGINX_CONF"
+BACKUP=""
+if [ -f "$NGINX_CONF" ]; then
+  BACKUP="${NGINX_CONF}.bak.$(date +%Y%m%d%H%M%S)"
+  cp "$NGINX_CONF" "$BACKUP"
+  echo "   已备份当前线上配置 → $BACKUP"
+fi
+
 cp "$ROOT/deploy/nginx-learn.aihaven.site.conf" "$NGINX_CONF"
 
-# 4) 校验并 reload
-echo "==> 校验 nginx 配置"
-nginx -t
+# 4) 校验并 reload（nginx -t 失败则回滚备份并退出，绝不 reload 坏配置）
+echo "==> 校验 nginx 配置 (nginx -t)"
+if ! nginx -t; then
+  echo "!! nginx -t 失败，正在回滚 nginx 配置……" >&2
+  if [ -n "$BACKUP" ]; then
+    cp "$BACKUP" "$NGINX_CONF"
+    echo "   已恢复备份：$BACKUP → $NGINX_CONF" >&2
+  else
+    rm -f "$NGINX_CONF"
+    echo "   线上原本无该配置，已移除刚复制的文件。" >&2
+  fi
+  echo "!! 已中止部署，未 reload nginx（线上配置保持原状）。" >&2
+  exit 1
+fi
+
 echo "==> reload nginx"
 nginx -s reload || systemctl reload nginx
 
 echo ""
 echo "✅ 部署完成"
 echo "   - 单独端口自测:  curl -I http://127.0.0.1:8081/"
-echo "   - 域名访问:      http://learn.aihaven.site/"
-echo "   （请确认 DNS：learn.aihaven.site 的 A 记录已指向本机公网 IP 8.211.163.94，"
-echo "     且安全组/防火墙放行 80 端口）"
+echo "   - 域名访问:      https://learn.aihaven.site/"
+echo "   （请确认 DNS：learn.aihaven.site 的 A 记录已指向本机公网 IP 43.128.230.176，"
+echo "     且安全组/防火墙放行 80/443 端口）"
