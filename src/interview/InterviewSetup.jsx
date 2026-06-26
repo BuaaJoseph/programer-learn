@@ -170,7 +170,7 @@ export default function InterviewSetup() {
         <div className="iv-hero">
           <h1 className="browse-h1">面试模拟</h1>
           <p className="section-desc">
-            上传简历、选择岗位与考察技能点，由 AI 面试官为你进行一场约 1 小时的全真模拟面试，全程支持语音对话。
+            上传简历、选择岗位与考察技能点，由 AI 面试官为您进行一场约 1 小时的全真模拟面试，面试完成后自动生成面试报告。
             面试会根据所选岗位设计不同的面试流程与考察点。
           </p>
         </div>
@@ -283,10 +283,6 @@ export default function InterviewSetup() {
               <span>开启语音对话（面试官朗读 + 语音作答）</span>
             </label>
           </div>
-          <p className="iv-sub" style={{ marginTop: 8 }}>
-            想要接近 ChatGPT 的自然人声？在 <code>.env</code> 配置 <code>INTERVIEW_TTS_*</code>（OpenAI 兼容的语音接口）即可启用云端神经语音；
-            未配置时用浏览器内置语音（可在面试页右上角切换音色）。
-          </p>
         </section>
 
         {error && <div className="iv-error">{error}</div>}
