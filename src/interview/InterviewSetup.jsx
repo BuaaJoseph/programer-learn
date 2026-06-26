@@ -44,16 +44,19 @@ export default function InterviewSetup() {
     setPing({ state: 'testing', msg: '' })
     try {
       const r = await pingModel()
-      let msg = r.sample ? `面试官模型连通正常，回复：${r.sample}` : '面试官模型连通正常'
-      let state = 'ok'
+      // 两行：对话模型 / 语音模型连通性（不透露具体模型名）
+      const chatLine = '✓ 对话模型连通性：正常'
+      let voiceLine
       if (r.tts && r.tts.configured) {
-        msg += '\n' + (r.tts.ok ? '✓ ' : '✗ ') + r.tts.message
-        if (!r.tts.ok) state = 'warn'
+        voiceLine = r.tts.ok ? '✓ 语音模型连通性：正常' : '✗ 语音模型连通性：异常（将回退浏览器语音）'
+      } else {
+        voiceLine = '· 语音模型连通性：未配置（使用浏览器语音）'
       }
-      setPing({ state, msg })
+      const state = (r.tts && r.tts.configured && !r.tts.ok) ? 'warn' : 'ok'
+      setPing({ state, msg: `${chatLine}\n${voiceLine}` })
       setModelCfg((c) => ({ ...(c || {}), configured: true }))
     } catch (e) {
-      setPing({ state: 'fail', msg: String(e?.message || e) })
+      setPing({ state: 'fail', msg: '✗ 对话模型连通性：失败（' + String(e?.message || e) + '）' })
     }
   }
 
@@ -129,7 +132,7 @@ export default function InterviewSetup() {
       return
     }
     if (modelCfg && modelCfg.configured === false) {
-      setError('面试官模型尚未在服务端配置，请在 .env 中设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN 后重试')
+      setError('AI 面试官暂时不可用（服务端未就绪），请稍后再试或联系管理员')
       return
     }
     saveConfig({ resumeText: resume, resumeLink, position, skills, voice })
@@ -167,8 +170,8 @@ export default function InterviewSetup() {
         <div className="iv-hero">
           <h1 className="browse-h1">面试模拟</h1>
           <p className="section-desc">
-            上传简历、选择岗位与考察技能点，由 AI 面试官（GPT-5.5）为你进行一场约 1 小时的全真模拟面试：
-            自我介绍 → 项目深挖 → 技术原理 → AI 编程 → 动手写代码，全程支持语音对话。
+            上传简历、选择岗位与考察技能点，由 AI 面试官为你进行一场约 1 小时的全真模拟面试，全程支持语音对话。
+            面试会根据所选岗位设计不同的面试流程与考察点。
           </p>
         </div>
 
@@ -254,20 +257,17 @@ export default function InterviewSetup() {
           </div>
         </section>
 
-        {/* 4. 面试官模型（服务端配置） */}
+        {/* 4. 连通性检测 */}
         <section className="iv-card">
-          <h2 className="iv-card-title"><span className="iv-step">4</span> 面试官模型</h2>
-          <p className="iv-sub">
-            面试官的接口地址与密钥已改为在<strong>服务端 <code>.env</code> 配置</strong>（类似 Claude Code 的配置方式），
-            无需在页面填写。配置项见 <code>server/.env.example</code>。
-          </p>
+          <h2 className="iv-card-title"><span className="iv-step">4</span> 连通性检测</h2>
+          <p className="iv-sub">点击「测试连通性」检查 AI 面试官与语音是否可用。</p>
           <div className="iv-model-status">
             {modelCfg == null ? (
-              <span className="iv-status checking">正在检查配置…</span>
+              <span className="iv-status checking">正在检查…</span>
             ) : modelCfg.configured ? (
-              <span className="iv-status ok">✓ 已配置{modelCfg.model ? `（模型：${modelCfg.model}）` : ''}</span>
+              <span className="iv-status ok">✓ AI 面试官已就绪</span>
             ) : (
-              <span className="iv-status bad">✗ 未配置：请在 .env 设置 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN</span>
+              <span className="iv-status bad">✗ AI 面试官未就绪（服务端尚未配置）</span>
             )}
             <button className="btn btn-ghost ce-small" onClick={testConn} disabled={ping.state === 'testing'}>
               {ping.state === 'testing' ? '测试中…' : '测试连通性'}
